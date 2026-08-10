@@ -47,6 +47,29 @@ from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+# Verify TLS against the WINDOWS certificate store, not certifi's bundle.
+#
+# WECC inspects TLS: the proxy terminates the connection and re-signs it with a
+# corporate root CA. That root is installed in the Windows store — every browser
+# on the LAN trusts it — but it is not in certifi, which is what httpx uses by
+# default. So every HTTPS call out of here failed CERTIFICATE_VERIFY_FAILED the
+# moment PlanWise moved from http://127.0.0.1 to https://…onrender.com (D27).
+# It was invisible before that: loopback never exercised TLS at all.
+#
+# inject_into_ssl() patches ssl.SSLContext process-wide, so httpx, requests and
+# urllib all pick it up without touching individual call sites. The alternative
+# — verify=False — would have "worked" and is exactly wrong: this connection
+# carries the token that drives someone's mailbox, so it is the last one that
+# should skip certificate checks. Same corporate interception that stops pip
+# from installing at runtime, which is why the companion is frozen (A2).
+try:
+    import truststore
+
+    truststore.inject_into_ssl()
+except Exception as exc:  # noqa: BLE001 - never block startup over this
+    logging.getLogger("planwise.companion").warning(
+        "truststore unavailable, TLS will fall back to certifi: %s", exc)
+
 PAIR_DIR = Path.home() / ".planwise"
 TOKEN_FILE = PAIR_DIR / "companion_token.txt"
 SERVER_FILE = PAIR_DIR / "server_url.txt"

@@ -47,6 +47,12 @@ hidden = [
     "httpx",
     "h11",
     "anyio",
+    # TLS against the Windows cert store — the corporate proxy's root CA is
+    # there and not in certifi, so a hosted (https) PlanWise is unreachable
+    # without this. Imported inside a try/except, which PyInstaller's static
+    # analysis does not follow, hence the explicit entry.
+    "truststore",
+    "_ssl",
 ] + collect_submodules("fastapi")
 
 a = Analysis(

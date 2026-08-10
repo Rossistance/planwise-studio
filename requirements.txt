@@ -1,0 +1,22 @@
+# PlanWise — per-job project controls
+fastapi>=0.110
+uvicorn>=0.27
+
+# Reads the shared Vista extract (read-only)
+openpyxl>=3.1
+
+# Document library: PDF page counts / page extraction; multipart uploads
+pypdf>=4.0
+python-multipart>=0.0.9
+
+# Tests
+pytest>=8.0
+httpx>=0.27
+
+# Phase 3b: AI providers (REST) + Outlook companion (COM, Windows only)
+pywin32>=306; sys_platform == "win32"
+truststore>=0.9
+
+# Phase 5e: web push, so an RFI reply reaches a phone in the field. Pulls in
+# py-vapid and cryptography for the VAPID signing the push services require.
+pywebpush>=2.0

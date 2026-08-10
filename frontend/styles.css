@@ -1,0 +1,834 @@
+/* ==========================================================================
+   PlanWise — SiteScope's "field office, drawing-set precision" design system
+   (decision D12). Tokens and component vocabulary ported from SiteScope so
+   the eventual three-tab merge shares one language: vellum paper, hairline
+   rules, DIN lettering (Bahnschrift), title-block structure, safety-orange
+   accent, blueprint blue for links/info, stamp-styled statuses. Dark mode is
+   the night-shift trailer.
+   ========================================================================== */
+
+:root {
+  /* surfaces */
+  --bg: #F2F1EC;
+  --panel: #FCFBF8;
+  --panel-2: #F7F6F1;
+  --ink: #1A1D20;
+  --muted: #5C6470;
+  --faint: #8A8F94;
+  --line: #DEDCD3;
+  --line-strong: #B9B6AA;
+
+  /* brand */
+  --accent: #C7420A;
+  --accent-hover: #A83605;
+  --accent-ink: #FFFFFF;
+  --accent-soft: #F9E9DE;
+  --blueprint: #2F74B8;
+  --blueprint-soft: #E6EEF6;
+
+  /* status */
+  --ok: #1E7A46;      --ok-soft: #E3F0E7;
+  --warn: #8F5F00;    --warn-soft: #F6EDD8;
+  --err: #C23A2E;     --err-soft: #F8E7E4;
+  --neutral: #6B7178; --neutral-soft: #ECEBE6;
+
+  /* type */
+  --font-display: Bahnschrift, 'Segoe UI Semibold', 'Segoe UI', system-ui, sans-serif;
+  --font-body: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'Cascadia Mono', Consolas, 'SF Mono', ui-monospace, monospace;
+
+  --radius: 4px;
+  --shadow-pop: 0 10px 40px rgba(20, 22, 24, .18);
+  --focus: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent);
+  --topbar-h: 52px;
+}
+
+:root[data-theme="dark"] {
+  --bg: #191C1F;
+  --panel: #22262A;
+  --panel-2: #1E2226;
+  --ink: #E9E8E3;
+  --muted: #9BA1A8;
+  --faint: #7A8188;
+  --line: #33383D;
+  --line-strong: #4A5057;
+
+  --accent: #F97435;
+  --accent-hover: #FF8B55;
+  --accent-ink: #1A1D20;
+  --accent-soft: #37281F;
+  --blueprint: #63A9E0;
+  --blueprint-soft: #24313D;
+
+  --ok: #3FA96D;      --ok-soft: #1F3129;
+  --warn: #D9A13B;    --warn-soft: #342B1B;
+  --err: #E06456;     --err-soft: #3A2523;
+  --neutral: #9AA1A8; --neutral-soft: #2C3136;
+
+  --shadow-pop: 0 12px 44px rgba(0, 0, 0, .5);
+}
+
+/* ---- base ---------------------------------------------------------------- */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  font: 14.5px/1.55 var(--font-body);
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+.hidden { display: none !important; }
+a { color: var(--blueprint); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; }
+::selection { background: var(--accent); color: var(--accent-ink); }
+button { font: inherit; cursor: pointer; color: inherit; }
+:is(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: none; box-shadow: var(--focus); border-radius: var(--radius);
+}
+.mono { font-family: var(--font-mono); font-size: 12.5px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+.pos { color: var(--ok); }
+.neg { color: var(--err); }
+.none { color: var(--faint); font-style: italic; }
+
+/* eyebrow: uppercase micro-label, the drawing-set annotation voice */
+.eyebrow {
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--faint);
+}
+
+/* ---- buttons -------------------------------------------------------------- */
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  border: 1px solid var(--line-strong); background: var(--panel);
+  border-radius: var(--radius); padding: 7px 14px;
+  font-family: var(--font-display); font-size: 13.5px; letter-spacing: .02em;
+  color: var(--ink); transition: background .14s, border-color .14s, color .14s;
+  text-decoration: none;
+}
+.btn:hover { background: var(--panel-2); border-color: var(--faint); text-decoration: none; }
+.btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.danger { color: var(--err); border-color: var(--err); background: transparent; }
+.btn.danger:hover { background: var(--err-soft); }
+.btn.sm { padding: 4px 10px; font-size: 12.5px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+.link {
+  background: none; border: none; padding: 0; color: var(--blueprint);
+  font: inherit; cursor: pointer;
+}
+.link:hover { text-decoration: underline; }
+.link.danger { color: var(--err); }
+
+.iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; border: 1px solid transparent; background: none;
+  border-radius: var(--radius); color: var(--muted);
+  transition: background .14s, color .14s;
+}
+.iconbtn:hover { background: var(--panel-2); color: var(--ink); }
+
+/* ---- topbar ---------------------------------------------------------------- */
+.topbar {
+  height: var(--topbar-h);
+  display: flex; align-items: center; gap: 16px;
+  padding: 0 18px;
+  background: var(--panel); border-bottom: 1px solid var(--line-strong);
+  position: sticky; top: 0; z-index: 10;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0; flex: none; }
+.brand .mark {
+  font-family: var(--font-display); font-size: 18px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink);
+  white-space: nowrap;
+}
+.brand .mark b { color: var(--accent); }
+.brand .tagline {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--faint); white-space: nowrap;
+}
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em;
+  padding: 4px 10px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted); background: var(--panel-2);
+  max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.chip.ok .dot { background: var(--ok); }
+.chip.warn { color: var(--warn); border-color: var(--warn); }
+.chip.warn .dot { background: var(--warn); }
+.chip.err { color: var(--err); border-color: var(--err); }
+.chip.err .dot { background: var(--err); }
+.chip.clickable { cursor: pointer; }
+.chip.clickable:hover { border-color: var(--faint); color: var(--ink); }
+
+/* job picker */
+.job-picker { position: relative; flex: 1; max-width: 480px; }
+.job-picker input {
+  width: 100%; padding: 7px 11px 7px 32px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel-2); color: var(--ink); font: 13.5px var(--font-body);
+}
+.job-picker .icon {
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  color: var(--faint); pointer-events: none;
+}
+.job-picker input::placeholder { color: var(--faint); }
+.results {
+  position: absolute; top: calc(100% + 5px); left: 0; right: 0;
+  background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-pop);
+  list-style: none; margin: 0; padding: 5px;
+  max-height: 340px; overflow-y: auto; z-index: 30;
+}
+.results li {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: baseline;
+  padding: 8px 10px; border-radius: var(--radius); cursor: pointer;
+}
+.results li:hover { background: var(--panel-2); }
+.results .rnum { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.results .rname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.results .rstat { font-family: var(--font-mono); font-size: 10px; color: var(--faint); text-transform: uppercase; }
+
+/* ---- layout / content ------------------------------------------------------- */
+.content { max-width: 1220px; margin: 0 auto; padding: 20px 28px 60px; }
+
+/* ---- title block (signature element) ---------------------------------------- */
+.titleblock {
+  display: flex; align-items: stretch; flex-wrap: wrap;
+  border: 1px solid var(--line-strong); background: var(--panel);
+  border-radius: var(--radius); overflow: hidden; margin-bottom: 16px;
+}
+.titleblock .tb-cell {
+  padding: 12px 16px; border-right: 1px solid var(--line);
+  display: flex; flex-direction: column; justify-content: center; gap: 2px;
+  flex: none;
+}
+.titleblock .tb-cell:last-child { border-right: none; }
+.titleblock .tb-main { flex: 1 1 auto; min-width: 180px; }
+.titleblock .tb-main h1 {
+  margin: 0; font-size: 21px; letter-spacing: .01em; line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.titleblock .tb-val {
+  font-family: var(--font-display); font-size: 14.5px; font-weight: 600;
+  white-space: nowrap;
+}
+.titleblock .tb-val.mono { font-family: var(--font-mono); font-size: 13px; font-weight: 400; }
+
+/* stamp: approval-stamp styled status */
+.stamp {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font-display); font-size: 11px; font-weight: 700;
+  letter-spacing: .1em; text-transform: uppercase;
+  border: 1.5px solid currentColor; border-radius: 3px; padding: 3px 8px;
+  white-space: nowrap;
+}
+.stamp.ok { color: var(--ok); }
+.stamp.warn { color: var(--warn); }
+.stamp.err { color: var(--err); }
+.stamp.info { color: var(--blueprint); }
+.stamp.neutral { color: var(--neutral); }
+
+/* ---- tabs ---------------------------------------------------------------------- */
+.tabs {
+  display: flex; gap: 2px; border-bottom: 1px solid var(--line-strong);
+  margin-bottom: 20px; overflow-x: auto; scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button {
+  background: none; border: none; padding: 9px 14px 10px;
+  font-family: var(--font-display); font-size: 13.5px; letter-spacing: .04em;
+  color: var(--muted); border-bottom: 2px solid transparent;
+  margin-bottom: -1px; white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 7px;
+  transition: color .14s;
+}
+.tabs button:hover { color: var(--ink); }
+.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tabs button .count {
+  font-family: var(--font-mono); font-size: 10.5px; color: var(--faint);
+  border: 1px solid var(--line); border-radius: 999px; padding: 0 6px;
+}
+.tabs button.active .count { color: var(--accent); border-color: var(--accent); }
+
+/* ---- index strip: stat tiles as one title-block row ------------------------------ */
+.index-strip {
+  display: flex; border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--panel); overflow: hidden; margin-bottom: 16px; flex-wrap: wrap;
+}
+.index-strip .cell {
+  flex: 1 1 130px; padding: 13px 18px 11px;
+  border-right: 1px solid var(--line); min-width: 130px;
+}
+.index-strip .cell:last-child { border-right: none; }
+.index-strip .cell .n {
+  font-family: var(--font-display); font-size: 22px; font-weight: 700;
+  line-height: 1.15; font-variant-numeric: tabular-nums;
+}
+.index-strip .cell .n.none { font-size: 14px; font-weight: 400; }
+.index-strip .cell .l { margin-top: 2px; }
+
+/* ---- panels ------------------------------------------------------------------------ */
+.panel {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); margin-bottom: 16px;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 12px 18px; border-bottom: 1px solid var(--line);
+}
+.panel-head h3 { margin: 0; font-size: 14px; letter-spacing: .04em; }
+.panel-head .sub { font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.panel-body { padding: 16px 18px; }
+.panel-body.flush { padding: 0; }
+
+/* ---- badges --------------------------------------------------------------------------- */
+.badge {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .05em;
+  text-transform: uppercase; padding: 2px 8px; border-radius: 3px;
+  background: var(--neutral-soft); color: var(--neutral); white-space: nowrap;
+}
+.badge.ok { background: var(--ok-soft); color: var(--ok); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.err { background: var(--err-soft); color: var(--err); }
+.badge.info { background: var(--blueprint-soft); color: var(--blueprint); }
+
+/* ---- tables ---------------------------------------------------------------------------- */
+table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.tbl th {
+  font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em;
+  text-transform: uppercase; color: var(--faint); font-weight: 600;
+  text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line-strong);
+  white-space: nowrap;
+}
+table.tbl th.num, table.tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Sortable headers: click to sort, click again to reverse. The arrow sits in
+   reserved padding so it can never collide with the label, and only the
+   active column shows one. (Literal glyphs, not CSS \-escapes: an escape
+   here once mangled into a control character plus stray digits that printed
+   inside the header text.) */
+table.tbl th.sortable {
+  cursor: pointer; user-select: none; position: relative; padding-right: 22px;
+}
+table.tbl th.sortable:hover { color: var(--ink); }
+table.tbl th.sortable::after {
+  content: "↕"; position: absolute; right: 7px; top: 50%;
+  transform: translateY(-50%); font-size: 11px; line-height: 1;
+  opacity: 0; pointer-events: none;
+}
+table.tbl th.sortable:hover::after { opacity: .4; }
+table.tbl th.sort-asc, table.tbl th.sort-desc { color: var(--accent); }
+table.tbl th.sort-asc::after  { content: "↑"; opacity: 1; }
+table.tbl th.sort-desc::after { content: "↓"; opacity: 1; }
+table.tbl td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.tbl tr:last-child td { border-bottom: none; }
+table.tbl tfoot td {
+  font-weight: 700; font-family: var(--font-display);
+  border-top: 1.5px solid var(--line-strong); background: var(--panel-2);
+}
+table.tbl tr.clickable { cursor: pointer; }
+table.tbl tr.clickable:hover td { background: var(--panel-2); }
+
+/* editable cell inputs — hairline until focused */
+.ecell {
+  width: 100%; min-width: 70px; border: 1px solid transparent; background: none;
+  border-radius: 3px; padding: 3px 6px; font: 13px var(--font-body); color: var(--ink);
+}
+.ecell.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ecell:hover { border-color: var(--line); }
+.ecell:focus { border-color: var(--accent); background: var(--panel); outline: none; box-shadow: none; }
+
+/* ---- forms ------------------------------------------------------------------------------ */
+input, textarea, select {
+  font: 14px var(--font-body); color: var(--ink);
+  background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); padding: 8px 11px;
+}
+input::placeholder, textarea::placeholder { color: var(--faint); }
+select { cursor: pointer; }
+.field { min-width: 0; }
+.field > label {
+  display: block; font-family: var(--font-mono); font-size: 10.5px;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--muted);
+  margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.field input, .field select { width: 100%; }
+.form-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 14px 18px;
+}
+.inline-form {
+  display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+  padding: 12px 18px; border-top: 1px solid var(--line); background: var(--panel-2);
+}
+/* Add-entry form pinned to the top of a card: the divider flips to the
+   bottom edge so the form reads as the card's header row, with existing
+   records listed beneath it newest-first. */
+.inline-form.top { border-top: none; border-bottom: 1px solid var(--line-strong); }
+.inline-form input, .inline-form select { padding: 6px 10px; font-size: 13px; }
+.inline-form .grow { flex: 1; min-width: 150px; }
+
+/* read-only Vista value cell */
+.ro {
+  padding: 8px 11px; border: 1px dashed var(--line); border-radius: var(--radius);
+  background: var(--panel-2); font-size: 14px; min-height: 37px;
+  display: flex; align-items: center;
+}
+.src-tag {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--faint); margin-left: 6px;
+}
+
+/* ---- notes / errors ----------------------------------------------------------------------- */
+.note {
+  font-size: 12.5px; color: var(--muted); background: var(--panel-2);
+  border: 1px solid var(--line); border-left: 3px solid var(--accent);
+  border-radius: var(--radius); padding: 10px 14px; margin-top: 12px;
+}
+.note b { color: var(--ink); }
+.error {
+  background: var(--err-soft); border: 1px solid var(--err); color: var(--err);
+  border-radius: var(--radius); padding: 12px 16px;
+}
+.placeholder { color: var(--faint); padding: 48px 0; text-align: center; }
+.tag {
+  font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase;
+  letter-spacing: .06em; background: var(--blueprint-soft); color: var(--blueprint);
+  border-radius: 3px; padding: 1px 5px; margin-left: 5px; vertical-align: middle;
+}
+
+/* ---- dialogs (identity, settings) ------------------------------------------------------------ */
+.overlay {
+  position: fixed; inset: 0; background: rgba(20, 22, 24, .45);
+  display: flex; justify-content: center; z-index: 100;
+  overflow-y: auto; padding: 20px;
+}
+/* `margin: auto` centres it while still letting the overlay scroll when the
+   dialog is taller than the viewport — `align-items: center` would clip the
+   top out of reach instead. */
+.dialog {
+  background: var(--panel); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); box-shadow: var(--shadow-pop);
+  padding: 22px 24px; width: 380px; max-width: calc(100vw - 40px);
+  margin: auto; max-height: calc(100vh - 40px);
+  display: flex; flex-direction: column;
+}
+/* Long settings scroll inside the card; the actions stay pinned so Save is
+   always reachable without zooming out. */
+.dialog > h2, .dialog > .sub, .dialog-actions { flex: none; }
+#settingsBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
+.dialog-body {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  margin: 0 -24px; padding: 2px 24px;
+}
+.dialog-actions {
+  display: flex; gap: 8px; justify-content: flex-end; align-items: center;
+  margin: 14px -24px -22px; padding: 12px 24px;
+  border-top: 1px solid var(--line-strong); background: var(--panel-2);
+  border-radius: 0 0 var(--radius) var(--radius);
+}
+.dialog h2 { margin: 0 0 4px; font-size: 17px; }
+.dialog .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+.dialog .userlist { list-style: none; margin: 0 0 12px; padding: 0; }
+.dialog .userlist li { margin-bottom: 5px; }
+.dialog .userlist button {
+  width: 100%; text-align: left; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2);
+  font-family: var(--font-display); font-size: 14px;
+}
+.dialog .userlist button:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+/* ---- drawings workspace (Phase 2) ------------------------------------------------------- */
+.dw-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.dw-toolbar {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  padding: 9px 12px; margin-bottom: 10px;
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius);
+}
+.dw-toolbar .btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.dw-sep { width: 1px; height: 20px; background: var(--line-strong); margin: 0 4px; }
+.dw-swatch {
+  width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent;
+  padding: 0; cursor: pointer;
+}
+.dw-swatch.active { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel) inset; }
+.dw-holder {
+  position: relative; overflow: auto; max-height: calc(100vh - 300px);
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--panel-2); min-height: 320px;
+}
+.dw-holder canvas { display: block; }
+#dwPdf { background: #fff; }
+#dwInk { position: absolute; left: 0; top: 0; touch-action: none; cursor: crosshair; }
+.dw-textinput {
+  position: absolute; z-index: 5; min-width: 160px;
+  font: 600 14px Bahnschrift, 'Segoe UI', sans-serif;
+  background: rgba(255,255,255,.92); border: 1px dashed currentColor;
+  padding: 3px 6px; border-radius: 3px;
+}
+
+/* ---- schedule Gantt (Phase 4) ------------------------------------------------------------ */
+table.tbl.sched th.gantt-head { width: 42%; min-width: 260px; position: relative; }
+.gantt-ticks { position: relative; height: 12px; }
+.gantt-ticks span {
+  position: absolute; font-family: var(--font-mono); font-size: 9.5px;
+  color: var(--faint); white-space: nowrap; border-left: 1px solid var(--line);
+  padding-left: 3px; top: 0;
+}
+.gantt-cell { padding: 6px 12px !important; }
+.gantt-row { position: relative; height: 16px; background: var(--panel-2);
+  border-radius: 3px; overflow: hidden; }
+.gantt-bar {
+  position: absolute; top: 3px; height: 10px; border-radius: 2px;
+  background: var(--blueprint); opacity: .85; min-width: 3px;
+}
+.gantt-bar > i { display: block; height: 100%; background: rgba(0,0,0,.35); border-radius: 2px; }
+.gantt-bar.critical { background: var(--err); opacity: 1; }
+.gantt-bar.summary { background: var(--ink); height: 6px; top: 5px; opacity: .55; }
+.gantt-ms {
+  position: absolute; top: 3px; width: 10px; height: 10px; margin-left: -5px;
+  background: var(--accent); transform: rotate(45deg);
+}
+tr.sched-summary td { background: var(--panel-2); font-weight: 600; }
+.crit-dot {
+  display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--err); margin-right: 5px; vertical-align: middle;
+}
+
+/* ---- sent-vs-returned comparison (reply audit trail) --------------------------------- */
+.compare { border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; margin-top: 4px; }
+.compare-head {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+  background: var(--line); border-bottom: 1px solid var(--line-strong);
+}
+.compare-head .eyebrow { background: var(--panel-2); padding: 7px 10px; }
+.compare-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); }
+.compare-pane { background: #fff; padding: 8px; overflow: auto; max-height: 460px; display: flex; justify-content: center; }
+.compare-pane canvas { display: block; max-width: 100%; }
+.compare-nav {
+  display: flex; align-items: center; gap: 10px; justify-content: center;
+  padding: 8px; background: var(--panel-2); border-top: 1px solid var(--line);
+}
+tr.row-active > td { background: var(--accent-soft) !important; }
+
+/* ---- two-week look ahead: day grid --------------------------------------------------- */
+.la-scroll { overflow-x: auto; }
+/* Widths are min-widths only. Percentages here used to over-subscribe the
+   table — 17% + 4x12% plus the fixed day and delete columns came out wider
+   than 100% at mid-range widths, which is what produced the scroll bar. Auto
+   layout distributes the slack instead, and the sum of the minimums (~1050px)
+   is the real floor. The scroll container is a fallback for a genuinely narrow
+   window, not the normal state. */
+/* Minimums add up to ~985px with the Work Area column present, so the sheet
+   fits any real desktop pane without scrolling. */
+table.tbl.la-grid { width: 100%; }
+table.tbl.la-grid th, table.tbl.la-grid td { padding: 5px 5px; vertical-align: top; }
+table.tbl.la-grid .la-task { min-width: 140px; }
+table.tbl.la-grid .la-text { min-width: 88px; }
+/* Headers here must wrap. The global `table.tbl th { white-space: nowrap }`
+   put REQUIREMENTS FOR CUSTOMER on one 186px line, which set the table's
+   minimum width by itself; `anywhere` additionally keeps a single long word
+   out of the min-content calculation, so the declared minimums are the real
+   floor. Only bites when the pane is squeezed. */
+table.tbl.la-grid th { white-space: normal; overflow-wrap: anywhere; }
+table.tbl.la-grid th.la-day { white-space: nowrap; }
+table.tbl.la-grid textarea.la-wrap { min-width: 0; }
+table.tbl.la-grid .la-x { width: 22px; padding: 5px 2px; }
+table.tbl.la-grid .la-area-cell { padding-left: 5px; }
+.la-area-wrap { width: 104px; }
+.la-area-wrap select { width: 100%; max-width: 100%; text-overflow: ellipsis; }
+/* Cells wrap and grow; nothing hides behind an overflow. Height comes from
+   growCells() in JS, deliberately NOT `field-sizing: content` — that sizes the
+   textarea to its content on BOTH axes, so a long note widened its column and
+   dragged the whole table into a horizontal scroll. */
+textarea.ecell.la-wrap {
+  width: 100%; resize: none; overflow: hidden; min-height: 22px;
+  white-space: pre-wrap; word-break: break-word; line-height: 1.35; font: inherit;
+}
+/* The internal-only pair carries a tint so nobody has to remember which
+   columns get stripped before the customer sees the sheet. */
+table.tbl.la-grid th.la-text.internal { color: var(--accent); }
+table.tbl.la-grid th.la-text.internal::after {
+  content: "internal"; display: block; font-size: 9px; letter-spacing: .06em;
+  text-transform: uppercase; opacity: .7; font-weight: 600;
+}
+.la-area { font-size: 11px; padding: 2px 4px; width: 100%; max-width: 100%; }
+.la-swatch {
+  display: inline-block; width: 14px; height: 14px; border-radius: 3px;
+  border: 1px solid var(--line-strong); vertical-align: -2px; flex: none;
+}
+label.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+
+/* Prepared-by / start date / work areas share one header row — work areas are
+   a side control, not a full-width section. */
+.la-setup { display: grid; grid-template-columns: minmax(200px, 1fr) 190px 340px; gap: 14px; align-items: start; }
+@media (max-width: 1100px) { .la-setup { grid-template-columns: 1fr; } }
+
+.minicard {
+  border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--panel-2); align-self: start;
+}
+/* Collapsed, the card is exactly an input tall, so it sits on the same line
+   as Prepared By and Start Date instead of floating above them. */
+.minicard-head {
+  width: 100%; min-height: 38px; padding: 7px 10px; font-size: 11px; background: none;
+  letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); font-weight: 700;
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  border: none; cursor: pointer; font-family: inherit; text-align: left;
+}
+.la-setup .field > .minicard { margin: 0; }
+label .hint { text-transform: none; letter-spacing: 0; font-weight: 400; opacity: .7; }
+.minicard-head:hover { color: var(--ink); }
+.minicard.open .minicard-head { border-bottom: 1px solid var(--line); }
+.minicard-head .caret { display: inline-block; width: 10px; color: var(--faint); }
+.minicard-head .sub {
+  text-transform: none; letter-spacing: 0; font-weight: 400;
+  display: inline-flex; align-items: center; gap: 3px; white-space: nowrap;
+}
+.la-swatch.sm { width: 9px; height: 9px; border-radius: 2px; vertical-align: 0; }
+.minicard-body { padding: 8px 10px; }
+.minicard-body .none { padding: 2px 0 6px; }
+.la-area-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.la-area-row .ecell { flex: 1; min-width: 0; font-size: 12px; }
+.la-area-row.retired .ecell, .la-area-row.retired .la-swatch { opacity: .45; }
+.la-area-add { display: flex; gap: 6px; margin-top: 6px; }
+.la-area-add input { flex: 1; min-width: 0; }
+
+.la-preview { background: var(--panel-2); text-align: center; overflow-x: auto; }
+.la-preview canvas { max-width: 100%; border: 1px solid var(--line-strong); background: #fff; }
+table.tbl.la-grid th.la-day, table.tbl.la-grid td.la-day {
+  width: 26px; min-width: 26px; max-width: 26px; text-align: center; padding: 5px 1px;
+  border-left: 1px solid var(--line);
+}
+/* Each Sunday gets a stronger rule, so the weeks read as blocks. */
+table.tbl.la-grid .la-day.wk-start { border-left: 1px solid var(--line-strong); }
+/* Three weeks means seven more day columns. Rather than let them push the
+   table into a horizontal scroll, they get tighter — 21x21px still leaves the
+   day-of-week legible, and the checkbox shrinks to match. */
+table.tbl.la-grid.wk3 th.la-day, table.tbl.la-grid.wk3 td.la-day {
+  width: 21px; min-width: 21px; max-width: 21px; padding: 5px 0;
+}
+table.tbl.la-grid.wk3 th.la-day .dow { font-size: 9px; letter-spacing: .02em; }
+table.tbl.la-grid.wk3 th.la-day .dom { font-size: 11px; }
+table.tbl.la-grid.wk3 .la-check { width: 15px; height: 15px; }
+table.tbl.la-grid.wk3 .la-check::after { font-size: 11px; }
+table.tbl.la-grid.wk3 .la-task { min-width: 130px; }
+table.tbl.la-grid.wk3 .la-text { min-width: 80px; }
+.seg { display: inline-flex; gap: 0; }
+.seg .btn { border-radius: 0; margin: 0; }
+.seg .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.seg .btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+table.tbl.la-grid th.la-day .dow,
+table.tbl.la-grid th.la-day .dom { display: block; line-height: 1.25; }
+table.tbl.la-grid th.la-day .dom { font-size: 12px; color: var(--ink); font-weight: 700; }
+/* Weekends read as a distinct band so the work week is legible at a glance. */
+table.tbl.la-grid th.la-day.weekend { color: var(--accent); }
+table.tbl.la-grid th.la-day.weekend .dom { color: var(--accent); }
+table.tbl.la-grid td.la-day.weekend { background: var(--accent-soft); }
+.la-check {
+  appearance: none; -webkit-appearance: none; margin: 0;
+  width: 18px; height: 18px; border-radius: 3px; cursor: pointer;
+  border: 1px solid var(--line-strong); background: var(--panel);
+  display: inline-grid; place-content: center; transition: background .1s, border-color .1s;
+}
+/* A ticked day wears its row's work-area colour. Rows with no area fall back
+   to the accent, so --row-color / --row-ink are set per <tr> and read here. */
+.la-check:hover { border-color: var(--row-color, var(--accent)); }
+.la-check::after {
+  content: "✓"; font-size: 13px; line-height: 1; color: var(--row-ink, var(--accent-ink));
+  transform: scale(0); transition: transform .1s;
+}
+.la-check:checked {
+  background: var(--row-color, var(--accent));
+  border-color: var(--row-color, var(--accent));
+}
+.la-check:checked::after { transform: scale(1); }
+
+/* ---- mobile / iOS (Phase 5d) -------------------------------------------------
+   Full desktop parity on a phone, which means the dense surfaces each need a
+   phone *form* — not a shrunk desktop. Two ideas do most of the work:
+
+     * Data tables reflow into cards. Every <td> carries a data-label stamped
+       from its column header (labelCells() in app.js), so the header row can
+       be hidden and each cell prints its own caption. One rule set covers
+       every table on every page, including ones not written yet.
+     * The look-ahead day grid keeps its cells but lets them wrap into a day
+       strip, so a 21-day row becomes three readable weeks.
+--------------------------------------------------------------------------- */
+
+/* Safe areas: viewport-fit=cover means content can slide under the notch and
+   the home indicator unless we pay it back here. */
+.topbar { padding-left: max(18px, env(safe-area-inset-left));
+          padding-right: max(18px, env(safe-area-inset-right)); }
+.content { padding-left: max(28px, env(safe-area-inset-left));
+           padding-right: max(28px, env(safe-area-inset-right));
+           padding-bottom: max(60px, env(safe-area-inset-bottom)); }
+
+@media (max-width: 720px) {
+  /* iOS zooms the whole page when a focused input is under 16px. Every text
+     control gets 16px on a phone — this is the single most common reason a
+     web app feels broken on an iPhone. */
+  input, select, textarea,
+  .inline-form input, .inline-form select, .ecell { font-size: 16px; }
+
+  /* Apple's 44pt minimum for anything you tap. */
+  .btn, .iconbtn, .chip, .tabs button { min-height: 44px; }
+  .link.danger, table.tbl .link { min-width: 32px; min-height: 32px; }
+
+  .content { padding-top: 12px; }
+
+  /* --- chrome --------------------------------------------------------- */
+  .topbar { height: auto; flex-wrap: wrap; gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+  .brand .tagline { display: none; }             /* the mark alone is enough */
+  .job-picker { order: 10; flex: 1 1 100%; }     /* search gets its own line */
+  .topbar > span[style*="flex:1"] { display: none; }
+  #freshness { margin-left: auto; }
+
+  .titleblock { display: block; }
+  .titleblock .tb-cell { border-right: none; border-bottom: 1px solid var(--line);
+                         flex-direction: row; align-items: baseline; gap: 10px;
+                         justify-content: space-between; }
+  .titleblock .tb-cell:last-child { border-bottom: none; }
+  .titleblock .tb-main h1 { font-size: 18px; white-space: normal; }
+
+  .index-strip .cell { flex: 1 1 50%; min-width: 50%; }
+
+  .panel-head { flex-wrap: wrap; gap: 4px; }
+  .panel-body { padding: 12px 14px; }
+  .form-grid { grid-template-columns: 1fr; gap: 12px; }
+  .inline-form { padding: 12px 14px; }
+  .inline-form .grow, .inline-form input, .inline-form select { flex: 1 1 100%; min-width: 0; }
+
+  /* --- tables become cards -------------------------------------------- */
+  table.tbl thead { display: none; }
+  table.tbl, table.tbl tbody, table.tbl tr, table.tbl td { display: block; width: auto; }
+  table.tbl tr {
+    border: 1px solid var(--line-strong); border-radius: var(--radius);
+    margin: 0 0 10px; padding: 4px 0; background: var(--panel);
+  }
+  table.tbl tr:last-child { margin-bottom: 0; }
+  table.tbl td {
+    border: none; padding: 6px 12px; text-align: left;
+    display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  }
+  table.tbl td.num { text-align: left; }
+  /* The caption each cell prints for itself, from its column header. */
+  table.tbl td[data-label]::before {
+    content: attr(data-label);
+    font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--faint); flex: none;
+    max-width: 45%; text-align: left;
+  }
+  /* A cell with nothing in it is noise on a card, not a column to line up. */
+  table.tbl td:empty { display: none; }
+  table.tbl td > input, table.tbl td > select, table.tbl td > textarea { max-width: 60%; }
+  table.tbl tfoot td { font-weight: 700; }
+  table.tbl tr.clickable td:first-child { font-weight: 600; }
+
+  /* --- look ahead: the day grid wraps into weeks ----------------------- */
+  /* NB the selectors below carry `table.tbl` deliberately: the desktop rules
+     are `table.tbl.la-grid td.la-day`, and a shorter selector here loses on
+     specificity no matter that it comes later — which pinned the day cells at
+     their 26px desktop width instead of letting them wrap. */
+  table.tbl.la-grid { min-width: 0; }
+  .la-scroll { overflow-x: visible; }
+  /* The row is a flex container so the day cells wrap cleanly seven to a
+     line. Inline-block would have worked too, except the newlines between
+     cells in the template render as real whitespace and stole the seventh
+     day off the end of each week. */
+  table.tbl.la-grid tbody tr { display: flex; flex-wrap: wrap; padding: 8px 0 4px; }
+  table.tbl.la-grid td.la-task { border-left-width: 5px; border-left-style: solid;
+                                 display: block; flex: 1 1 100%; }
+  table.tbl.la-grid td.la-text,
+  table.tbl.la-grid td.la-x { flex: 1 1 100%; }
+  table.tbl.la-grid td.la-task::before,
+  table.tbl.la-grid td.la-area-cell::before { content: none; }
+  table.tbl.la-grid td.la-area-cell { display: block; flex: 1 1 100%; }
+  table.tbl.la-grid .la-area-wrap { width: 100%; }
+  /* Seven per line, so each week reads as its own row. */
+  table.tbl.la-grid td.la-day {
+    display: flex; flex-direction: column; align-items: center; gap: 3px;
+    flex: 0 0 calc(100% / 7); width: auto; min-width: 0; max-width: none;
+    padding: 5px 0; border-left: none; vertical-align: top;
+  }
+  table.tbl.la-grid td.la-day::before {
+    font-size: 9px; letter-spacing: 0; max-width: none; text-align: center;
+    white-space: nowrap;
+  }
+  table.tbl.la-grid td.la-day.weekend { background: var(--accent-soft); }
+  /* The three-week layout tightens day cells to 21px on a desktop, and
+     `.wk3` out-specifies the rule above — so it needs saying again here.
+     On a phone the weeks stack, so a third week costs a row, not width. */
+  table.tbl.la-grid.wk3 td.la-day {
+    flex: 0 0 calc(100% / 7); width: auto; min-width: 0; max-width: none;
+  }
+  table.tbl.la-grid.wk3 th.la-day .dow,
+  table.tbl.la-grid.wk3 th.la-day .dom { font-size: inherit; }
+  table.tbl.la-grid .la-check,
+  table.tbl.la-grid.wk3 .la-check { width: 28px; height: 28px; }   /* thumb-sized */
+  table.tbl.la-grid .la-check::after,
+  table.tbl.la-grid.wk3 .la-check::after { font-size: 16px; }
+  table.tbl.la-grid td.la-text { display: flex; }
+  table.tbl.la-grid td.la-x { text-align: right; justify-content: flex-end; }
+
+  /* --- schedule / gantt ------------------------------------------------ */
+  .gantt-wrap, .la-preview { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+  /* --- dialogs --------------------------------------------------------- */
+  .overlay { padding: 10px; }
+  .dialog { width: 100% !important; max-height: calc(100vh - 20px); }
+  .la-setup { grid-template-columns: 1fr; }
+}
+
+/* Phones proper: one column everywhere, and the tab strip scrolls. */
+@media (max-width: 480px) {
+  .content { padding-left: max(12px, env(safe-area-inset-left));
+             padding-right: max(12px, env(safe-area-inset-right)); }
+  .index-strip .cell { flex: 1 1 100%; min-width: 100%; }
+  .tabs { margin-bottom: 14px; }
+  .tabs button { padding: 9px 11px 10px; font-size: 13px; }
+  table.tbl td { padding: 6px 10px; }
+}
+
+/* Coarse pointers get bigger hit areas regardless of width — a tablet is
+   wide but still a finger. */
+@media (pointer: coarse) {
+  .la-check { width: 24px; height: 24px; }
+  table.tbl th { padding-top: 12px; padding-bottom: 12px; }
+}
+
+/* ---- offline status bar (Phase 5f) ------------------------------------------
+   Sits under the topbar, above the content, and only appears when it has
+   something true to say. */
+.netbar {
+  position: sticky; top: var(--topbar-h); z-index: 9;
+  padding: 8px max(28px, env(safe-area-inset-left));
+  font-size: 13px; line-height: 1.4;
+  background: var(--panel-2); color: var(--muted);
+  border-bottom: 1px solid var(--line-strong);
+}
+.netbar b { color: var(--ink); font-weight: 600; }
+.netbar.warn { background: var(--warn-soft); color: var(--warn); border-bottom-color: var(--warn); }
+.netbar.warn b { color: var(--warn); }
+.netbar.err { background: var(--err-soft); color: var(--err); border-bottom-color: var(--err); }
+.netbar.err b { color: var(--err); }
+.netbar .link { color: inherit; text-decoration: underline; font-size: inherit; }
+.netbar.info { background: var(--blueprint-soft); color: var(--blueprint);
+               border-bottom-color: var(--blueprint); }
+.netbar.info b { color: var(--blueprint); }
+
+@media (max-width: 720px) {
+  /* The topbar wraps on a phone, so it isn't a fixed height to sit under. */
+  .netbar { position: static; padding-left: max(12px, env(safe-area-inset-left)); }
+}

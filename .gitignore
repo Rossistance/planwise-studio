@@ -1,0 +1,29 @@
+# Render deploys from a Git repo, so what we DON'T commit matters.
+
+# Virtualenv and bytecode
+.venv/
+__pycache__/
+*.py[cod]
+
+# Everything PlanWise owns at runtime lives in the data directory — the
+# database, uploaded drawings, reply attachments, the pushed Vista extract,
+# the companion pairing token, the first-run setup token. None of it belongs
+# in source control, and some of it is secret.
+.planwise/
+*.db
+*.db-wal
+*.db-shm
+*.bak-*
+
+# The Vista extract itself: 7.6MB of company financials, delivered by push
+# (Phase 5b), never committed.
+*.xlsx
+
+# Local tooling
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.spec.bak
+
+# PyInstaller build output — the exe is a release artifact, not source

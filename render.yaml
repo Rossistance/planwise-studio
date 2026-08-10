@@ -1,0 +1,70 @@
+# Render blueprint for PlanWise (decision D27, Phase 5c).
+#
+# Two things about this service are deliberate and load-bearing:
+#
+#   * ONE INSTANCE. PlanWise stores everything in SQLite on a persistent disk
+#     (D9: one shared database, 5-6 concurrent writers). SQLite is entirely
+#     happy with that from a single process, and entirely unhappy shared
+#     between instances. A Render disk can only attach to one instance anyway,
+#     which enforces what we want — but numInstances says so out loud, so
+#     nobody scales it up later and corrupts the database.
+#
+#   * A PERSISTENT DISK. Render's container filesystem is ephemeral: without
+#     this, every deploy and every restart would wipe the database and every
+#     uploaded drawing. The disk holds ~4MB today, so 1GB is years of headroom.
+#     Note that disks require a paid instance type — the free tier cannot keep
+#     data, which for this app means it cannot be used at all.
+
+services:
+  - type: web
+    name: planwise
+    runtime: python
+    plan: starter                 # disks are unavailable on the free plan
+    region: ohio
+    numInstances: 1               # see above — never raise this
+    healthCheckPath: /api/health
+
+    buildCommand: pip install -r requirements.txt
+
+    # --proxy-headers + --forwarded-allow-ips: Render terminates TLS at its
+    # edge and forwards plain HTTP, so without these the app sees every request
+    # as http from the proxy's IP — wrong scheme for redirects, wrong client
+    # address in logs. Trusting any forwarder is correct here because the
+    # container is only reachable through that proxy.
+    startCommand: >
+      uvicorn backend.app:app
+      --host 0.0.0.0
+      --port $PORT
+      --proxy-headers
+      --forwarded-allow-ips '*'
+
+    disk:
+      name: planwise-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      # Everything PlanWise owns lives on the disk: SQLite, uploaded drawings,
+      # returned reply attachments, the pushed Vista extract.
+      - key: PLANWISE_DATA_DIR
+        value: /var/data
+
+      # Empty string = "don't go hunting a home directory for a OneDrive
+      # folder that cannot exist in a Linux container". The extract arrives by
+      # push instead (Phase 5b); this only disables discovery, not that.
+      - key: PLANWISE_VISTA_WORKBOOK
+        value: ""
+
+      # The shared secret vista_pull.py sends with the daily extract. Render
+      # generates it; read it from the dashboard and set the same value as
+      # PLANWISE_INGEST_TOKEN on the machine that runs the pull.
+      - key: PLANWISE_INGEST_TOKEN
+        generateValue: true
+
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+
+      # Unbuffered so uvicorn's log lines — including the first-run setup
+      # token — appear in Render's log tail immediately rather than in blocks.
+      - key: PYTHONUNBUFFERED
+        value: "1"

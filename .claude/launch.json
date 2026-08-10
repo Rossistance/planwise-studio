@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "planwise-v3",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "backend.app:app", "--host", "127.0.0.1", "--port", "8771"],
+      "port": 8771
+    }
+  ]
+}

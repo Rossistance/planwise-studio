@@ -74,9 +74,16 @@ _CURRENT_USER: "ContextVar[dict | None]" = ContextVar("planwise_user", default=N
 # Note what is NOT here: /api/companion/token. That's the secret that lets a
 # caller drive someone's Outlook, so it stays behind a session.
 _OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/logout",
+               "/api/auth/register", "/api/auth/companion-pair",
                "/api/auth/bootstrap", "/api/auth/status", "/api/companion/poll",
                "/api/vista/workbook"}
 _OPEN_PREFIXES = ()
+
+# What a PENDING account may still do while it waits on the approval screen:
+# the open paths (status is its heartbeat, logout its exit) plus change its
+# own password — an admin resetting a pending user's password sets
+# must_change, and gating the change endpoint would deadlock that screen.
+_PENDING_ALLOWED = {"/api/auth/password"}
 
 # Endpoints a companion legitimately WRITES to, with its own token instead of
 # a session: it runs with no browser open, so there is no session to have.
@@ -88,13 +95,45 @@ _OPEN_PREFIXES = ()
 _COMPANION_WRITES = re.compile(r"^/api/records/[^/]+/(replies|sent)$")
 
 
+def _companion_token(request: Request) -> str:
+    """Header first; the query param remains because the poll's manifest fetch
+    is a GET on an open path."""
+    return (request.headers.get("x-planwise-companion")
+            or request.query_params.get("token") or "")
+
+
+def _companion_user(token: str) -> dict | None:
+    """Whose companion is calling — or None if the token is wrong (or is the
+    legacy global one, handled separately below).
+
+    Per-user tokens are what finally give companion-filed replies an author:
+    until now the server had no way to tell whose Outlook a reply arrived in,
+    so every background capture recorded actor=NULL.
+    """
+    if not token:
+        return None
+    user = auth.user_by_companion_token(token)
+    return auth._public(user) if user else None
+
+
+def _legacy_companion_token_ok(token: str) -> bool:
+    """TRANSITIONAL — removed once every companion has re-paired.
+
+    Installed companions hold the one global pairing token. Refusing it the
+    moment this deploys would stop reply capture on every PC until someone is
+    physically at each one. Nothing is lost either way (filing is only marked
+    done on a 200), but a silent gap in detection is exactly what D35 exists
+    to prevent.
+    """
+    expected = ai.companion_token() or ""
+    return bool(token and expected and secrets.compare_digest(token, expected))
+
+
 def _companion_authorised(request: Request, path: str) -> bool:
     if not _COMPANION_WRITES.match(path):
         return False
-    token = (request.headers.get("x-planwise-companion")
-             or request.query_params.get("token") or "")
-    expected = ai.companion_token() or ""
-    return bool(token and expected and secrets.compare_digest(token, expected))
+    token = _companion_token(request)
+    return _companion_user(token) is not None or _legacy_companion_token_ok(token)
 
 
 @app.middleware("http")
@@ -108,12 +147,32 @@ async def require_session(request, call_next):
     path = request.url.path
     token = request.cookies.get(auth.COOKIE)
     user = auth.session_user(token) if token else None
+
+    # A companion presenting a per-user token becomes the context user for
+    # ATTRIBUTION only, and only on the two paths it may write to — which is
+    # why this resolution lives inside the _COMPANION_WRITES branch rather
+    # than beside the cookie lookup above. Hoisted out, a companion token
+    # would satisfy `user is not None` for every route in the app and become
+    # a skeleton key; there is a regression test that says so.
+    if user is None and _COMPANION_WRITES.match(path):
+        user = _companion_user(_companion_token(request))
+
     reset = _CURRENT_USER.set(user)
     try:
         if (path.startswith("/api/") and path not in _OPEN_PATHS
                 and not path.startswith(_OPEN_PREFIXES) and user is None
                 and not _companion_authorised(request, path)):
             return JSONResponse(status_code=401, content={"detail": "Sign in to continue."})
+        if (user is not None and user.get("pending")
+                and path.startswith("/api/") and path not in _OPEN_PATHS
+                and path not in _PENDING_ALLOWED):
+            # Signed in but not yet approved: a real session, held at the
+            # door. `pending` in the body is what the frontend keys the
+            # waiting screen on — NOT the 403 status, which _require_admin
+            # also uses and which must not open that screen.
+            return JSONResponse(status_code=403, content={
+                "detail": "Your access request hasn't been approved yet.",
+                "pending": True})
         return await call_next(request)
     finally:
         _CURRENT_USER.reset(reset)
@@ -496,9 +555,14 @@ def auth_status():
         print(f"[PlanWise] No administrator yet. Setup token: {token}\n"
               f"[PlanWise]   also written to {config.data_dir() / auth.SETUP_TOKEN_FILE}",
               flush=True)
+    me = _CURRENT_USER.get()
     return {"needs_setup": needs_setup,
-            "signed_in": _CURRENT_USER.get() is not None,
-            "user": _CURRENT_USER.get()}
+            "signed_in": me is not None,
+            # The waiting screen polls this endpoint and watches this flip.
+            # It is an open path, so the poll keeps working while the account
+            # itself is held at the door.
+            "pending": bool(me and me.get("pending")),
+            "user": me}
 
 
 @app.post("/api/auth/bootstrap")
@@ -521,6 +585,52 @@ def auth_login(response: Response, request: Request, body: dict = Body(...)):
         raise HTTPException(status_code=401, detail=str(exc)) from exc
     _set_session_cookie(response, request, token)
     return {"user": user}
+
+
+def _notify_admins(title: str, body_text: str, *, url: str = "/",
+                   tag: str | None = None) -> None:
+    """Push to every working administrator's devices. Best-effort — push.send
+    never raises, and an admin with no subscribed device simply isn't buzzed."""
+    for account in auth.list_accounts():
+        if account["is_admin"] and not account["disabled"] and not account["pending"]:
+            push.send(title, body_text, url=url, tag=tag, user=account["name"])
+
+
+@app.post("/api/auth/register")
+def auth_register(response: Response, request: Request, body: dict = Body(...)):
+    """Self-service sign-up. The account works immediately — signed in, cookie
+    set — but pending, so the waiting screen is all it can reach until an
+    administrator approves it under Settings → Users."""
+    try:
+        user = auth.register(body.get("email", ""), body.get("first_name", ""),
+                             body.get("last_name", ""), body.get("password", ""))
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    _set_session_cookie(response, request, auth.issue_session(user))
+    # The push leads with the EMAIL: with no server-side mail there is no
+    # verification step, so the address an admin reads here is the identity
+    # they are approving. Fixed tag — a flood of sign-ups collapses into one
+    # notification per device rather than one buzz each.
+    _notify_admins("PlanWise access request",
+                   f"{user['name']} <{user['email']}> requested access.",
+                   url="/#users", tag="registrations")
+    return {"user": user}
+
+
+@app.post("/api/auth/companion-pair")
+def auth_companion_pair(body: dict = Body(...)):
+    """Sign-in credentials in, this user's companion token out.
+
+    Open by necessity — the companion is pairing precisely because it holds no
+    credential yet. Not a new guessing oracle: /api/auth/login is already open
+    and answers the same question, with the same deliberately vague refusal
+    and the same ~0.2s PBKDF2 cost per attempt.
+    """
+    try:
+        return auth.companion_pair(body.get("email", ""), body.get("password", ""),
+                                   body.get("device"))
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
 
 
 @app.post("/api/auth/logout")
@@ -555,7 +665,56 @@ def _require_admin() -> dict:
 
 @app.get("/api/users")
 def users():
+    # Admin-gated since self-service registration: this list now carries
+    # pending strangers' names and email addresses. That is the review queue —
+    # for the reviewer, not for every signed-in account.
+    _require_admin()
     return {"users": auth.list_accounts()}
+
+
+@app.post("/api/users/{name}/approved")
+def approve_user(name: str):
+    me = _require_admin()
+    user = auth.approve_account(name, actor=me["name"])
+    if user is None:
+        raise HTTPException(status_code=404, detail="No such user.")
+    return user
+
+
+@app.delete("/api/users/{name}")
+def delete_user(name: str):
+    """Deny a pending request, or remove an account outright."""
+    me = _require_admin()
+    if name.strip().lower() == me["name"].strip().lower():
+        raise HTTPException(status_code=422, detail="You can't remove your own account.")
+    try:
+        if not auth.delete_account(name, actor=me["name"]):
+            raise HTTPException(status_code=404, detail="No such user.")
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"deleted": name}
+
+
+@app.post("/api/users/{name}/admin")
+def set_user_admin(name: str, body: dict = Body(...)):
+    me = _require_admin()
+    try:
+        if not auth.set_admin(name, bool(body.get("is_admin")), actor=me["name"]):
+            raise HTTPException(status_code=404, detail="No such user.")
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"name": name, "is_admin": bool(body.get("is_admin"))}
+
+
+@app.post("/api/users/{name}/email")
+def set_user_email(name: str, body: dict = Body(...)):
+    """Backfill or correct an address — how the bootstrap account, which
+    predates email sign-in, gets one."""
+    me = _require_admin()
+    try:
+        return auth.set_email(name, body.get("email", ""), actor=me["name"])
+    except auth.AuthError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.post("/api/users")
@@ -919,14 +1078,24 @@ def patch_settings(body: dict = Body(...),
 
 @app.get("/api/companion/token")
 def get_companion_token():
-    return {"token": ai.companion_token()}
+    """The signed-in user's OWN companion token, minted on first ask.
+
+    This is what the browser puts in the body of its calls to the companion on
+    127.0.0.1, so drafting works when the desk companion is paired to the same
+    person. A different person signed in at that desk gets the companion's
+    401 — correct rather than unfortunate: their mail would otherwise leave
+    from someone else's mailbox (D10).
+    """
+    me = _CURRENT_USER.get()
+    return {"token": auth.companion_token_for(me["id"]), "user_name": me["name"]}
 
 
 @app.get("/api/companion/poll")
-def companion_poll(token: str | None = None):
+def companion_poll(request: Request, token: str | None = None):
     """Manifest for a companion's background poll: which threads to watch and
     how often. Token-gated because it names live job/RFI subjects."""
-    if token != ai.companion_token():
+    presented = _companion_token(request) or (token or "")
+    if not (_companion_user(presented) or _legacy_companion_token_ok(presented)):
         raise HTTPException(status_code=401, detail="Bad companion token.")
     s = ai.get_settings()
     return {

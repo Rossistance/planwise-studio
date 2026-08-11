@@ -66,6 +66,9 @@ async function api(path, opts = {}) {
     // disabled). Bounce straight to sign-in rather than leaving the page
     // throwing errors at every interaction.
     if (r.status === 401) { currentUser = null; showSignIn(); }
+    // Keyed on the flag, NOT on 403: "Administrators only" is also a 403 and
+    // must not throw an approved user onto the waiting screen.
+    if (body.pending === true) showSignIn({ pending: true });
     throw new Error(body.detail || `${r.status} ${r.statusText}`);
   }
   if (method === "GET") { OFFLINE.put(path, body); OFFLINE.markLive(); }
@@ -102,51 +105,163 @@ function signInHTML(status, error) {
         <div class="dialog-actions"><button class="btn primary" type="submit">Set password</button></div>
       </form>`;
   }
+  if (status.pending) return waitingHTML(status);
+  if (status.register) {
+    return `<h2>Create your account</h2>
+      <div class="sub">Sign up with your work email. An administrator approves new
+        accounts before they see job data — usually within a few minutes.</div>
+      ${err}
+      <form id="authForm" data-mode="register">
+        <div class="field"><label>Work email</label>
+          <input name="email" type="email" required autocomplete="email"></div>
+        <div class="row2">
+          <div class="field"><label>First name</label>
+            <input name="first_name" required autocomplete="given-name"></div>
+          <div class="field"><label>Last name</label>
+            <input name="last_name" required autocomplete="family-name"></div>
+        </div>
+        <div class="field"><label>Set a password</label>
+          <input name="password" type="password" required minlength="8" autocomplete="new-password"></div>
+        <div class="dialog-actions"><button class="btn primary" type="submit">Request access</button></div>
+      </form>
+      <div class="authswap">Already have an account?
+        <button class="link" data-auth-mode="login">Sign in</button></div>`;
+  }
   return `<h2>Sign in</h2>
-    <div class="sub">Your name is recorded on everything you change — six people share this data.</div>
+    <div class="sub">Your name is recorded on everything you change — the team shares this data.</div>
     ${err}
     <form id="authForm" data-mode="login">
-      <div class="field"><label>Name</label><input name="name" required autocomplete="username"></div>
+      <div class="field"><label>Work email</label>
+        <input name="name" required autocomplete="username"></div>
       <div class="field"><label>Password</label>
         <input name="password" type="password" required autocomplete="current-password"></div>
       <div class="dialog-actions"><button class="btn primary" type="submit">Sign in</button></div>
-    </form>`;
+    </form>
+    <div class="authswap">First time here?
+      <button class="link" data-auth-mode="register">Create an account</button></div>`;
 }
+
+/* The approval gate. A registered account is genuinely signed in — it just
+   can't see anything yet — so this is a held door rather than an error, and
+   it says so plainly rather than looking like a failure. */
+function waitingHTML(status) {
+  const approved = status.approved;
+  return `<h2>${approved ? "Approved" : "Request under review"}</h2>
+    <div class="waitbox">
+      <div class="spinner${approved ? " done" : ""}" aria-hidden="true"></div>
+      <div>
+        <div class="waitstatus">${approved
+          ? "You're in — taking you to PlanWise…"
+          : "Waiting for an administrator to approve your access."}</div>
+        <div class="hint small muted">${approved ? ""
+          : `Signed in as <span class="mono">${esc(status.user?.email || "")}</span>.
+             They're notified on their phone, so this is usually quick. You can
+             leave this open — it updates by itself.`}</div>
+      </div>
+    </div>
+    ${approved ? "" : `<div class="dialog-actions">
+      <button class="btn" data-auth-signout>Sign out</button></div>`}`;
+}
+
+/* Poll while the door is shut. /api/auth/status is an open path, so it keeps
+   answering a pending session; it is fetched raw and never cached, so the
+   answer is always the server's current one. */
+let waitTimer = null;
+
+function watchForApproval() {
+  clearTimeout(waitTimer);
+  waitTimer = setTimeout(async () => {
+    let status;
+    try { status = await (await fetch("/api/auth/status")).json(); }
+    catch { watchForApproval(); return; }          // offline: keep waiting
+
+    if (!status.signed_in) {
+      // The account is gone — denied, or removed. The server can't say which:
+      // the row no longer exists. Fall back to sign-in with neutral wording
+      // rather than inventing a reason.
+      showSignIn({ ...status, pending: false },
+                 "That account is no longer active. Ask your administrator.");
+      return;
+    }
+    if (status.pending) { watchForApproval(); return; }
+
+    $("#identityBody").innerHTML = waitingHTML({ ...status, approved: true });
+    setTimeout(async () => { if (signedIn(status.user)) await boot(); }, 900);
+  }, 4000);
+}
+
+/* Which card a returning browser opens on. A machine that has signed in
+   before gets Sign in; a brand-new one gets Create an account, because on a
+   fresh device that is overwhelmingly what's wanted. Either way both are one
+   click apart, so a wrong guess costs nothing. */
+const SEEN_KEY = "planwise.hasAccount";
+const hasAccountHere = () => localStorage.getItem(SEEN_KEY) === "1";
 
 async function showSignIn(status, error) {
   if (!status) {
     try { status = await (await fetch("/api/auth/status")).json(); }
     catch { status = { needs_setup: false }; }
   }
+  if (status.register === undefined && !status.needs_setup && !status.must_change
+      && !status.pending) {
+    status = { ...status, register: !hasAccountHere() };
+  }
   $("#identityBody").innerHTML = signInHTML(status, error);
   authBox().classList.remove("hidden");
   $("#authForm")?.querySelector("input")?.focus();
+  if (status.pending) watchForApproval();
 }
 
 function signedIn(user) {
   currentUser = user.name;
+  // Companion tokens are per person now, so a cached one belongs to whoever
+  // was signed in before. Kept, it would draft this person's mail from that
+  // person's mailbox — or more likely just 401 confusingly.
+  companionToken = null;
   $("#userChip").textContent = user.name;
   $("#userChip").dataset.admin = user.is_admin ? "1" : "";
+  // Pending is checked BEFORE must_change: an admin who resets a pending
+  // account's password sets both, and showing the change-password card to
+  // someone who can't reach the app yet is a dead end.
+  if (user.pending) { showSignIn({ pending: true, user }); return false; }
   if (user.must_change_password) { showSignIn({ must_change: true }); return false; }
+  localStorage.setItem(SEEN_KEY, "1");
   authBox().classList.add("hidden");
   return true;
 }
+
+authBox().addEventListener("click", async (e) => {
+  const swap = e.target.closest("[data-auth-mode]");
+  if (swap) {
+    showSignIn({ register: swap.dataset.authMode === "register" });
+    return;
+  }
+  if (e.target.closest("[data-auth-signout]")) {
+    clearTimeout(waitTimer);
+    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    currentUser = null;
+    showSignIn({ register: false });
+  }
+});
 
 authBox().addEventListener("submit", async (e) => {
   const f = e.target.closest("#authForm");
   if (!f) return;
   e.preventDefault();
   const data = Object.fromEntries(new FormData(f).entries());
+  const mode = f.dataset.mode;
   const route = { bootstrap: "/api/auth/bootstrap", login: "/api/auth/login",
-                  change: "/api/auth/password" }[f.dataset.mode];
+                  register: "/api/auth/register",
+                  change: "/api/auth/password" }[mode];
   const btn = f.querySelector("button[type=submit]");
   btn.disabled = true;
   try {
     const out = await api(route, { method: "POST", body: JSON.stringify(data) });
     if (signedIn(out.user)) { await boot(); }
   } catch (err) {
-    const status = f.dataset.mode === "bootstrap" ? { needs_setup: true }
-                 : f.dataset.mode === "change" ? { must_change: true } : {};
+    const status = mode === "bootstrap" ? { needs_setup: true }
+                 : mode === "change" ? { must_change: true }
+                 : { register: mode === "register" };
     showSignIn(status, err.message);
   }
 });
@@ -157,6 +272,8 @@ async function boot() {
   if (!signedIn(status.user)) return;
   route();
   refreshOutbox();
+  // Arriving from the "access request" push lands straight on the queue.
+  if (location.hash === "#users" && status.user.is_admin) openSettings("users");
 }
 
 /* ---- theme ------------------------------------------------------------------ */
@@ -246,6 +363,13 @@ function parseHash() {
 }
 
 window.addEventListener("hashchange", route);
+
+/* The access-request notification deep-links to #users. Tapping it while
+   PlanWise is already open only changes the hash — no reload — so the queue
+   has to open from here as well as from boot(). */
+window.addEventListener("hashchange", () => {
+  if (location.hash === "#users" && $("#userChip").dataset.admin) openSettings("users");
+});
 
 async function route() {
   const target = parseHash();
@@ -2215,10 +2339,11 @@ window.addEventListener("focus", () => {
 
 const settingsDlg = $("#settingsDlg");
 
-$("#settingsBtn").addEventListener("click", async () => {
+$("#settingsBtn").addEventListener("click", () => openSettings());
+
+async function openSettings(focus) {
   settingsDlg.classList.remove("hidden");
   const { settings, spend } = await api("/api/settings");
-  const { token } = await api("/api/companion/token");
   const f = (key, label, type = "text", placeholder = "") => `
     <div class="field" style="margin-bottom:10px"><label>${label}</label>
     <input data-setting="${key}" type="${type}" value="${esc(settings[key] || "")}" placeholder="${placeholder}"></div>`;
@@ -2246,10 +2371,12 @@ $("#settingsBtn").addEventListener("click", async () => {
     <div class="note" style="margin-bottom:10px">
       This month: ~$${(spend.spent_est || 0).toFixed(2)} of $${(spend.cap || 0).toFixed(2)} (estimates).
       At the cap, drafting falls back to templates — nothing breaks.</div>
-    <div class="field" style="margin-bottom:12px"><label>Companion pairing token</label>
-      <div class="ro mono" style="user-select:all">${esc(token)}</div>
-      <div class="hint small muted">Auto-paired on this PC. Teammates paste it into
-      <span class="mono">~/.planwise/companion_token.txt</span> next to their companion.</div></div>
+    <div class="field" style="margin-bottom:12px"><label>Outlook companion</label>
+      <div class="hint small muted">Mail is drafted in <b>your own</b> Outlook, on the PC in
+        front of you — so the companion installs per person. It pairs by signing in with
+        your PlanWise email and password; there is no token to copy. Without one, sharing
+        still works: PlanWise hands you an email file that opens in Outlook as a draft.</div></div>
+    <div id="usersPane"></div>
     <div class="field" style="margin-bottom:12px"><label>Notifications on this device</label>
       <div class="inline-form" style="border:none;background:none;padding:0;gap:8px">
         <span class="grow small" id="pushState">checking…</span>
@@ -2273,6 +2400,126 @@ $("#settingsBtn").addEventListener("click", async () => {
       <button class="btn primary" data-save-settings>Save</button>
     </div>`;
   refreshPushUI();
+  if ($("#userChip").dataset.admin) {
+    await refreshUsers();
+    if (focus === "users") $("#usersPane")?.scrollIntoView({ block: "start" });
+  }
+}
+
+/* ---- Settings -> Users (administrators only) --------------------------------------------
+   Registration is self-service, so this is where a request becomes access.
+   Pending sits at the top and leads with the EMAIL: with no server-side mail
+   there is nothing verifying the address, which makes this screen itself the
+   verification step. Approving a stranger you don't recognise is the failure
+   mode to design against, so the address is the biggest thing on the row. */
+
+async function refreshUsers() {
+  const pane = $("#usersPane");
+  if (!pane) return;
+  let users;
+  try { users = (await api("/api/users")).users || []; }
+  catch { pane.innerHTML = ""; return; }           // not an admin: show nothing
+
+  const pending = users.filter((u) => u.pending);
+  const active = users.filter((u) => !u.pending);
+  const me = (currentUser || "").toLowerCase();
+
+  const row = (u) => {
+    const isMe = u.name.toLowerCase() === me;
+    const acts = [];
+    if (u.pending) {
+      acts.push(`<button class="link" data-user-approve="${esc(u.name)}">Approve</button>`);
+      acts.push(`<button class="link" data-user-delete="${esc(u.name)}">Deny</button>`);
+    } else {
+      if (!isMe) {
+        acts.push(`<button class="link" data-user-disable="${esc(u.name)}"
+          data-to="${u.disabled ? "0" : "1"}">${u.disabled ? "Enable" : "Disable"}</button>`);
+        acts.push(`<button class="link" data-user-admin="${esc(u.name)}"
+          data-to="${u.is_admin ? "0" : "1"}">${u.is_admin ? "Remove admin" : "Make admin"}</button>`);
+      }
+      acts.push(`<button class="link" data-user-email="${esc(u.name)}">${u.email ? "Change email" : "Add email"}</button>`);
+      acts.push(`<button class="link" data-user-password="${esc(u.name)}">Reset password</button>`);
+      if (!isMe) acts.push(`<button class="link" data-user-delete="${esc(u.name)}">Remove</button>`);
+    }
+    return `<div class="urow">
+      <div class="uwho">
+        <div class="uname">${esc(u.name)}
+          ${u.is_admin ? '<span class="tag">admin</span>' : ""}
+          ${u.disabled ? '<span class="tag">disabled</span>' : ""}
+          ${isMe ? '<span class="tag">you</span>' : ""}</div>
+        <div class="umail">${esc(u.email || "no email on this account")}</div>
+      </div>
+      <div class="uacts">${acts.join("")}</div>
+    </div>`;
+  };
+
+  pane.innerHTML = `
+    <div class="field" style="margin-bottom:12px"><label>Users</label>
+      ${pending.length ? `<div class="upending">
+        <div class="small" style="margin-bottom:4px"><b>${pending.length} waiting for approval.</b>
+          Check the email address — it's the only thing identifying them.</div>
+        ${pending.map(row).join("")}
+      </div>` : ""}
+      ${active.map(row).join("")}
+      <div id="userMsg" class="hint small muted" style="margin-top:6px"></div>
+    </div>`;
+}
+
+const userMsg = (t) => { const el = $("#userMsg"); if (el) el.textContent = t; };
+
+settingsDlg.addEventListener("click", async (e) => {
+  const hit = (attr) => e.target.closest(`[data-user-${attr}]`);
+  const run = async (fn, done) => {
+    try { await fn(); await refreshUsers(); userMsg(done); }
+    catch (err) { userMsg(err.message); }
+  };
+
+  const ap = hit("approve");
+  if (ap) return run(
+    () => api(`/api/users/${encodeURIComponent(ap.dataset.userApprove)}/approved`, { method: "POST" }),
+    `${ap.dataset.userApprove} is in — their screen lets them through within a few seconds.`);
+
+  const del = hit("delete");
+  if (del) {
+    const name = del.dataset.userDelete;
+    if (!confirm(`Remove ${name}? Their sign-in stops working immediately and anything `
+      + `they queued but never sent is discarded. Work they did stays in the record.`)) return;
+    return run(() => api(`/api/users/${encodeURIComponent(name)}`, { method: "DELETE" }),
+               `${name} removed.`);
+  }
+
+  const dis = hit("disable");
+  if (dis) return run(
+    () => api(`/api/users/${encodeURIComponent(dis.dataset.userDisable)}/disabled`,
+              { method: "POST", body: JSON.stringify({ disabled: dis.dataset.to === "1" }) }),
+    dis.dataset.to === "1" ? "Disabled — their sessions are gone too." : "Enabled.");
+
+  const adm = hit("admin");
+  if (adm) return run(
+    () => api(`/api/users/${encodeURIComponent(adm.dataset.userAdmin)}/admin`,
+              { method: "POST", body: JSON.stringify({ is_admin: adm.dataset.to === "1" }) }),
+    adm.dataset.to === "1" ? "They can now approve people too." : "Admin removed.");
+
+  const mail = hit("email");
+  if (mail) {
+    const name = mail.dataset.userEmail;
+    const email = prompt(`Email address for ${name} — this is what they sign in with:`);
+    if (!email) return;
+    return run(() => api(`/api/users/${encodeURIComponent(name)}/email`,
+                         { method: "POST", body: JSON.stringify({ email }) }),
+               `${name} now signs in with ${email}.`);
+  }
+
+  const pw = hit("password");
+  if (pw) {
+    const name = pw.dataset.userPassword;
+    const password = prompt(`Temporary password for ${name} (at least 8 characters). `
+      + `They'll be made to change it on their next sign-in:`);
+    if (!password) return;
+    return run(() => api(`/api/users/${encodeURIComponent(name)}/password`,
+                         { method: "POST", body: JSON.stringify({ password }) }),
+               `Done — give ${name} that password; they'll replace it themselves.`);
+  }
 });
 
 /* Notification controls under Settings. Per device, because a subscription

@@ -449,6 +449,53 @@ select { cursor: pointer; }
 }
 .dialog .userlist button:hover { border-color: var(--accent); background: var(--accent-soft); }
 
+/* ---- sign in / sign up / the approval gate --------------------------------------------- */
+/* First and last name sit side by side; they collapse on a phone, where two
+   16px inputs in a 380px dialog would each be too narrow to read. */
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 460px) { .row2 { grid-template-columns: 1fr; gap: 0; } }
+
+.authswap {
+  margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line);
+  font-size: 13px; color: var(--muted); text-align: center;
+}
+.authswap .link { font-size: 13px; }
+
+.waitbox { display: flex; gap: 14px; align-items: flex-start; margin: 6px 0 4px; }
+.waitstatus { font-size: 14px; margin-bottom: 4px; }
+.spinner {
+  flex: none; width: 26px; height: 26px; border-radius: 50%;
+  border: 3px solid var(--line-strong); border-top-color: var(--accent);
+  animation: spin 900ms linear infinite;
+}
+/* Approved: the ring stops and goes solid, so the state change is visible
+   rather than merely worded. */
+.spinner.done {
+  border-color: var(--good, #2e7d32); animation: none;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
+/* ---- Settings -> Users ------------------------------------------------------------------ */
+.urow {
+  display: flex; gap: 10px; align-items: center; justify-content: space-between;
+  padding: 8px 0; border-bottom: 1px solid var(--line);
+}
+.urow:last-child { border-bottom: 0; }
+.urow .uwho { min-width: 0; }
+.urow .uname { font-size: 13.5px; }
+.urow .umail {
+  font-family: var(--font-mono); font-size: 11px; color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.urow .uacts { display: flex; gap: 6px; flex: none; flex-wrap: wrap; justify-content: flex-end; }
+.urow .uacts .link { font-size: 12px; }
+.upending { background: var(--accent-soft); margin: 0 -24px; padding: 8px 24px; }
+@media (max-width: 460px) {
+  .urow { flex-direction: column; align-items: stretch; }
+  .urow .uacts { justify-content: flex-start; }
+}
+
 /* ---- drawings workspace (Phase 2) ------------------------------------------------------- */
 .dw-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .dw-toolbar {

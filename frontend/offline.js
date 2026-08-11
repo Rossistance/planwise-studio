@@ -75,12 +75,18 @@ const OFFLINE = (() => {
 
   /** Only plain JSON writes are queueable. A file upload can't be replayed
       from localStorage, and anything talking to the local companion is
-      pointless without the network anyway. */
+      pointless without the network anyway.
+
+      `users` is excluded for a different reason than the rest: account
+      administration must take effect when it is decided, not whenever a
+      laptop next finds signal. Silently queueing "disable this account" or
+      "approve this stranger" and replaying it hours later is the wrong answer
+      to every one of those questions. */
   function queueable(path, opts) {
     const method = (opts.method || "GET").toUpperCase();
     if (!["POST", "PATCH", "PUT", "DELETE"].includes(method)) return false;
     if (opts.body && typeof opts.body !== "string") return false;   // FormData
-    return !/\/(share|package|draft|companion|vista\/workbook|auth)\b/.test(path);
+    return !/\/(share|package|draft|companion|vista\/workbook|auth|users)\b/.test(path);
   }
 
   function enqueue(path, opts) {

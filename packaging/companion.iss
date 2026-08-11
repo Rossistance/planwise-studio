@@ -83,7 +83,15 @@ begin
     configured while quietly failing. The companion's own page proves them
     against PlanWise before writing anything. }
   Server := Trim(PairPage.Values[0]);
-  if Pos('http', Server) <> 1 then Exit;
+
+  { A silent install never shows the wizard, so Values[0] is still the literal
+    'https://' placeholder — which passed the old Pos('http', ...) check and
+    overwrote a working companion's address with nonsense. Found by running
+    /VERYSILENT against a real machine. Require an actual host after the
+    scheme, and never write over an address that is already there. }
+  if (Server = '') or (Server = 'https://') or (Server = 'http://') then Exit;
+  if (Pos('https://', Server) <> 1) and (Pos('http://', Server) <> 1) then Exit;
+  if FileExists(PairDir() + '\server_url.txt') then Exit;
 
   ForceDirectories(PairDir());
   SaveStringToFile(PairDir() + '\server_url.txt', Server, False);

@@ -234,9 +234,11 @@ def test_mark_sent_records_who_sent_it():
 def test_topic_normalization_matches_this_tenants_external_prefix():
     """The real failure: an [External] transport rule rewrote the reply's
     ConversationTopic, so exact matching found nothing."""
-    import sys
-    sys.path.insert(0, "companion")
-    from companion import _norm_topic
+    # Fully qualified on purpose: `sys.path.insert("companion")` plus a bare
+    # `from companion import …` only resolves to the flat module while nothing
+    # has yet imported the PACKAGE, so it broke the moment another test file
+    # imported companion.companion first.
+    from companion.companion import _norm_topic
 
     sent = "RFI 002 — Siemens - Wendell"
     for reply in ["[External] RFI 002 — Siemens - Wendell",

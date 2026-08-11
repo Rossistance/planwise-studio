@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import json
 import logging
 import re
 import tempfile
@@ -71,7 +72,12 @@ except Exception as exc:  # noqa: BLE001 - never block startup over this
         "truststore unavailable, TLS will fall back to certifi: %s", exc)
 
 PAIR_DIR = Path.home() / ".planwise"
-TOKEN_FILE = PAIR_DIR / "companion_token.txt"
+# The pairing lives in one JSON file now: token, server and the user it belongs
+# to. Its own name, rather than reusing companion_token.txt, so an upgraded PC
+# still holding the old company-wide token reads as UNPAIRED and gets the
+# sign-in page instead of the "already paired" refusal.
+AUTH_FILE = PAIR_DIR / "companion_auth.json"
+TOKEN_FILE = PAIR_DIR / "companion_token.txt"   # legacy; deleted once re-paired
 SERVER_FILE = PAIR_DIR / "server_url.txt"
 DEFAULT_SERVER = "http://127.0.0.1:8771"
 PORT = 8772                   # loopback only; the launcher binds the same
@@ -118,15 +124,35 @@ WATCH_CHECK = 30.0           # how often to prove the subscription is still aliv
 WATCH_RETRY = 15.0           # wait before retrying when Outlook is closed
 
 
-def _expected_token() -> str | None:
+def _auth() -> dict:
+    """The pairing on this PC: {token, server, user_name}.
+
+    Written by /pair after PlanWise verifies an email and password. The old
+    companion_token.txt held one company-wide secret that every teammate had
+    to be handed; it is deliberately NOT read as a pairing any more — a stale
+    copy of it is treated as unpaired so the pairing page comes back rather
+    than the 409 guard turning an upgraded PC into a dead end.
+    """
     try:
-        return TOKEN_FILE.read_text(encoding="utf-8").strip() or None
-    except OSError:
-        return None
+        data = json.loads(AUTH_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) and data.get("token") else {}
+
+
+def _expected_token() -> str | None:
+    return _auth().get("token")
+
+
+def paired_user() -> str | None:
+    return _auth().get("user_name")
 
 
 def server_url() -> str:
-    try:
+    url = (_auth().get("server") or "").strip()
+    if url:
+        return url
+    try:                                    # pre-pairing hint from the installer
         return SERVER_FILE.read_text(encoding="utf-8").strip() or DEFAULT_SERVER
     except OSError:
         return DEFAULT_SERVER
@@ -136,9 +162,17 @@ def _check(token: str | None) -> None:
     expected = _expected_token()
     if expected is None:
         raise HTTPException(status_code=503, detail=(
-            f"Companion not paired: put the token from PlanWise Settings into {TOKEN_FILE}"))
+            "This PC's companion isn't paired yet. Open "
+            f"http://127.0.0.1:{PORT}/pair and sign in with your PlanWise email."))
     if token != expected:
-        raise HTTPException(status_code=401, detail="Bad companion token.")
+        # Name whose companion this is. The usual cause is two people sharing a
+        # desk: drafting from here would put their mail in someone else's
+        # Sent Items, so refusing is right — but silence would look broken.
+        who = paired_user()
+        raise HTTPException(status_code=401, detail=(
+            f"This PC's companion is paired to {who}. Sign in to PlanWise as {who} "
+            "to draft from here, or re-pair it to yourself."
+            if who else "Bad companion token."))
 
 
 def _outlook():
@@ -184,6 +218,7 @@ def _parse_since(value) -> datetime | None:
 @app.get("/health")
 def health():
     info = {"companion": "PlanWise", "paired": _expected_token() is not None,
+            "paired_user": paired_user(),
             "server": server_url(), "poll": poll_state, "watch": watch_state}
     try:
         _app, ns = _outlook()
@@ -212,15 +247,20 @@ PAIR_PAGE = """<!doctype html><meta charset="utf-8"><title>Pair PlanWise Compani
  .msg{margin-top:14px;font-size:13.5px;min-height:20px}
 </style>
 <div class="card">
-  <h1>Pair this PC with PlanWise</h1>
-  <p>Mail is drafted in <b>your</b> Outlook, on this machine. Paste the pairing token
-     from PlanWise &rarr; Settings.</p>
+  <h1>Connect this PC to PlanWise</h1>
+  <p>Mail is drafted in <b>your own</b> Outlook, on this machine — so sign in as yourself.
+     Your password is sent to PlanWise to prove who you are and is never stored here.</p>
   <form id="f">
     <label>PlanWise address</label>
     <input name="server" value="__SERVER__" placeholder="https://planwise.onrender.com" required>
-    <label>Pairing token</label>
-    <input name="token" placeholder="paste from Settings" autocomplete="off" required>
-    <button type="submit">Pair</button>
+    <!-- Not type="email": accounts that predate email sign-in still identify
+         by name, and the browser would refuse to submit one. The server
+         accepts either, exactly as the app's own sign-in does. -->
+    <label>Work email</label>
+    <input name="email" autocomplete="username" required>
+    <label>Password</label>
+    <input name="password" type="password" autocomplete="current-password" required>
+    <button type="submit">Connect</button>
   </form>
   <div class="msg" id="m"></div>
 </div>
@@ -228,12 +268,15 @@ PAIR_PAGE = """<!doctype html><meta charset="utf-8"><title>Pair PlanWise Compani
 f.onsubmit = async (e) => {
   e.preventDefault();
   const body = Object.fromEntries(new FormData(f).entries());
+  m.className = "msg"; m.textContent = "Signing in…";
   const r = await fetch("/pair", {method:"POST", headers:{"Content-Type":"application/json"},
                                   body: JSON.stringify(body)});
   const d = await r.json().catch(() => ({}));
   m.className = "msg " + (r.ok ? "ok" : "err");
-  m.textContent = r.ok ? "Paired. You can close this window — the companion runs in the background."
-                       : (d.detail || "Pairing failed.");
+  m.textContent = r.ok
+    ? "Connected as " + d.user_name + ". You can close this window — the companion runs in the background."
+    : (d.detail || "Couldn't connect.");
+  if (r.ok) f.reset();
 };
 </script>"""
 
@@ -246,17 +289,24 @@ def pair_page():
     while UNPAIRED — see the POST below for why that matters.
     """
     if _expected_token():
-        return HTMLResponse("<p style='font:15px sans-serif;padding:40px'>"
-                            "This PC is already paired with PlanWise.</p>")
+        who = paired_user()
+        return HTMLResponse(
+            "<p style='font:15px sans-serif;padding:40px'>This PC's companion is already "
+            f"connected{f' as <b>{who}</b>' if who else ''}.<br><br>"
+            "Run <code>PlanWiseCompanion.exe --pair</code> to connect it as someone else.</p>")
     return HTMLResponse(PAIR_PAGE.replace("__SERVER__", server_url()))
 
 
 @app.post("/pair")
 def pair(body: dict = Body(...), origin: str | None = Header(default=None)):
-    """Write the pairing files.
+    """Exchange a PlanWise sign-in for this user's companion token.
 
-    Two guards, because this endpoint writes where the companion sends every
-    RFI reply it captures:
+    The password is relayed to PlanWise and never written down here — what
+    lands on disk is the token PlanWise issues, which is scoped to exactly the
+    two endpoints a companion writes to.
+
+    Two guards, because this endpoint decides where the companion sends every
+    reply it captures:
 
       * only while unpaired — otherwise a page you happened to visit could
         re-point an already-working companion at someone else's server;
@@ -265,24 +315,48 @@ def pair(body: dict = Body(...), origin: str | None = Header(default=None)):
     """
     if _expected_token():
         raise HTTPException(status_code=409, detail=(
-            "This PC is already paired. Delete "
-            f"{TOKEN_FILE} to pair it with a different PlanWise."))
+            f"This PC is already connected as {paired_user()}. Run the companion "
+            "with --pair to connect it as someone else."))
     if origin and origin.rstrip("/") not in (f"http://127.0.0.1:{PORT}",
                                              f"http://localhost:{PORT}"):
         raise HTTPException(status_code=403, detail="Pairing must be done on this PC.")
 
-    token = (body.get("token") or "").strip()
     server = (body.get("server") or "").strip().rstrip("/")
-    if len(token) < 16:
-        raise HTTPException(status_code=422, detail="That doesn't look like a pairing token.")
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
     if not server.startswith(("http://", "https://")):
         raise HTTPException(status_code=422, detail="The address should start with https://")
+    if not email or not password:
+        raise HTTPException(status_code=422, detail="Email and password are both needed.")
 
+    import socket
+
+    try:
+        r = httpx.post(f"{server}/api/auth/companion-pair",
+                       json={"email": email, "password": password,
+                             "device": socket.gethostname()}, timeout=30)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=(
+            f"Couldn't reach PlanWise at {server}: {exc}")) from exc
+    if r.status_code == 401:
+        raise HTTPException(status_code=401,
+                            detail=r.json().get("detail", "That email and password don't match."))
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=(
+            f"PlanWise refused the pairing ({r.status_code})."))
+
+    out = r.json()
     PAIR_DIR.mkdir(parents=True, exist_ok=True)
+    AUTH_FILE.write_text(json.dumps(
+        {"token": out["token"], "server": server, "user_name": out["user_name"]},
+        indent=2), encoding="utf-8")
     SERVER_FILE.write_text(server, encoding="utf-8")
-    TOKEN_FILE.write_text(token, encoding="utf-8")
-    log.info("paired with %s", server)
-    return {"paired": True, "server": server}
+    # The company-wide token this replaces is worth removing rather than
+    # leaving on disk: it still opened the same two endpoints until the
+    # server-side fallback is withdrawn.
+    TOKEN_FILE.unlink(missing_ok=True)
+    log.info("connected to %s as %s", server, out["user_name"])
+    return {"paired": True, "server": server, "user_name": out["user_name"]}
 
 
 @app.post("/draft")

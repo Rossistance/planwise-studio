@@ -32,7 +32,8 @@ from pathlib import Path
 PORT = 8772
 PAIR_DIR = Path.home() / ".planwise"
 LOG_FILE = PAIR_DIR / "companion.log"
-TOKEN_FILE = PAIR_DIR / "companion_token.txt"
+AUTH_FILE = PAIR_DIR / "companion_auth.json"
+TOKEN_FILE = PAIR_DIR / "companion_token.txt"   # legacy company-wide token
 SERVER_FILE = PAIR_DIR / "server_url.txt"
 STARTUP_LINK = (Path(os.environ.get("APPDATA", Path.home()))
                 / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
@@ -90,9 +91,14 @@ def install_startup_shortcut() -> bool:
 
 
 def paired() -> bool:
+    """A pairing is the JSON file written by signing in. A leftover
+    companion_token.txt from the shared-token era does NOT count — it reads as
+    unpaired on purpose, so an upgraded PC is sent to the sign-in page instead
+    of being told it is already set up."""
     try:
-        return bool(TOKEN_FILE.read_text(encoding="utf-8").strip())
-    except OSError:
+        import json
+        return bool(json.loads(AUTH_FILE.read_text(encoding="utf-8")).get("token"))
+    except (OSError, ValueError, AttributeError):
         return False
 
 
@@ -135,6 +141,7 @@ def main() -> int:
 
     argv = [a.lower() for a in sys.argv[1:]]
     if "--pair" in argv:                       # re-run pairing on demand
+        AUTH_FILE.unlink(missing_ok=True)
         TOKEN_FILE.unlink(missing_ok=True)
 
     if already_running():

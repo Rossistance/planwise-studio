@@ -1901,6 +1901,18 @@ async function refreshCompanionChip() {
   if (!el) return;
   try {
     const h = await companionFetch("/health");
+    if (!h.paired) {
+      el.innerHTML = `companion: running but not connected — open
+        <span class="mono">http://127.0.0.1:8772/pair</span> and sign in`;
+      return;
+    }
+    // Pairings are per person now. A companion belonging to someone else will
+    // refuse to draft, and saying so here beats a 401 at the moment of send.
+    if (h.paired_user && currentUser && h.paired_user !== currentUser) {
+      el.textContent = `companion: connected as ${h.paired_user}, not you — `
+        + `drafting from this PC would use their mailbox`;
+      return;
+    }
     if (!h.outlook) { el.textContent = "companion: running, Outlook unreachable"; return; }
     // The live watcher is the story now; the sweep is a footnote. Say which
     // is actually working, because "polling armed" while the watcher is down

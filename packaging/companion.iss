@@ -57,13 +57,12 @@ var
 procedure InitializeWizard;
 begin
   PairPage := CreateInputQueryPage(wpSelectDir,
-    'Pair with PlanWise',
-    'Where is PlanWise, and what is your pairing token?',
-    'Mail is drafted in YOUR Outlook, on this PC. Find the pairing token in' + #13#10 +
-    'PlanWise under Settings. You can skip this and pair later from the' + #13#10 +
-    'companion itself.');
+    'Connect to PlanWise',
+    'Where is PlanWise?',
+    'Mail is drafted in YOUR Outlook, on this PC, so the companion connects' + #13#10 +
+    'as you. After installing it opens a page where you sign in with your' + #13#10 +
+    'PlanWise email and password. No password is stored by this installer.');
   PairPage.Add('PlanWise address:', False);
-  PairPage.Add('Pairing token:', False);
   PairPage.Values[0] := 'https://';
 end;
 
@@ -74,19 +73,20 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var
-  Server, Token: String;
+  Server: String;
 begin
   if CurStep <> ssPostInstall then Exit;
 
+  { Only the address — it pre-fills the sign-in page so nobody has to type a
+    URL from memory. Credentials are never collected here: the installer has
+    no way to verify them, and a wrong one written to disk would look
+    configured while quietly failing. The companion's own page proves them
+    against PlanWise before writing anything. }
   Server := Trim(PairPage.Values[0]);
-  Token  := Trim(PairPage.Values[1]);
-  { Both or neither — a half-written pairing is worse than none, because the
-    companion would look configured and quietly fail to reach anything. }
-  if (Length(Token) < 16) or (Pos('http', Server) <> 1) then Exit;
+  if Pos('http', Server) <> 1 then Exit;
 
   ForceDirectories(PairDir());
   SaveStringToFile(PairDir() + '\server_url.txt', Server, False);
-  SaveStringToFile(PairDir() + '\companion_token.txt', Token, False);
 end;
 
 [UninstallDelete]

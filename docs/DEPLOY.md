@@ -239,3 +239,46 @@ python -c "import sqlite3,sys; s=sqlite3.connect(sys.argv[1]); d=sqlite3.connect
 
 A Render disk snapshot captures the whole filesystem and is therefore fine as
 it stands.
+
+## The desktop install
+
+`dist/PlanWise-1.0.0-Setup.exe` is the one thing to hand a teammate. It carries
+both programs and the server address, so setup asks nothing at all:
+
+| | |
+|---|---|
+| `PlanWise.exe` | the app window — Start menu and desktop icon |
+| `PlanWiseCompanion.exe` | the Outlook helper, started with Windows |
+| `~/.planwise/server_url.txt` | written with the PlanWise address |
+
+The only thing anyone types is their own PlanWise password, on first launch, in
+the app itself. Nothing is handed from person to person (D39/D40).
+
+**The app window is a window, not a second PlanWise.** It opens the hosted
+instance chromeless — `msedge --app=` against a dedicated profile, so the
+session persists and it stays out of ordinary browsing. There is deliberately
+no local copy of the server or the database: D9 is one shared database, and a
+desktop build with its own SQLite would give every person a private, diverging
+island of the very data the rebuild exists to keep in one place. Edge and the
+WebView2 runtime ship with Windows 11, so nothing is bundled and nothing needs
+admin rights; if Edge is somehow absent it falls back to the default browser.
+
+Rebuilding it, after changing `#define PlanWiseUrl` in `packaging/planwise.iss`
+if the address ever moves:
+
+```bash
+.venv/Scripts/python.exe -m PyInstaller planwise-desktop.spec --noconfirm && .venv/Scripts/python.exe -m PyInstaller planwise-companion.spec --noconfirm && "$LOCALAPPDATA/Programs/Inno Setup 6/ISCC.exe" packaging/planwise.iss
+```
+
+Stop a running companion first — it holds its own exe open, and PyInstaller
+cannot replace a file that is in use.
+
+`PlanWiseCompanion-1.0.0-Setup.exe` still builds from `packaging/companion.iss`
+for the companion on its own — useful for a machine that wants reply capture
+without the app icon, but the combined installer is the normal answer.
+
+Two behaviours worth knowing before pushing an upgrade to someone: Inno closes
+both running programs to replace them, and the post-install launch is skipped
+in silent mode — so an unattended upgrade leaves the companion stopped until
+the next sign-in. Neither installer ever overwrites an existing
+`server_url.txt` or pairing.

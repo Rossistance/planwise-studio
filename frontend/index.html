@@ -7,6 +7,16 @@
      No maximum-scale: pinch-zoom on a drawing is a feature, not a bug. -->
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>PlanWise</title>
+
+<!-- The favicon is what the DESKTOP APP WINDOW uses for its taskbar icon, not
+     just what a browser tab shows: `msedge --app=` takes the window icon from
+     the page, so without this the installed PlanWise appeared as a generic
+     Edge window. The manifest icons below don't cover it — those are for
+     installing, not for chrome. A multi-size .ico so Windows can pick 16px for
+     the taskbar and 256px for alt-tab without scaling artefacts. -->
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+
 <link rel="stylesheet" href="/styles.css">
 
 <!-- Installable app (Phase 5e). theme-color paints the iOS status bar and the

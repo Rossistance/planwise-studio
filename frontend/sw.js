@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v3";
+const VERSION = "planwise-shell-v4";
 const SHELL = [
   "/",
   "/index.html",
@@ -29,6 +29,7 @@ const SHELL = [
   "/offline.js",
   "/styles.css",
   "/manifest.webmanifest",
+  "/favicon.ico",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/vendor/pdfjs/pdf.min.js",

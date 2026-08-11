@@ -1514,13 +1514,21 @@ main.addEventListener("click", async (e) => {
       // No companion means no desktop Outlook to draft into — which on a
       // phone isn't a failure, it's the platform. Offer the handoff instead
       // of an error nobody can act on. (D10 has no iOS equivalent: no COM.)
+      const emlPath = `/api/lookahead/${share.dataset.laShare}/share.eml`
+        + `?audience=${share.dataset.audience}&weeks=${send}`;
       if (noCompanion(err)) {
         await queueForDesk({
           job_number: current.job, kind: "lookahead",
           target_id: share.dataset.laShare,
           audience: share.dataset.audience, weeks: send,
         }, laMsg, `${send}-week sheet`);
-      } else { laMsg(`failed: ${err.message}`); }
+        offerEml("#laMsg", emlPath, "Or, if this PC has Outlook:");
+      } else {
+        // The companion answered and refused (bad pairing, Outlook down).
+        // Real error, shown — but the .eml still gets the sheet out today.
+        laMsg(`Couldn't draft via the companion: ${err.message}.`);
+        offerEml("#laMsg", emlPath, "You can still send it from this PC's Outlook:");
+      }
     }
   }
 });
@@ -1817,7 +1825,21 @@ main.addEventListener("click", async (e) => {
       commMsg(res.unresolved?.length
         ? `Opened in your Outlook, but it could not resolve ${res.unresolved.join(", ")} — pick the address before sending.`
         : "Opened in your Outlook — review and press Send there.");
-    } catch (err) { commMsg(`failed: ${err.message}`); }
+    } catch (err) {
+      // Same two-way fallback as the look ahead: no companion on this machine
+      // is a platform fact, not a failure — queue for a desk that has one, or
+      // take the email file for this PC's own Outlook right now.
+      const emlPath = `/api/records/${recId}/share.eml`;
+      const what = `${rec.kind.toUpperCase()}${rec.number ? "-" + rec.number : ""}`;
+      if (noCompanion(err)) {
+        await queueForDesk({ job_number: rec.job_number, kind: "record",
+                             target_id: recId }, commMsg, what);
+        offerEml("#commMsg", emlPath, "Or, if this PC has Outlook:");
+      } else {
+        commMsg(`Couldn't draft via the companion: ${err.message}.`);
+        offerEml("#commMsg", emlPath, "You can still send it from this PC's Outlook:");
+      }
+    }
     return;
   }
   const cr = e.target.closest("[data-check-replies]");
@@ -2386,6 +2408,48 @@ function noCompanion(err) {
   return /failed to fetch|networkerror|load failed|connection refused/i.test(m);
 }
 
+/** Fetch a server-built .eml and hand it to the browser as a download.
+    The file opens in this PC's own Outlook as an editable draft (X-Unsent) —
+    the share path for machines with no companion installed. Plain fetch, not
+    api(): the response is binary, and the session cookie rides along. */
+async function downloadEml(path, say) {
+  try {
+    const r = await fetch(path);
+    if (!r.ok) {
+      let detail = `HTTP ${r.status}`;
+      try { detail = (await r.json()).detail || detail; } catch { /* not JSON */ }
+      throw new Error(detail);
+    }
+    const blob = await r.blob();
+    const cd = r.headers.get("content-disposition") || "";
+    const name = (cd.match(/filename="([^"]+)"/) || [])[1] || "planwise-share.eml";
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    return true;
+  } catch (err) {
+    if (say) say(`couldn't build the email file: ${err.message}`);
+    return false;
+  }
+}
+
+/** Append the .eml escape hatch to a message bar (which was just written with
+    textContent, so a real button node is added rather than markup). */
+function offerEml(sel, path, lead) {
+  const el = document.querySelector(sel);
+  if (!el) return;
+  const btn = document.createElement("button");
+  btn.className = "link";
+  btn.textContent = "Download email (.eml)";
+  btn.addEventListener("click", async () => {
+    const ok = await downloadEml(path, (t) => { el.textContent = t; });
+    if (ok) el.textContent = "Downloaded — double-click the file and it opens in Outlook as a draft. Review and Send.";
+  });
+  el.append(` ${lead || "Or:"} `, btn);
+}
+
 async function queueForDesk(item, say, what) {
   try {
     await api("/api/outbox", { method: "POST", body: JSON.stringify(item) });
@@ -2432,10 +2496,13 @@ document.addEventListener("click", async (e) => {
       const doc = await api(`/api/outbox/${item.id}/document`);
       // display:false — a window per queued item would be obnoxious. The
       // Drafts folder is brought to the front once, at the end, instead.
+      // Records draft as plain text (body); look aheads as html — the
+      // companion branches on whichever is present.
       await companionFetch("/draft", {
         display: false,
-        to: doc.to, subject: doc.subject, html: doc.html,
-        attachments: [{ filename: doc.filename, content_b64: doc.pdf_b64 }],
+        to: doc.to, subject: doc.subject, html: doc.html, body: doc.body,
+        attachments: doc.pdf_b64
+          ? [{ filename: doc.filename, content_b64: doc.pdf_b64 }] : [],
       });
       await api(`/api/outbox/${item.id}/drafted`, { method: "POST" });
       drafted += 1;
@@ -2444,9 +2511,32 @@ document.addEventListener("click", async (e) => {
       // message before it would silently repaint the failure away.
       await refreshOutbox();
       bar.innerHTML = noCompanion(err)
-        ? `<b>Still no Outlook here.</b> These need a machine running the PlanWise companion —
-           they'll keep until you're at one.`
+        ? `<b>Still no Outlook companion here.</b> These keep until you're at a machine
+           running one — or take them as email files for this PC's own Outlook: `
         : `<b>Couldn't draft that one:</b> ${esc(err.message)}`;
+      if (noCompanion(err) && outboxItems.length) {
+        const dl = document.createElement("button");
+        dl.className = "link";
+        dl.textContent = `Download email file${outboxItems.length === 1 ? "" : "s"}`;
+        dl.addEventListener("click", async () => {
+          let got = 0;
+          for (const it of [...outboxItems]) {
+            // Download first, mark drafted after — the claim is repeatable,
+            // the mark is the one-shot, so a failed download costs nothing.
+            if (await downloadEml(`/api/outbox/${it.id}/eml`)) {
+              await api(`/api/outbox/${it.id}/drafted`, { method: "POST" }).catch(() => {});
+              got += 1;
+            }
+          }
+          await refreshOutbox();
+          bar.innerHTML = got
+            ? `<b>${got} email file${got === 1 ? "" : "s"} downloaded.</b> Double-click each —
+               it opens in Outlook as a draft. Review and Send.`
+            : `<b>Couldn't build the email files.</b> They're still queued.`;
+          bar.classList.remove("hidden");
+        });
+        bar.appendChild(dl);
+      }
       bar.classList.remove("hidden");
       return;
     }

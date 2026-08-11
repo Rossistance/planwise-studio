@@ -17,8 +17,8 @@ from fastapi import Body, FastAPI, File, Header, HTTPException, Request, Respons
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (ai, auth, config, db, documents, lookahead, outbox, push, records,
-               schedule, store, vista)
+from . import (ai, auth, config, db, documents, eml, lookahead, outbox, push,
+               records, schedule, store, vista)
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -182,6 +182,75 @@ def outbox_queue(body: dict = Body(...)):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+def _lookahead_doc(period: dict, *, audience: str, weeks: int | None,
+                   note: str | None = None) -> tuple[dict, bytes]:
+    """The ONE place a look-ahead share is assembled.
+
+    Subject, HTML, the internal/customer split (team → tools and materials in,
+    recipients deliberately blank), suggested contacts, filename — used by the
+    JSON share route, the outbox renderer, and the .eml download, so the
+    audience rules can never fork between them. Returns the JSON-ready
+    document (without pdf_b64) and the PDF bytes; callers encode or attach.
+
+    Raises LookaheadError for an empty sheet — callers turn that into a 422.
+    """
+    try:
+        job = _snapshot().jobs.get(period["job_number"], {})
+    except HTTPException:
+        # No Vista extract on this instance (fresh deploy, test env). The job
+        # name on the sheet is cosmetic — the number is the identity — so a
+        # missing workbook must not make sharing impossible.
+        job = {}
+    job_name = job.get("job_name") or period["job_number"]
+    out = lookahead.share_html(period["id"], job_name, period["job_number"],
+                               audience, weeks)
+    pdf = lookahead.share_pdf(period["id"], job_name, period["job_number"],
+                              audience, weeks)
+
+    # Recipients come from the PM-entered contacts on Overview, so "share with
+    # the customer" knows who that actually is. The team version has no such
+    # list — who needs it changes week to week — so the PM fills it in.
+    internal = lookahead.is_internal(audience)
+    meta = store.get_meta(period["job_number"])
+    out["contacts"] = [] if internal else [
+        {"name": c.get("name") or c["email"], "email": c["email"], "role": c.get("role")}
+        for c in (meta.get("contacts") or []) if c.get("email")]
+    out["to"] = ";".join(c["email"] for c in out["contacts"])
+    out["audience"] = "team" if internal else "customer"
+    out["weeks"] = lookahead.share_weeks(period, weeks)
+    out["filename"] = (f"Look-Ahead-{out['weeks']}wk{'-INTERNAL' if internal else ''}"
+                       f"-{period['job_number']}-{period['start_date']}.pdf")
+    if note:
+        out["html"] = f"<p>{lookahead._esc(note)}</p>" + out["html"]
+    return out, pdf
+
+
+def _record_doc(rec: dict) -> tuple[dict, bytes | None]:
+    """An RFI/Submittal share: saved draft text + the outbound package.
+
+    Mirrors what the record UI sends the companion — the draft is plain text
+    (`body`, not `html`) and the package exists only when pages are attached
+    (build_package raises on zero pages, so it is skipped, matching the UI's
+    own attachments-length guard).
+    """
+    draft = records.get_draft(rec["id"])
+    if not draft:
+        raise HTTPException(
+            status_code=409,
+            detail="Generate the email draft first — it carries the subject and body.")
+    pdf = None
+    if rec.get("attachments"):
+        try:
+            pdf = records.build_package(rec["id"])
+        except records.RecordError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+    doc = {"subject": draft["subject"], "body": draft["body"],
+           "to": rec.get("to_email") or "",
+           "filename": f"{rec['kind'].upper()}-{rec['number'] or rec['id']}.pdf"
+                       if pdf else None}
+    return doc, pdf
+
+
 @app.get("/api/outbox/{item_id}/document")
 def outbox_document(item_id: str):
     """Everything needed to draft the item, rendered now rather than when it
@@ -194,39 +263,70 @@ def outbox_document(item_id: str):
     except outbox.OutboxError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    if item["kind"] != "lookahead":
-        raise HTTPException(status_code=422,
-                            detail="Only look aheads can be queued from a phone so far.")
+    if item["kind"] == "lookahead":
+        period = lookahead.get_period(item["target_id"])
+        if period is None:
+            raise HTTPException(status_code=404, detail="That look ahead no longer exists.")
+        try:
+            out, pdf = _lookahead_doc(period, audience=item["audience"] or "customer",
+                                      weeks=item["weeks"], note=item.get("note"))
+        except lookahead.LookaheadError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        out["pdf_b64"] = base64.b64encode(pdf).decode()
+        return out
 
-    period = lookahead.get_period(item["target_id"])
-    if period is None:
-        raise HTTPException(status_code=404, detail="That look ahead no longer exists.")
-    snap = _snapshot()
-    job = snap.jobs.get(period["job_number"], {})
-    job_name = job.get("job_name") or period["job_number"]
-    audience = item["audience"] or "customer"
-    try:
-        out = lookahead.share_html(item["target_id"], job_name, period["job_number"],
-                                   audience, item["weeks"])
-        pdf = lookahead.share_pdf(item["target_id"], job_name, period["job_number"],
-                                  audience, item["weeks"])
-    except lookahead.LookaheadError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    internal = lookahead.is_internal(audience)
-    meta = store.get_meta(period["job_number"])
-    contacts = [] if internal else [
-        {"name": c.get("name") or c["email"], "email": c["email"]}
-        for c in (meta.get("contacts") or []) if c.get("email")]
+    rec = records.get_record(item["target_id"])
+    if rec is None:
+        raise HTTPException(status_code=404, detail="That record no longer exists.")
+    out, pdf = _record_doc(rec)
     if item.get("note"):
-        out["html"] = f"<p>{lookahead._esc(item['note'])}</p>" + out["html"]
-    out["to"] = ";".join(c["email"] for c in contacts)
-    out["contacts"] = contacts
-    out["weeks"] = lookahead.share_weeks(period, item["weeks"])
-    out["filename"] = (f"Look-Ahead-{out['weeks']}wk{'-INTERNAL' if internal else ''}"
-                       f"-{period['job_number']}-{period['start_date']}.pdf")
-    out["pdf_b64"] = base64.b64encode(pdf).decode()
+        out["body"] = f"{item['note']}\n\n{out['body']}"
+    if pdf is not None:
+        out["pdf_b64"] = base64.b64encode(pdf).decode()
     return out
+
+
+def _outbox_eml(item_id: str) -> Response:
+    """The queued item as a ready-to-send .eml.
+
+    Claim only — claim is repeatable by design (outbox.py), while marking
+    drafted is a one-shot the frontend performs AFTER the download lands.
+    Marking on this GET would burn the item on a cancelled download.
+    """
+    me = _CURRENT_USER.get()
+    try:
+        item = outbox.claim(item_id, me["name"])
+    except outbox.OutboxError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if item["kind"] == "lookahead":
+        period = lookahead.get_period(item["target_id"])
+        if period is None:
+            raise HTTPException(status_code=404, detail="That look ahead no longer exists.")
+        try:
+            out, pdf = _lookahead_doc(period, audience=item["audience"] or "customer",
+                                      weeks=item["weeks"], note=item.get("note"))
+        except lookahead.LookaheadError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        data = eml.build_eml(out["subject"], out["to"], html=out["html"],
+                             attachments=[(out["filename"], pdf)])
+        name = out["filename"].removesuffix(".pdf")
+    else:
+        rec = records.get_record(item["target_id"])
+        if rec is None:
+            raise HTTPException(status_code=404, detail="That record no longer exists.")
+        out, pdf = _record_doc(rec)
+        body = f"{item['note']}\n\n{out['body']}" if item.get("note") else out["body"]
+        data = eml.build_eml(out["subject"], out["to"], text=body,
+                             attachments=[(out["filename"], pdf)] if pdf else None)
+        name = out["filename"].removesuffix(".pdf") if out["filename"] else f"{rec['kind']}-{rec['id']}"
+    return Response(content=data, media_type="message/rfc822",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.eml"'})
+
+
+@app.get("/api/outbox/{item_id}/eml")
+def outbox_eml(item_id: str):
+    return _outbox_eml(item_id)
 
 
 @app.post("/api/outbox/{item_id}/drafted")
@@ -783,6 +883,26 @@ def record_package(rec_id: str):
                     headers={"Content-Disposition": f'attachment; filename="{name}"'})
 
 
+@app.get("/api/records/{rec_id}/share.eml")
+def record_share_eml(rec_id: str):
+    """RFI/Submittal as a ready-to-send email file, for companion-less machines.
+
+    409 until a draft exists — the draft carries the subject and body, same
+    prerequisite the Outlook-draft button already has. The package attaches
+    only when pages are attached, matching the UI's own guard.
+    """
+    rec = records.get_record(rec_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail="No such record.")
+    out, pdf = _record_doc(rec)
+    data = eml.build_eml(out["subject"], out["to"], text=out["body"],
+                         attachments=[(out["filename"], pdf)] if pdf else None)
+    name = out["filename"].removesuffix(".pdf") if out["filename"] else \
+        f"{rec['kind'].upper()}-{rec['number'] or rec_id}"
+    return Response(content=data, media_type="message/rfc822",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.eml"'})
+
+
 # --- settings + AI (Phase 3b) ------------------------------------------------
 
 @app.get("/api/settings")
@@ -1070,31 +1190,32 @@ def share_lookahead(period_id: str, audience: str = "customer", weeks: int | Non
     period = lookahead.get_period(period_id)
     if period is None:
         raise HTTPException(status_code=404, detail="No such period.")
-    snap = _snapshot()
-    job = snap.jobs.get(period["job_number"], {})
-    job_name = job.get("job_name") or period["job_number"]
     try:
-        out = lookahead.share_html(period_id, job_name, period["job_number"], audience, weeks)
-        pdf = lookahead.share_pdf(period_id, job_name, period["job_number"], audience, weeks)
+        out, pdf = _lookahead_doc(period, audience=audience, weeks=weeks)
     except lookahead.LookaheadError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    # Recipients come from the PM-entered contacts on Overview, so "share with
-    # the customer" knows who that actually is. The team version has no such
-    # list — who needs it changes week to week — so the PM fills it in.
-    internal = lookahead.is_internal(audience)
-    meta = store.get_meta(period["job_number"])
-    contacts = [c for c in (meta.get("contacts") or []) if c.get("email")]
-    out["contacts"] = [] if internal else [
-        {"name": c.get("name") or c["email"], "email": c["email"], "role": c.get("role")}
-        for c in contacts]
-    out["to"] = ";".join(c["email"] for c in out["contacts"])
-    out["audience"] = "team" if internal else "customer"
-    out["weeks"] = lookahead.share_weeks(period, weeks)
-    out["filename"] = (f"Look-Ahead-{out['weeks']}wk{'-INTERNAL' if internal else ''}"
-                       f"-{period['job_number']}-{period['start_date']}.pdf")
     out["pdf_b64"] = base64.b64encode(pdf).decode()
     return out
+
+
+@app.get("/api/lookahead/{period_id}/share.eml")
+def share_lookahead_eml(period_id: str, audience: str = "customer",
+                        weeks: int | None = None):
+    """The share as a ready-to-send email file — the path for machines with no
+    companion installed. Opens in classic desktop Outlook as an editable draft
+    (X-Unsent), recipient(s), body and PDF already in place."""
+    period = lookahead.get_period(period_id)
+    if period is None:
+        raise HTTPException(status_code=404, detail="No such period.")
+    try:
+        out, pdf = _lookahead_doc(period, audience=audience, weeks=weeks)
+    except lookahead.LookaheadError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    data = eml.build_eml(out["subject"], out["to"], html=out["html"],
+                         attachments=[(out["filename"], pdf)])
+    name = out["filename"].removesuffix(".pdf")
+    return Response(content=data, media_type="message/rfc822",
+                    headers={"Content-Disposition": f'attachment; filename="{name}.eml"'})
 
 
 @app.get("/api/lookahead/{period_id}/pdf")

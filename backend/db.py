@@ -347,10 +347,27 @@ MIGRATIONS = [
     ("users", "is_admin", "INTEGER"),
     ("users", "disabled", "INTEGER"),
     ("users", "must_change_password", "INTEGER"),
+    # Zero-token access (2026-08-10): self-service sign-up and password-based
+    # companion pairing. `name` stays the attribution string everywhere
+    # (activity, outbox, push subs); email is what you sign in with. `pending`
+    # is NULL for accounts that predate approval-gating — NULL means approved,
+    # so the bootstrap admin is never locked out by his own migration.
+    ("users", "email", "TEXT"),
+    ("users", "first_name", "TEXT"),
+    ("users", "last_name", "TEXT"),
+    ("users", "pending", "INTEGER"),
+    ("users", "companion_token", "TEXT"),
 ]
 
 POST_MIGRATION_SQL = """
 CREATE INDEX IF NOT EXISTS ix_reply_msgid ON record_replies(message_id);
+-- ALTER TABLE ADD COLUMN can't carry UNIQUE, so email uniqueness lives in a
+-- partial index: NOCASE so Ross@ and ross@ are one identity, partial so the
+-- accounts that predate email (NULL) don't collide with each other.
+CREATE UNIQUE INDEX IF NOT EXISTS ix_users_email
+    ON users(email COLLATE NOCASE) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_users_companion
+    ON users(companion_token) WHERE companion_token IS NOT NULL;
 """
 
 

@@ -182,11 +182,17 @@ async def require_session(request, call_next):
 def health():
     """Is the app up, and is the Vista data current? Never guesses."""
     wb = config.vista_workbook()
+    mpp_ok, mpp_detail = schedule.mpp_available()
     out = {
         "app": config.APP_NAME,
         "data_dir": str(config.data_dir()),
         "workbook": str(wb) if wb else None,
         "workbook_found": wb is not None,
+        # Whether binary .mpp import works on THIS machine. Here rather than
+        # behind a session because it's a property of the deployment, not of
+        # anyone's data — and because the only way to check that the build
+        # actually installed a JRE should not require signing in.
+        "mpp_import": {"available": mpp_ok, "detail": mpp_detail},
     }
     if wb is None:
         out["vista"] = {"ok": False, "detail": "Vista workbook not synced to this machine."}

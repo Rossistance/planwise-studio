@@ -259,22 +259,32 @@ def _preds_to_text(links: list[dict[str, Any]]) -> str:
 
 def mpp_available() -> tuple[bool, str]:
     """Can this machine read a binary .mpp? (MPXJ needs a JVM.)"""
+    global _MPP_STATE
+    if _MPP_STATE is not None:
+        return _MPP_STATE
     try:
         import jpype  # noqa: F401
         import mpxj  # noqa: F401
     except ImportError:
-        return False, "MPXJ is not installed (pip install mpxj JPype1)."
+        _MPP_STATE = (False, "MPXJ is not installed (pip install mpxj JPype1).")
+        return _MPP_STATE
     try:
         import jpype
         if not jpype.isJVMStarted():
             jpype.getDefaultJVMPath()
-        return True, "ready"
+        _MPP_STATE = (True, "ready")
     except Exception as exc:  # noqa: BLE001
-        return False, (
+        _MPP_STATE = (False, (
             "No Java runtime found. Reading binary .mpp needs a JRE — install "
             "one (e.g. Temurin 17) and restart PlanWise. Until then, export "
             "the schedule from Microsoft Project as XML (File > Save As > "
-            f"XML) and import that. [{type(exc).__name__}]")
+            f"XML) and import that. [{type(exc).__name__}]"))
+    return _MPP_STATE
+
+
+# Cached: whether a JVM exists cannot change without restarting the process,
+# and this is now on the health endpoint, which Render polls constantly.
+_MPP_STATE: tuple[bool, str] | None = None
 
 
 def parse_mpp(data: bytes) -> list[dict[str, Any]]:

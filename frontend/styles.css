@@ -571,13 +571,30 @@ select { cursor: pointer; }
   overflow: hidden; white-space: nowrap;
 }
 .gx-th.num, .gx-td.num { justify-content: flex-end; font-family: var(--font-mono); }
-.gx-c-id { flex: 0 0 46px; color: var(--faint); font-family: var(--font-mono); font-size: 11px; }
-.gx-c-name { flex: 1 1 auto; min-width: 0; }
-.gx-c-dur { flex: 0 0 54px; }
+/* Widths come from custom properties so a resize drag changes ONE variable
+   rather than re-rendering every row; the defaults keep the grid sane if the
+   inline style is ever missing. */
+.gx-c-id { flex: 0 0 var(--gxw-id, 46px); color: var(--faint); font-family: var(--font-mono); font-size: 11px; }
+.gx-c-name { flex: 1 1 var(--gxw-name, 260px); min-width: 0; }
+.gx-c-dur { flex: 0 0 var(--gxw-dur, 54px); }
 .gx-c-date { flex: 0 0 104px; }
-.gx-c-pred { flex: 0 0 116px; }
-.gx-c-pct { flex: 0 0 46px; }
-.gx-c-float { flex: 0 0 52px; border-right: 0; }
+.gx-c-start { flex: 0 0 var(--gxw-start, 104px); }
+.gx-c-finish { flex: 0 0 var(--gxw-finish, 104px); }
+.gx-c-pred { flex: 0 0 var(--gxw-pred, 116px); }
+.gx-c-pct { flex: 0 0 var(--gxw-pct, 46px); }
+.gx-c-float { flex: 0 0 var(--gxw-float, 52px); border-right: 0; }
+
+/* The drag handle straddles the column border, which is where the pointer
+   goes looking for it. */
+.gx-th { position: relative; }
+.gx-grip {
+  position: absolute; top: 0; right: -3px; width: 7px; height: 100%;
+  cursor: col-resize; z-index: 2;
+}
+.gx-grip:hover { background: var(--accent); opacity: .55; }
+/* Held on <body> during a drag: without it the pointer crossing a text cell
+   starts selecting, and the grid fills with blue. */
+body.col-resizing { cursor: col-resize; user-select: none; }
 
 .gx-row { position: relative; }
 .gx-row:hover { background: var(--accent-soft); }

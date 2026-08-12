@@ -830,6 +830,31 @@ def update_task(job_number: str, task_id: str, fields: dict[str, Any],
                              (task_id,)).fetchone())
 
 
+def clear_tasks(job_number: str, actor: str | None = None) -> int:
+    """Empty this job's schedule and start again.
+
+    Links go with the tasks (ON DELETE CASCADE), and so does any staged import
+    still awaiting review — leaving those behind would offer to commit rows
+    against a schedule that no longer exists. The calendar SURVIVES: working
+    days and holidays are a property of the job, not of the tasks, and making
+    someone re-enter them after a bad import would be a small cruelty.
+
+    Look-ahead items that were seeded from these tasks keep their own rows;
+    they simply stop pointing anywhere, which is the same thing that happens
+    when a single task is deleted.
+    """
+    conn = db.connect()
+    n = conn.execute("SELECT COUNT(*) c FROM schedule_tasks WHERE job_number = ?",
+                     (job_number,)).fetchone()["c"]
+    conn.execute("DELETE FROM schedule_tasks WHERE job_number = ?", (job_number,))
+    conn.execute("DELETE FROM schedule_imports WHERE job_number = ? AND status = 'staged'",
+                 (job_number,))
+    conn.commit()
+    if n:
+        db.log_activity(actor, job_number, "schedule.clear", f"{n} tasks")
+    return n
+
+
 def delete_task(job_number: str, task_id: str, actor: str | None = None) -> bool:
     conn = db.connect()
     cur = conn.execute("DELETE FROM schedule_tasks WHERE id = ? AND job_number = ?",

@@ -1086,6 +1086,40 @@ let schedCache = null;   // {job, data}
    what the people using this will look for. */
 const SCHED_ZOOM = { day: 26, week: 9, month: 2.6, quarter: 1.0 };
 let schedZoom = "month";
+/* Continuous zoom on top of the named stops. The presets jump ~3x apiece,
+   which is fine for "show me the year" and useless for "a bit wider" — a
+   106-row schedule at month is unreadable and at week is three screens.
+   Factor multiplies whichever stop is selected; the label keeps naming the
+   stop so the mental model stays Project's. */
+let schedZoomFactor = 1;
+const ZOOM_MIN = 0.35, ZOOM_MAX = 6;
+const schedPx = () => SCHED_ZOOM[schedZoom] * schedZoomFactor;
+
+/* Column widths, dragged by the user and remembered per browser. Field crews
+   and estimators want different things visible: one lives in Task Name, the
+   other in dates and float. */
+const GX_COLS = ["id", "name", "dur", "start", "finish", "pred", "pct", "float"];
+const GX_DEFAULT_W = { id: 46, name: 260, dur: 54, start: 104, finish: 104,
+                       pred: 116, pct: 46, float: 52 };
+let schedColW = loadColW();
+
+function loadColW() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("planwise.schedCols") || "{}");
+    return { ...GX_DEFAULT_W, ...saved };
+  } catch { return { ...GX_DEFAULT_W }; }
+}
+
+function saveColW() {
+  try { localStorage.setItem("planwise.schedCols", JSON.stringify(schedColW)); }
+  catch { /* private mode: widths just don't persist */ }
+}
+
+/* Written as CSS custom properties so a drag repaints by changing one
+   variable, rather than re-rendering 106 rows on every mousemove. */
+function colWStyle() {
+  return GX_COLS.map((c) => `--gxw-${c}:${Math.round(schedColW[c])}px`).join(";");
+}
 let schedCollapsed = new Set();   // ids of summary rows folded shut
 let schedStaged = null;           // an import waiting to be reviewed
 
@@ -1146,7 +1180,7 @@ function ganttWorkspace(s) {
   const start = new Date(s.project_start + "T00:00:00");
   const finish = new Date(s.project_finish + "T00:00:00");
   const totalDays = Math.max(1, Math.round((finish - start) / 86400000) + 1);
-  const px = SCHED_ZOOM[schedZoom];
+  const px = schedPx();
   const chartW = Math.max(360, Math.round(totalDays * px));
   const off = (iso) => Math.round((new Date(iso + "T00:00:00") - start) / 86400000);
   const x = (iso) => off(iso) * px;
@@ -1161,20 +1195,29 @@ function ganttWorkspace(s) {
           ${Object.keys(SCHED_ZOOM).map((z) => `<button class="btn sm ${z === schedZoom ? "primary" : ""}"
              data-sched-zoom="${z}">${z[0].toUpperCase() + z.slice(1)}</button>`).join("")}
         </div>
+        <div class="gx-zoom" style="margin-left:8px">
+          <button class="btn sm" data-sched-zoomstep="-1" title="Zoom out (Ctrl + scroll on the chart)">−</button>
+          <span class="mono muted small" style="min-width:44px;text-align:center"
+                title="Relative to the ${schedZoom} preset">${Math.round(schedZoomFactor * 100)}%</span>
+          <button class="btn sm" data-sched-zoomstep="1" title="Zoom in (Ctrl + scroll on the chart)">+</button>
+          ${schedZoomFactor !== 1 ? `<button class="link small" data-sched-zoomstep="0">reset</button>` : ""}
+        </div>
         <span class="grow"></span>
         <button class="btn sm" data-sched-fold="all">Collapse all</button>
         <button class="btn sm" data-sched-fold="none">Expand all</button>
+        ${schedColsResized() ? `<button class="link small" data-sched-cols-reset>reset columns</button>` : ""}
+        <button class="btn sm danger" data-sched-clear>Clear schedule</button>
       </div>
-      <div class="gx" id="gx">
+      <div class="gx" id="gx" style="${colWStyle()}">
         <div class="gx-grid">
           <div class="gx-head">
-            <div class="gx-th gx-c-id">ID</div>
-            <div class="gx-th gx-c-name">Task Name</div>
-            <div class="gx-th gx-c-dur num">Dur</div>
-            <div class="gx-th gx-c-date">Start</div>
-            <div class="gx-th gx-c-date">Finish</div>
-            <div class="gx-th gx-c-pred">Predecessors</div>
-            <div class="gx-th gx-c-pct num">%</div>
+            <div class="gx-th gx-c-id">ID${colGrip("id")}</div>
+            <div class="gx-th gx-c-name">Task Name${colGrip("name")}</div>
+            <div class="gx-th gx-c-dur num">Dur${colGrip("dur")}</div>
+            <div class="gx-th gx-c-date gx-c-start">Start${colGrip("start")}</div>
+            <div class="gx-th gx-c-date gx-c-finish">Finish${colGrip("finish")}</div>
+            <div class="gx-th gx-c-pred">Predecessors${colGrip("pred")}</div>
+            <div class="gx-th gx-c-pct num">%${colGrip("pct")}</div>
             <div class="gx-th gx-c-float num">Float</div>
           </div>
           <div class="gx-body" id="gxGrid">${rows.map(gridRow).join("")}</div>
@@ -1192,6 +1235,36 @@ function ganttWorkspace(s) {
         </div>
       </div>
     </div></div>`;
+}
+
+const colGrip = (c) => `<span class="gx-grip" data-gx-grip="${c}" title="Drag to resize"></span>`;
+const schedColsResized = () =>
+  GX_COLS.some((c) => Math.round(schedColW[c]) !== GX_DEFAULT_W[c]);
+
+/* Column resizing. Dragged live against CSS variables so a 106-row grid
+   doesn't re-render on every mousemove — only the width variable changes,
+   and the browser reflows. The committed width is saved on release. */
+function startColDrag(ev, col) {
+  ev.preventDefault();
+  const gx = document.querySelector("#gx");
+  if (!gx) return;
+  const startX = ev.clientX;
+  const startW = schedColW[col];
+  const move = (e) => {
+    const w = Math.max(28, Math.min(640, startW + (e.clientX - startX)));
+    schedColW[col] = w;
+    gx.style.setProperty(`--gxw-${col}`, `${Math.round(w)}px`);
+  };
+  const up = () => {
+    document.removeEventListener("mousemove", move);
+    document.removeEventListener("mouseup", up);
+    document.body.classList.remove("col-resizing");
+    saveColW();
+    render();                       // repaint the toolbar's "reset columns"
+  };
+  document.body.classList.add("col-resizing");
+  document.addEventListener("mousemove", move);
+  document.addEventListener("mouseup", up);
 }
 
 /* Summary folding. A 106-row imported schedule is unreadable fully expanded,
@@ -1225,9 +1298,9 @@ function gridRow(t) {
     </div>
     <div class="gx-td gx-c-dur num">${t.duration_days ?? ""}${
       t.duration_unit === "ed" ? " ed" : ""}</div>
-    <div class="gx-td gx-c-date"><input class="ecell" type="date" value="${esc(t.start || "")}"
+    <div class="gx-td gx-c-date gx-c-start"><input class="ecell" type="date" value="${esc(t.start || "")}"
         data-task="${t.id}" data-field="start"></div>
-    <div class="gx-td gx-c-date"><input class="ecell" type="date" value="${esc(t.finish || "")}"
+    <div class="gx-td gx-c-date gx-c-finish"><input class="ecell" type="date" value="${esc(t.finish || "")}"
         data-task="${t.id}" data-field="finish"></div>
     <div class="gx-td gx-c-pred"><input class="ecell" value="${esc(t.predecessors || "")}"
         placeholder="—" title="e.g. 12, 14FS+2d, 9SS"
@@ -1486,6 +1559,24 @@ main.addEventListener("change", async (e) => {
   }
 });
 
+/* Grips are mousedown, not click — a click fires only after release, by which
+   time the drag is over. */
+main.addEventListener("mousedown", (e) => {
+  const grip = e.target.closest("[data-gx-grip]");
+  if (grip) startColDrag(e, grip.dataset.gxGrip);
+});
+
+/* Ctrl + wheel over the chart, the gesture every drawing tool has trained
+   people to try. Passive:false because preventDefault has to stop the browser
+   zooming the whole page instead. */
+main.addEventListener("wheel", (e) => {
+  if (!e.ctrlKey || !e.target.closest("#gxChart")) return;
+  e.preventDefault();
+  schedZoomFactor = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX,
+    schedZoomFactor * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
+  render();
+}, { passive: false });
+
 main.addEventListener("click", async (e) => {
   const del = e.target.closest("[data-del-task]");
   if (del) {
@@ -1497,7 +1588,39 @@ main.addEventListener("click", async (e) => {
   }
 
   const zoom = e.target.closest("[data-sched-zoom]");
-  if (zoom) { schedZoom = zoom.dataset.schedZoom; render(); return; }
+  if (zoom) { schedZoom = zoom.dataset.schedZoom; schedZoomFactor = 1; render(); return; }
+
+  const step = e.target.closest("[data-sched-zoomstep]");
+  if (step) {
+    const dir = Number(step.dataset.schedZoomstep);
+    schedZoomFactor = dir === 0 ? 1
+      : Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, schedZoomFactor * (dir > 0 ? 1.35 : 1 / 1.35)));
+    render();
+    return;
+  }
+
+  if (e.target.closest("[data-sched-cols-reset]")) {
+    schedColW = { ...GX_DEFAULT_W };
+    saveColW();
+    render();
+    return;
+  }
+
+  const clear = e.target.closest("[data-sched-clear]");
+  if (clear) {
+    const n = (schedCache?.data?.tasks || []).length;
+    // Typed confirmation rather than an "are you sure": this throws away an
+    // import that may have taken a review pass to get right, and there is no
+    // undo. The count is in the prompt so nobody clears the wrong job.
+    const answer = prompt(`Delete all ${n} tasks and their dependencies on `
+      + `${current.job}? Your working calendar is kept.\n\nType DELETE to confirm:`);
+    if ((answer || "").trim().toUpperCase() !== "DELETE") return;
+    await api(`/api/jobs/${encodeURIComponent(current.job)}/schedule/tasks`,
+              { method: "DELETE" });
+    schedCollapsed.clear();
+    await loadSchedule();
+    return;
+  }
 
   const foldRow = e.target.closest("[data-sched-fold-row]");
   if (foldRow) {

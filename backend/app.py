@@ -1391,6 +1391,13 @@ def remove_task(job_number: str, task_id: str,
     return {"deleted": task_id}
 
 
+@app.delete("/api/jobs/{job_number}/schedule/tasks")
+def clear_schedule(job_number: str,
+                   x_planwise_user: str | None = Header(default=None)):
+    """Empty the schedule for this job — the way back from a bad import."""
+    return {"cleared": schedule.clear_tasks(job_number, actor=_actor(x_planwise_user))}
+
+
 # --- look ahead (Phase 4) -----------------------------------------------------
 
 @app.get("/api/jobs/{job_number}/lookahead")

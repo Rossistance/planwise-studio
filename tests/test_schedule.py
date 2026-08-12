@@ -674,3 +674,32 @@ def test_share_refuses_an_empty_look_ahead():
         lookahead.share_html(period["id"], "Job", "24-003")
     with pytest.raises(lookahead.LookaheadError, match="no line items"):
         lookahead.share_pdf(period["id"], "Job", "24-003")
+
+
+def test_clearing_a_schedule_removes_tasks_and_links_but_keeps_the_calendar():
+    """The way back from a bad import. Links go with the tasks, a staged
+    import waiting for review goes too (it would otherwise offer to commit
+    rows against a schedule that no longer exists), and the working calendar
+    survives — workdays and holidays belong to the job, not to the tasks."""
+    schedule.import_tasks("24-003", [
+        {"external_id": "1", "name": "A", "start": "2026-03-02",
+         "finish": "2026-03-06", "duration_days": 5, "sort_order": 0},
+        {"external_id": "2", "name": "B", "start": "2026-03-09",
+         "finish": "2026-03-13", "duration_days": 5, "sort_order": 1,
+         "predecessors": "1"},
+    ], source="test")
+    schedule.set_calendar("24-003", workdays="1111110", holidays=["2026-07-03"])
+    conn = db.connect()
+    assert conn.execute("SELECT COUNT(*) c FROM schedule_links").fetchone()["c"] > 0
+
+    assert schedule.clear_tasks("24-003", actor="Ross Hixon") == 2
+    assert schedule.list_tasks("24-003") == []
+    assert conn.execute("SELECT COUNT(*) c FROM schedule_links").fetchone()["c"] == 0
+
+    from datetime import date
+    cal = schedule.get_calendar("24-003")
+    assert cal.workdays == "1111110"
+    assert date(2026, 7, 3) in cal.holidays
+
+    # Clearing an already-empty schedule is a no-op, not an error.
+    assert schedule.clear_tasks("24-003") == 0

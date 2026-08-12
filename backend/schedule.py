@@ -315,7 +315,16 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
             # explain it.
             jpype.startJVM("-Xmx256m", "-Xss4m", convertStrings=True)
 
-        from net.sf.mpxj.reader import UniversalProjectReader  # type: ignore
+        # MPXJ renamed its Java namespace from `net.sf.mpxj` to `org.mpxj`
+        # (v14). Both are tried because which one is present depends entirely
+        # on the version pip resolved, and an import error here reads as
+        # "Java package 'net' not found" — which sounds like a broken
+        # classpath and sent this in exactly the wrong direction. The API is
+        # identical either side of the rename; only the package moved.
+        try:
+            from org.mpxj.reader import UniversalProjectReader  # type: ignore
+        except ImportError:
+            from net.sf.mpxj.reader import UniversalProjectReader  # type: ignore
     except ScheduleError:
         raise
     except Exception as exc:  # noqa: BLE001 — JPype and the JVM raise many shapes
@@ -349,7 +358,9 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
             return _iso_date(str(v)[:10]) if v is not None else None
 
         out = []
+        seen = skipped = 0
         for i, t in enumerate(project.getTasks()):
+            seen += 1
             name = t.getName()
             if not name or t.getUniqueID() is None:
                 continue
@@ -377,8 +388,18 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
                     "predecessors": ",".join(preds) or None,
                     "sort_order": i,
                 })
-            except Exception:  # noqa: BLE001, S112
+            except Exception:  # noqa: BLE001
+                skipped += 1
                 continue
+        # Skipping the odd awkward task is fine. Skipping EVERY task means the
+        # MPXJ API moved under us, and reporting that as "no tasks in the
+        # file" would send someone hunting a problem in their schedule that
+        # isn't there.
+        if seen and skipped == seen:
+            raise ScheduleError(
+                f"All {seen} tasks in that file failed to read — the installed "
+                "MPXJ version is probably not the one this build expects. "
+                "Export as XML from Project (File > Save As > XML) instead.")
     except ScheduleError:
         raise
     except Exception as exc:  # noqa: BLE001

@@ -1217,17 +1217,121 @@ def get_schedule(job_number: str):
     return result
 
 
+# A schedule file is a few hundred KB; a hundred megabytes is a mistake or an
+# attack, and reading it into memory first is how a small server falls over.
+_MAX_SCHEDULE_BYTES = 32 * 1024 * 1024
+
+
+async def _read_capped(file: UploadFile) -> bytes:
+    chunks, total = [], 0
+    while True:
+        chunk = await file.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > _MAX_SCHEDULE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"That file is larger than "
+                       f"{_MAX_SCHEDULE_BYTES // (1024 * 1024)}MB.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 @app.post("/api/jobs/{job_number}/schedule/import")
 async def import_schedule(job_number: str, mode: str = "replace",
                           file: UploadFile = File(...),
                           x_planwise_user: str | None = Header(default=None)):
-    data = await file.read()
+    """Parse and stage. Nothing is applied to the live schedule here.
+
+    An import replaces the plan the whole team works to, so it is shown before
+    it is applied — and a PDF import produces candidate dependencies traced
+    from arrows, which must be looked at before they can move any date.
+
+    Sources that carry their dependencies explicitly and raise no warnings
+    commit straight away: there is nothing for a human to decide, and making
+    someone confirm a clean MSPDI import twice would just teach them to click
+    through the screen that matters.
+    """
+    data = await _read_capped(file)
+    actor = _actor(x_planwise_user)
     try:
-        tasks, source = schedule.parse_schedule(file.filename or "", data)
-        return schedule.import_tasks(job_number, tasks, source, mode,
-                                     actor=_actor(x_planwise_user))
+        staged = schedule.stage_import(job_number, file.filename or "", data, actor=actor)
+        if not staged["links"] and not staged["warnings"]:
+            result = schedule.commit_import(staged["id"], mode=mode, actor=actor)
+            result["staged"] = False
+            return result
+        staged["staged"] = True
+        staged["mode"] = mode
+        return staged
     except schedule.ScheduleError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/jobs/{job_number}/schedule/import/staged")
+def staged_schedule_import(job_number: str):
+    return schedule.latest_staged(job_number) or {"id": None}
+
+
+@app.get("/api/schedule/import/{import_id}")
+def get_schedule_import(import_id: str):
+    try:
+        return schedule.summarise_import(import_id)
+    except schedule.ScheduleError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/schedule/import/{import_id}/commit")
+def commit_schedule_import(import_id: str, body: dict = Body(default={}),
+                           x_planwise_user: str | None = Header(default=None)):
+    try:
+        return schedule.commit_import(
+            import_id, mode=body.get("mode", "replace"),
+            accepted_link_ids=body.get("accepted_link_ids") or [],
+            actor=_actor(x_planwise_user))
+    except schedule.ScheduleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/schedule/import/{import_id}/discard")
+def discard_schedule_import(import_id: str,
+                            x_planwise_user: str | None = Header(default=None)):
+    if not schedule.discard_import(import_id, actor=_actor(x_planwise_user)):
+        raise HTTPException(status_code=404, detail="Nothing staged with that id.")
+    return {"discarded": import_id}
+
+
+@app.post("/api/jobs/{job_number}/schedule/calendar")
+def set_schedule_calendar(job_number: str, body: dict = Body(...),
+                          x_planwise_user: str | None = Header(default=None)):
+    return schedule.set_calendar(job_number, workdays=body.get("workdays"),
+                                 holidays=body.get("holidays"),
+                                 actor=_actor(x_planwise_user))
+
+
+@app.post("/api/jobs/{job_number}/schedule/links")
+def create_schedule_link(job_number: str, body: dict = Body(...),
+                         x_planwise_user: str | None = Header(default=None)):
+    try:
+        link = schedule.add_link(job_number, body.get("pred_id", ""),
+                                 body.get("succ_id", ""),
+                                 link_type=body.get("link_type", "FS"),
+                                 lag_days=float(body.get("lag_days") or 0),
+                                 source="manual", actor=_actor(x_planwise_user))
+    except schedule.ScheduleError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if link is None:
+        raise HTTPException(status_code=409,
+                            detail="Those two are already linked, or that's the same task.")
+    return link
+
+
+@app.delete("/api/jobs/{job_number}/schedule/links/{link_id}")
+def remove_schedule_link(job_number: str, link_id: str,
+                         x_planwise_user: str | None = Header(default=None)):
+    if not schedule.delete_link(job_number, link_id, actor=_actor(x_planwise_user)):
+        raise HTTPException(status_code=404, detail="No such link.")
+    return {"deleted": link_id}
 
 
 @app.post("/api/jobs/{job_number}/schedule/tasks")

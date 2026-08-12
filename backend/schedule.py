@@ -104,15 +104,19 @@ def parse_mspdi(data: bytes) -> list[dict[str, Any]]:
             if not puid:
                 continue
             lag_raw = text(link, "LinkLag")
-            lag = ""
+            lag_days = 0.0
             try:
                 # LinkLag is in tenths of a minute
                 lag_days = round(float(lag_raw or 0) / 10 / 60 / HOURS_PER_DAY, 2)
-                if lag_days:
-                    lag = f"{'+' if lag_days > 0 else ''}{lag_days:g}d"
             except (TypeError, ValueError):
                 pass
-            preds.append(f"{puid}{lag}")
+            # Type 0=FF 1=FS 2=SF 3=SS. This was read and thrown away, so every
+            # dependency in every imported schedule became finish-to-start —
+            # a start-to-start pair silently gained its predecessor's whole
+            # duration.
+            ltype = _MSPDI_LINK_TYPES.get((text(link, "Type") or "1").strip(), "FS")
+            preds.append({"pred_external_id": puid, "link_type": ltype,
+                          "lag_days": lag_days})
 
         out.append({
             "external_id": uid,
@@ -124,12 +128,133 @@ def parse_mspdi(data: bytes) -> list[dict[str, Any]]:
             "outline_level": int(text(t, "OutlineLevel") or 1),
             "is_milestone": 1 if (text(t, "Milestone") or "0") == "1" else 0,
             "is_summary": 1 if (text(t, "Summary") or "0") == "1" else 0,
-            "predecessors": ",".join(preds) or None,
+            "wbs": (text(t, "WBS") or None),
+            "predecessors": _preds_to_text(preds) or None,
+            "links": preds,
             "sort_order": i,
         })
     if not out:
         raise ScheduleError("The XML parsed but contained no schedule tasks.")
     return out
+
+
+# MSPDI's PredecessorLink/Type codes.
+_MSPDI_LINK_TYPES = {"0": "FF", "1": "FS", "2": "SF", "3": "SS"}
+
+
+# --- human-written durations and dates ----------------------------------------
+# What appears in a printed schedule, an xlsx export, or a typed cell.
+
+_DURATION_RE = re.compile(
+    r"^\s*(?P<qty>-?\d+(?:[.,]\d+)?)\s*(?P<unit>[A-Za-z]*)\s*\??\s*$")
+
+# Elapsed units run through weekends; working units don't. Keeping them apart
+# matters: a 60-eday delivery lead converted to 60 working days lands twelve
+# weeks late.
+_DURATION_UNITS = {
+    "": ("d", 1.0), "d": ("d", 1.0), "day": ("d", 1.0), "days": ("d", 1.0),
+    "w": ("w", 5.0), "wk": ("w", 5.0), "wks": ("w", 5.0),
+    "week": ("w", 5.0), "weeks": ("w", 5.0),
+    "mon": ("mo", 20.0), "mons": ("mo", 20.0),
+    "month": ("mo", 20.0), "months": ("mo", 20.0),
+    "h": ("h", 1.0 / HOURS_PER_DAY), "hr": ("h", 1.0 / HOURS_PER_DAY),
+    "hrs": ("h", 1.0 / HOURS_PER_DAY), "hour": ("h", 1.0 / HOURS_PER_DAY),
+    "hours": ("h", 1.0 / HOURS_PER_DAY),
+    "ed": ("ed", 1.0), "eday": ("ed", 1.0), "edays": ("ed", 1.0),
+    "ewk": ("ew", 7.0), "ewks": ("ew", 7.0), "eweek": ("ew", 7.0),
+    "eweeks": ("ew", 7.0), "emon": ("emo", 30.0), "emons": ("emo", 30.0),
+}
+
+
+def parse_duration_text(raw: Any) -> tuple[float | None, str | None]:
+    """'5 days' / '20 wks' / '60 edays' / '0 days' -> (working days, unit).
+
+    Returns the duration expressed in working days plus the unit it was
+    written in, so an elapsed duration can be recognised later rather than
+    silently becoming a working one. `None` for anything unreadable — a
+    duration we can't parse is missing, not zero.
+    """
+    if raw is None:
+        return None, None
+    if isinstance(raw, (int, float)):
+        return float(raw), "d"
+    m = _DURATION_RE.match(str(raw))
+    if not m:
+        return None, None
+    unit_raw = m.group("unit").lower()
+    if unit_raw not in _DURATION_UNITS:
+        return None, None
+    unit, factor = _DURATION_UNITS[unit_raw]
+    try:
+        qty = float(m.group("qty").replace(",", "."))
+    except ValueError:
+        return None, None
+    return round(qty * factor, 3), unit
+
+
+# "Tue 12/6/22", "12/6/22", "2024-12-06", "6 Dec 24", and the ISO datetimes an
+# xlsx cell hands over.
+_DATE_FORMATS = ("%a %m/%d/%y", "%a %m/%d/%Y", "%m/%d/%y", "%m/%d/%Y",
+                 "%Y-%m-%d", "%d/%m/%Y", "%b %d, %Y", "%d %b %y", "%d %b %Y",
+                 "%a %d/%m/%y", "%m-%d-%y", "%m-%d-%Y")
+
+
+def parse_date_text(raw: Any) -> tuple[str | None, bool]:
+    """Parse a printed date. Returns (ISO date, weekday_matched).
+
+    A printed MS Project date carries its own checksum: "Tue 12/6/22" states
+    the weekday, so if the parsed date isn't a Tuesday something upstream went
+    wrong — a mis-clustered row, a column read from the wrong band. The caller
+    turns a False into a warning rather than guessing, because a date that is
+    wrong but plausible is the worst thing a schedule importer can produce.
+    """
+    if raw is None:
+        return None, True
+    if isinstance(raw, datetime):
+        return raw.date().isoformat(), True
+    if isinstance(raw, date):
+        return raw.isoformat(), True
+
+    s = str(raw).strip().replace(" ", " ")
+    if not s:
+        return None, True
+    s = re.sub(r"\s+", " ", s)
+    stated_dow = None
+    m = re.match(r"^(?P<dow>Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b", s, re.I)
+    if m:
+        stated_dow = m.group("dow").lower()
+
+    for fmt in _DATE_FORMATS:
+        try:
+            d = datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+        if stated_dow:
+            actual = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[d.weekday()]
+            return d.isoformat(), actual == stated_dow
+        return d.isoformat(), True
+
+    # Last resort: a bare ISO datetime from a spreadsheet cell.
+    iso = _iso_date(s)
+    return iso, True
+
+
+def _preds_to_text(links: list[dict[str, Any]]) -> str:
+    """Render typed links back into the text the grid shows and accepts.
+
+    Round-trips with `_parse_preds`, so what somebody sees in the Predecessors
+    column is exactly what they could have typed.
+    """
+    parts = []
+    for lk in links:
+        s = str(lk["pred_external_id"])
+        if lk.get("link_type") and lk["link_type"] != "FS":
+            s += lk["link_type"]
+        lag = float(lk.get("lag_days") or 0)
+        if lag:
+            s += f"{'+' if lag > 0 else '-'}{abs(lag):g}d"
+        parts.append(s)
+    return ",".join(parts)
 
 
 def mpp_available() -> tuple[bool, str]:
@@ -217,19 +342,45 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
 
 
 def parse_schedule(filename: str, data: bytes) -> tuple[list[dict[str, Any]], str]:
+    """Legacy shape: (tasks, source). Kept for callers that predate links."""
+    parsed = parse_any(filename, data)
+    return parsed["tasks"], parsed["source"]
+
+
+def parse_any(filename: str, data: bytes) -> dict[str, Any]:
+    """Read any supported schedule file -> {tasks, links, warnings, source}.
+
+    Extension first, then a content sniff, so a file renamed on its way through
+    email still imports. Every branch returns the same shape, which is what
+    lets one staging path serve five different formats.
+    """
     name = (filename or "").lower()
-    if name.endswith(".mpp"):
-        return parse_mpp(data), "mpp"
-    if name.endswith((".xml", ".mspdi")):
-        return parse_mspdi(data), "mspdi"
-    # content sniff: MSPDI is XML, MPP is an OLE compound file
-    if data[:4] == b"\xd0\xcf\x11\xe0":
-        return parse_mpp(data), "mpp"
-    if data.lstrip()[:1] == b"<":
-        return parse_mspdi(data), "mspdi"
+
+    def wrap(result: dict[str, Any], source: str) -> dict[str, Any]:
+        return {"tasks": result["tasks"], "links": result.get("links") or [],
+                "warnings": result.get("warnings") or [], "source": source}
+
+    if name.endswith(".pdf") or data[:5] == b"%PDF-":
+        from . import schedule_pdf
+        return wrap(schedule_pdf.parse_pdf(data), "pdf")
+    if name.endswith(".mpp") or data[:4] == b"\xd0\xcf\x11\xe0":
+        return wrap({"tasks": parse_mpp(data)}, "mpp")
+    if name.endswith((".xlsx", ".xlsm")) or data[:4] == b"PK\x03\x04":
+        from . import schedule_tab
+        return wrap(schedule_tab.parse_table(data, name or "schedule.xlsx"), "xlsx")
+    if name.endswith(".csv"):
+        from . import schedule_tab
+        return wrap(schedule_tab.parse_table(data, name), "csv")
+    if name.endswith((".xml", ".mspdi")) or data.lstrip()[:1] == b"<":
+        return wrap({"tasks": parse_mspdi(data)}, "mspdi")
+    # A CSV with an odd extension is still a CSV; try it before refusing.
+    if b"," in data[:2048] or b";" in data[:2048]:
+        from . import schedule_tab
+        return wrap(schedule_tab.parse_table(data, "schedule.csv"), "csv")
     raise ScheduleError(
-        "Unsupported schedule file. Import a Microsoft Project .mpp or an "
-        "MSPDI .xml export.")
+        "Unsupported schedule file. PlanWise reads Microsoft Project (.mpp), "
+        "an MSPDI .xml export, a printed schedule PDF, or a spreadsheet "
+        "(.xlsx/.csv) such as a Smartsheet export.")
 
 
 # --- storage ----------------------------------------------------------------
@@ -413,6 +564,147 @@ def sync_links_from_text(job_number: str, source: str = "manual",
     if commit:
         db.connect().commit()
     return made
+
+
+# --- staged imports -----------------------------------------------------------
+# Parse, show, then commit. A schedule import replaces the plan the whole team
+# works to, so it gets the same "validated before it is trusted" treatment as
+# the Vista extract (D28) — and a PDF import produces *candidate* dependencies
+# traced from arrows, which have to be looked at by a human before they can
+# move a single date. The payload is where those candidates wait; they never
+# reach schedule_links unaccepted.
+
+def stage_import(job_number: str, filename: str, data: bytes,
+                 actor: str | None = None) -> dict[str, Any]:
+    import json
+
+    parsed = parse_any(filename, data)
+    rec = {"id": db.new_id(), "job_number": job_number, "filename": filename,
+           "source": parsed["source"],
+           "payload": json.dumps({"tasks": parsed["tasks"], "links": parsed["links"],
+                                  "warnings": parsed["warnings"]}),
+           "status": "staged", "created_at": db.now(), "created_by": actor,
+           "settled_at": None, "settled_by": None}
+    conn = db.connect()
+    cols = ", ".join(rec)
+    conn.execute(f"INSERT INTO schedule_imports ({cols}) "  # noqa: S608
+                 f"VALUES ({','.join('?' * len(rec))})", tuple(rec.values()))
+    conn.commit()
+    db.log_activity(actor, job_number, "schedule.import.staged",
+                    f"{filename} · {len(parsed['tasks'])} tasks, "
+                    f"{len(parsed['links'])} proposed links")
+    return summarise_import(rec["id"])
+
+
+def get_import(import_id: str) -> dict[str, Any] | None:
+    conn = db.connect()
+    row = conn.execute("SELECT * FROM schedule_imports WHERE id = ?",
+                       (import_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def summarise_import(import_id: str) -> dict[str, Any]:
+    import json
+
+    rec = get_import(import_id)
+    if rec is None:
+        raise ScheduleError("That import is no longer available.")
+    payload = json.loads(rec["payload"])
+    tasks = payload.get("tasks", [])
+    links = payload.get("links", [])
+    by_ext = {t["external_id"]: t.get("name") for t in tasks}
+    for lk in links:
+        lk["pred_name"] = by_ext.get(lk["pred_external_id"])
+        lk["succ_name"] = by_ext.get(lk["succ_external_id"])
+        lk["id"] = f"{lk['pred_external_id']}>{lk['succ_external_id']}"
+    return {
+        "id": rec["id"], "job_number": rec["job_number"],
+        "filename": rec["filename"], "source": rec["source"],
+        "status": rec["status"], "created_at": rec["created_at"],
+        "tasks": tasks, "links": links,
+        "warnings": payload.get("warnings", []),
+        "counts": {
+            "tasks": len(tasks),
+            "milestones": sum(1 for t in tasks if t.get("is_milestone")),
+            "summaries": sum(1 for t in tasks if t.get("is_summary")),
+            "dated": sum(1 for t in tasks if t.get("start")),
+            "links": len(links),
+            "inferred_links": sum(1 for lk in links if lk.get("inferred")),
+        },
+    }
+
+
+def commit_import(import_id: str, mode: str = "replace",
+                  accepted_link_ids: list[str] | None = None,
+                  actor: str | None = None) -> dict[str, Any]:
+    """Apply a staged import: tasks, then the dependencies that were accepted.
+
+    Both in one transaction — a crash between them would leave a schedule whose
+    dependencies had quietly gone missing, which looks exactly like a schedule
+    that never had any.
+    """
+    import json
+
+    rec = get_import(import_id)
+    if rec is None:
+        raise ScheduleError("That import is no longer available.")
+    if rec["status"] != "staged":
+        raise ScheduleError(f"That import was already {rec['status']}.")
+
+    payload = json.loads(rec["payload"])
+    job = rec["job_number"]
+    accepted = set(accepted_link_ids or [])
+
+    conn = db.connect()
+    try:
+        result = import_tasks(job, payload.get("tasks", []), rec["source"],
+                              mode=mode, actor=actor, commit=False)
+        by_ext = {str(t["external_id"]): t["id"]
+                  for t in list_tasks(job) if t["external_id"]}
+        made = 0
+        for lk in payload.get("links", []):
+            key = f"{lk['pred_external_id']}>{lk['succ_external_id']}"
+            if key not in accepted:
+                continue
+            p, s = by_ext.get(str(lk["pred_external_id"])), by_ext.get(str(lk["succ_external_id"]))
+            if not p or not s:
+                continue
+            if add_link(job, p, s, link_type=lk.get("link_type", "FS"),
+                        lag_days=lk.get("lag_days", 0), source=rec["source"],
+                        inferred=bool(lk.get("inferred")),
+                        confidence=lk.get("confidence"), actor=actor, commit=False):
+                made += 1
+        conn.execute("UPDATE schedule_imports SET status = 'committed', "
+                     "settled_at = ?, settled_by = ? WHERE id = ?",
+                     (db.now(), actor, import_id))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+    db.log_activity(actor, job, "schedule.import.commit",
+                    f"{rec['filename']} · {result['added']} added, "
+                    f"{result['updated']} updated, {made} links accepted")
+    result["links_accepted"] = made
+    result["links_rejected"] = len(payload.get("links", [])) - made
+    return result
+
+
+def discard_import(import_id: str, actor: str | None = None) -> bool:
+    conn = db.connect()
+    cur = conn.execute("UPDATE schedule_imports SET status = 'discarded', "
+                       "settled_at = ?, settled_by = ? WHERE id = ? AND status = 'staged'",
+                       (db.now(), actor, import_id))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def latest_staged(job_number: str) -> dict[str, Any] | None:
+    conn = db.connect()
+    row = conn.execute(
+        "SELECT id FROM schedule_imports WHERE job_number = ? AND status = 'staged' "
+        "ORDER BY created_at DESC LIMIT 1", (job_number,)).fetchone()
+    return summarise_import(row["id"]) if row else None
 
 
 def add_task(job_number: str, fields: dict[str, Any],

@@ -188,3 +188,67 @@ def test_an_ordinary_preflight_still_works(client):
         "Access-Control-Request-Headers": "content-type",
     })
     assert r.status_code == 200
+
+
+# --- the backstop sweep covers SENDS, not just replies -------------------------
+
+def test_the_sweep_checks_sent_items_even_with_no_reply_threads(client, planwise, monkeypatch):
+    """The bug: the sweep scanned the Inbox only, and returned early when the
+    thread list was empty. A record that is drafted but not yet sent HAS no
+    reply thread — so the sweep did nothing for it, and Draft -> Sent rested
+    entirely on Outlook's ItemAdd on Sent Items, which Exchange cached mode
+    routinely never fires. A missed event was permanent, and because a record
+    only joins the reply watch list once Sent, the reply was then invisible
+    too. One missed event killed the whole chain silently.
+    """
+    import asyncio
+
+    pair(client)
+    scanned = {}
+
+    monkeypatch.setattr(c, "_fetch_manifest", lambda force=False: {
+        "threads": [], "drafts": [{"record_id": "rec-1", "subject": "RFI 001 — X"}]})
+
+    def fake_scan_sent(queries):
+        scanned["queries"] = queries
+        return [{"record_id": "rec-1", "sent_on": "2026-08-12T06:16:00", "to": "gc@x.com"}]
+
+    def fake_scan_inbox(queries):          # must not be needed to reach sends
+        scanned["inbox"] = True
+        return {"replies": [], "scanned": 0}
+
+    monkeypatch.setattr(c, "_scan_sent", fake_scan_sent)
+    monkeypatch.setattr(c, "_scan_inbox", fake_scan_inbox)
+
+    posted = []
+
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, params=None):
+            return FakeAsyncResponse(200, {
+                "enabled": True, "interval_seconds": 15,
+                "threads": [], "drafts": [{"record_id": "rec-1", "subject": "RFI 001 — X"}]})
+        async def post(self, url, json=None, headers=None):
+            posted.append((url, json))
+            return FakeAsyncResponse(200, {})
+
+    monkeypatch.setattr(c.httpx, "AsyncClient", lambda **kw: FakeClient())
+    asyncio.run(c._poll_once())
+
+    assert scanned.get("queries"), "Sent Items was never scanned"
+    assert any(u.endswith("/api/records/rec-1/sent") for u, _ in posted), \
+        f"the send was never reported to the server; posted={posted}"
+
+
+class FakeAsyncResponse:
+    def __init__(self, status_code, payload):
+        self.status_code = status_code
+        self._payload = payload
+        self.text = ""
+
+    def json(self):
+        return self._payload
+
+    def raise_for_status(self):
+        return None

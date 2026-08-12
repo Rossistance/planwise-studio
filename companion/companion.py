@@ -112,7 +112,8 @@ app.add_middleware(
 
 # Background-poll status, surfaced on /health so the UI can show it.
 poll_state: dict = {"running": False, "last_run": None, "last_error": None,
-                    "captured": 0, "matched": 0, "threads": 0,
+                    "captured": 0, "matched": 0, "threads": 0, "drafts": 0,
+                    "sends_detected": 0,
                     "interval_seconds": None, "sweeping": False,
                     "last_sweep_ms": None}
 
@@ -465,22 +466,28 @@ def show_drafts(body: dict = Body(...)):
     return {"shown": True, "count": drafts.Items.Count}
 
 
-@app.post("/sent")
-def sent_check(body: dict = Body(...)):
-    """Did a message on this thread actually leave? Checks Sent Items by
-    conversation topic — so PlanWise flips Draft → Sent automatically instead
-    of asking the PM to bookkeep what Outlook already knows."""
-    _check(body.get("token"))
+def _scan_sent(queries: list[dict]) -> list[dict]:
+    """One pass over Sent Items, matching every drafted record at once.
+
+    Shared by the browser's on-demand check and the background sweep. The
+    sweep needs it because the live ItemAdd event on Sent Items is the least
+    reliable one Outlook offers: under Exchange cached mode the sent copy is
+    frequently created by a server-side sync rather than locally, and no
+    ItemAdd fires at all. Relying on the event alone meant a send could go
+    undetected forever — and since a record only joins the reply watch list
+    once it is Sent, the customer's reply was then invisible too. One missed
+    event silently killed the whole chain.
+    """
     _app, ns = _outlook()
     sent_folder = ns.GetDefaultFolder(5)  # olFolderSentMail
 
-    wanted = {}
-    for q in body.get("queries") or []:
+    wanted: dict[str, str] = {}
+    for q in queries or []:
         topic = _norm_topic(q.get("subject"))
         if topic:
             wanted.setdefault(topic, q.get("record_id"))
     if not wanted:
-        return {"sent": []}
+        return []
 
     items = sent_folder.Items
     items.Sort("[SentOn]", True)
@@ -491,7 +498,8 @@ def sent_check(body: dict = Body(...)):
         try:
             if getattr(item, "Class", 0) != 43:
                 continue
-            topic = _norm_topic(item.ConversationTopic)
+            topic = _norm_topic(getattr(item, "ConversationTopic", None)
+                                or getattr(item, "Subject", None))
             if topic not in wanted or topic in found:
                 continue
             found[topic] = {
@@ -502,7 +510,16 @@ def sent_check(body: dict = Body(...)):
             }
         except Exception:  # noqa: BLE001
             continue
-    return {"sent": list(found.values())}
+    return list(found.values())
+
+
+@app.post("/sent")
+def sent_check(body: dict = Body(...)):
+    """Did a message on this thread actually leave? Checks Sent Items by
+    conversation topic — so PlanWise flips Draft → Sent automatically instead
+    of asking the PM to bookkeep what Outlook already knows."""
+    _check(body.get("token"))
+    return {"sent": _scan_sent(body.get("queries") or [])}
 
 
 def _scan_inbox(queries: list[dict]) -> dict:
@@ -793,12 +810,45 @@ async def _poll_once() -> None:
 
         poll_state["interval_seconds"] = manifest.get("interval_seconds")
         poll_state["threads"] = len(manifest.get("threads") or [])
+        poll_state["drafts"] = len(manifest.get("drafts") or [])
         if not manifest.get("enabled"):
             poll_state["last_error"] = None
             poll_state["last_run"] = datetime.now().isoformat(timespec="seconds")
             return
 
         threads = manifest.get("threads") or []
+        drafts = manifest.get("drafts") or []
+
+        # SENDS FIRST, and unconditionally — not gated on there being reply
+        # threads to watch.
+        #
+        # This sweep used to scan the Inbox only, and returned early when the
+        # thread list was empty. A record that is drafted but not yet sent has
+        # no reply thread by definition, so the sweep did nothing at all for
+        # it, leaving Draft -> Sent entirely dependent on Outlook's ItemAdd
+        # event on Sent Items — the least reliable event it offers (Exchange
+        # cached mode routinely creates the sent copy by server sync, firing
+        # nothing). A missed event was therefore permanent, and because a
+        # record only joins the reply watch list once it is Sent, the
+        # customer's reply went unseen too. That is precisely the gap the
+        # backstop exists to close (D35); it had only ever closed half of it.
+        if drafts:
+            for hit in await asyncio.to_thread(_scan_sent, drafts):
+                rid = hit["record_id"]
+                resp = await client.post(f"{base}/api/records/{rid}/sent",
+                                         json={"sent_at": hit.get("sent_on")},
+                                         headers={"X-PlanWise-Companion": token})
+                if resp.status_code != 200:
+                    poll_state["last_error"] = (
+                        f"server refused a send: {resp.status_code} {resp.text[:120]}")
+                    log.warning("poll: server refused a send (%s)", resp.status_code)
+                    continue
+                poll_state["sends_detected"] = poll_state.get("sends_detected", 0) + 1
+                log.info("poll: %s went out", hit.get("record_id"))
+            # The record has just become a reply thread; pick that up now
+            # rather than a sweep later, so a fast reply isn't missed.
+            _fetch_manifest(force=True)
+
         if not threads:
             poll_state["last_error"] = None
             poll_state["last_run"] = datetime.now().isoformat(timespec="seconds")

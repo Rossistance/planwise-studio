@@ -2276,9 +2276,17 @@ async function refreshCompanionChip() {
     const live = w.running
       ? ` · watching live${w.last_event ? `, last event ${w.last_event.slice(11, 16)}` : ""}`
       : ` · LIVE WATCH DOWN${w.error ? ` (${w.error})` : ""} — falling back to the sweep`;
+    // Say what the backstop is actually watching. "0 threads" alone read as
+    // "nothing is being watched" while a drafted record was in fact on the
+    // list — the two are counted separately, and hiding one of them made a
+    // working sweep look idle.
+    const watching = [
+      p.threads ? `${p.threads} awaiting reply` : "",
+      p.drafts ? `${p.drafts} awaiting send` : "",
+    ].filter(Boolean).join(", ") || "nothing open";
     const sweep = p.last_error
       ? ` · sweep error: ${p.last_error}`
-      : p.interval_seconds ? ` · backstop every ${p.interval_seconds}s (${p.threads} threads)` : "";
+      : p.interval_seconds ? ` · backstop every ${p.interval_seconds}s (${watching})` : "";
     el.textContent = `companion: Outlook connected${h.account ? " · " + h.account : ""}${live}${sweep}`;
   } catch {
     el.innerHTML = `companion: not running — start <span class="mono">companion.bat</span> on this PC`;

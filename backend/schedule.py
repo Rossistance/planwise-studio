@@ -297,14 +297,33 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
     import shutil
     import tempfile
 
-    import jpype
-    import mpxj
+    try:
+        import jpype
+        import jpype.imports  # noqa: F401 — installs the Java import hook
+        import mpxj  # noqa: F401
 
-    if not jpype.isJVMStarted():
-        jars = [str(p) for p in pathlib.Path(mpxj.__file__).parent.rglob("*.jar")]
-        jpype.startJVM(classpath=jars)
+        if not jpype.isJVMStarted():
+            # No explicit classpath. Importing mpxj already registered all 32
+            # of its jars through jpype.addClassPath, and passing `classpath=`
+            # here REPLACES that list rather than adding to it — so a hand-
+            # rolled glob quietly becomes the only thing on the classpath.
+            #
+            # -Xmx256m because this shares a small container with the app. A
+            # JVM defaults to a quarter of system memory, which on a 512MB
+            # instance is enough to get the whole process OOM-killed mid
+            # request — which surfaces as a 500 with nothing in the log to
+            # explain it.
+            jpype.startJVM("-Xmx256m", "-Xss4m", convertStrings=True)
 
-    from net.sf.mpxj.reader import UniversalProjectReader  # type: ignore
+        from net.sf.mpxj.reader import UniversalProjectReader  # type: ignore
+    except ScheduleError:
+        raise
+    except Exception as exc:  # noqa: BLE001 — JPype and the JVM raise many shapes
+        raise ScheduleError(
+            "The Java runtime that reads .mpp files could not be started "
+            f"({type(exc).__name__}: {exc}). Export the schedule from "
+            "Microsoft Project as XML (File > Save As > XML) and import that "
+            "— it carries the same data.") from exc
 
     # MPXJ reads from a path, not a stream, so the upload has to touch disk.
     # The directory is removed afterwards — it used to be left behind on every
@@ -313,7 +332,18 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
     try:
         tmp = pathlib.Path(workdir) / "schedule.mpp"
         tmp.write_bytes(data)
-        project = UniversalProjectReader().read(str(tmp))
+        try:
+            project = UniversalProjectReader().read(str(tmp))
+        except Exception as exc:  # noqa: BLE001 — MPXJ raises Java exceptions
+            raise ScheduleError(
+                f"Microsoft Project couldn't read that file ({exc}). If it is "
+                "password-protected, or was saved by a much newer version of "
+                "Project, export it as XML (File > Save As > XML) instead."
+            ) from exc
+        if project is None:
+            raise ScheduleError(
+                "That file was opened but held no project data. Export it from "
+                "Microsoft Project as XML (File > Save As > XML) instead.")
 
         def as_date(v):
             return _iso_date(str(v)[:10]) if v is not None else None
@@ -323,25 +353,39 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
             name = t.getName()
             if not name or t.getUniqueID() is None:
                 continue
-            dur = t.getDuration()
-            preds = []
-            for rel in (t.getPredecessors() or []):
-                tgt = rel.getTargetTask()
-                if tgt is not None:
-                    preds.append(str(tgt.getUniqueID()))
-            out.append({
-                "external_id": str(t.getUniqueID()),
-                "name": str(name),
-                "start": as_date(t.getStart()),
-                "finish": as_date(t.getFinish()),
-                "duration_days": round(dur.getDuration(), 3) if dur is not None else None,
-                "percent_complete": float(t.getPercentageComplete() or 0),
-                "outline_level": int(t.getOutlineLevel() or 1),
-                "is_milestone": 1 if t.getMilestone() else 0,
-                "is_summary": 1 if t.getSummary() else 0,
-                "predecessors": ",".join(preds) or None,
-                "sort_order": i,
-            })
+            # Every one of these is a Java call that can return null or throw
+            # on a field the file simply doesn't carry. One awkward task is not
+            # a reason to lose the other four hundred.
+            try:
+                dur = t.getDuration()
+                preds = []
+                for rel in (t.getPredecessors() or []):
+                    tgt = rel.getTargetTask()
+                    if tgt is not None:
+                        preds.append(str(tgt.getUniqueID()))
+                out.append({
+                    "external_id": str(t.getUniqueID()),
+                    "name": str(name),
+                    "start": as_date(t.getStart()),
+                    "finish": as_date(t.getFinish()),
+                    "duration_days": (round(float(dur.getDuration()), 3)
+                                      if dur is not None else None),
+                    "percent_complete": float(t.getPercentageComplete() or 0),
+                    "outline_level": int(t.getOutlineLevel() or 1),
+                    "is_milestone": 1 if t.getMilestone() else 0,
+                    "is_summary": 1 if t.getSummary() else 0,
+                    "predecessors": ",".join(preds) or None,
+                    "sort_order": i,
+                })
+            except Exception:  # noqa: BLE001, S112
+                continue
+    except ScheduleError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise ScheduleError(
+            f"That .mpp could not be read ({type(exc).__name__}: {exc}). "
+            "Exporting it as XML from Project (File > Save As > XML) is the "
+            "reliable path.") from exc
     finally:
         # Windows can still hold the file open through the JVM; a leftover
         # temp directory is not worth failing an otherwise good import over.

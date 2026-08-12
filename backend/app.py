@@ -1272,6 +1272,23 @@ async def import_schedule(job_number: str, mode: str = "replace",
         return staged
     except schedule.ScheduleError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # Deliberately broad, for the same reason the Vista push is (D28):
+        # a parser meets files nobody anticipated, and "Internal Server Error"
+        # tells the person holding the file nothing at all. Log the trace for
+        # us, hand them the reason and a way forward.
+        import logging
+        import traceback
+        logging.getLogger("planwise").error(
+            "schedule import failed for %s: %s", file.filename, traceback.format_exc())
+        raise HTTPException(
+            status_code=422,
+            detail=f"That file couldn't be read ({type(exc).__name__}: {exc}). "
+                   f"If it is a .mpp, exporting it as XML from Project "
+                   f"(File > Save As > XML) is the reliable path."
+        ) from exc
 
 
 @app.get("/api/jobs/{job_number}/schedule/import/staged")

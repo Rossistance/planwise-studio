@@ -289,7 +289,7 @@ PlanWise reads five things:
 
 | Format | Notes |
 |---|---|
-| `.mpp` | Needs a Java runtime on the machine running PlanWise (MPXJ). Render has none, so in practice this is the local-development path. |
+| `.mpp` | Works on the hosted instance: the build installs a Temurin 17 JRE, because MPXJ — the only production-grade reader for Project's binary format — is a Java library. Confirm with `/api/health` → `mpp_import.available`. Locally it needs a JRE installed (`winget install EclipseAdoptium.Temurin.17.JRE`); without one PlanWise says so and points at the XML export rather than failing oddly. |
 | `.xml` / `.mspdi` | Project's **File → Save As → XML**. The always-works path, and the richest: it carries typed dependencies and lags. |
 | **`.pdf`** | A printed schedule — what customers actually send. See below. |
 | `.xlsx` / `.csv` | Spreadsheet exports, including Smartsheet. Columns are matched by synonym, so "End Date", "Primary Column" and "Progress" all land correctly. |
@@ -328,3 +328,18 @@ what matches and leaves everything else alone.
 
 Rows are matched on the **printed ID**, never on the task name — names drift
 between revisions, and matching on them would turn a rename into a new task.
+
+### If .mpp import stops working
+
+`scripts/install-jre.sh` fetches the runtime during the Render build and is
+**deliberately allowed to fail**: reading `.mpp` is a convenience, while a
+failed build takes the whole app down. So a broken download costs you `.mpp`
+and nothing else, silently by design.
+
+Check `/api/health` → `mpp_import`. If it says no Java runtime, look at the
+build log for the `[jre]` lines. The likely causes are Adoptium's endpoint
+being unreachable from the build, or `JAVA_HOME` in `render.yaml` no longer
+matching where the script extracts to (`/opt/render/project/src/.jre`).
+
+In the meantime, `File → Save As → XML` from Project imports everything
+`.mpp` would have, and is the better path anyway.

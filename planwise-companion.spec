@@ -28,6 +28,14 @@ hidden = [
     "win32com.client.dynamic",
     "pythoncom",
     "pywintypes",
+    # Imported DYNAMICALLY by pywintypes the first time a COM DATE property is
+    # converted — which static analysis can never see. Without it, every
+    # string and integer property reads fine and the first datetime property
+    # (item.SentOn) raises ModuleNotFoundError at runtime: the frozen
+    # companion matched a sent message and then discarded the match as
+    # 'unreadable', so the record stayed Draft forever while dev worked
+    # perfectly. The classic PyInstaller+pywin32 trap.
+    "win32timezone",
     "win32api",
     "win32clipboard",
     # uvicorn resolves these by name at runtime.

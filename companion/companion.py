@@ -490,11 +490,20 @@ def _scan_sent(queries: list[dict]) -> list[dict]:
         return []
 
     items = sent_folder.Items
-    items.Sort("[SentOn]", True)
+    try:
+        items.Sort("[SentOn]", True)
+    except Exception as exc:  # noqa: BLE001
+        # Sorting is an optimisation, not a requirement — an unsorted scan
+        # still finds the message. Losing the whole scan because the sort
+        # failed would be the wrong trade.
+        log.warning("sent scan: could not sort (%s); scanning unsorted", exc)
+
     found: dict[str, dict] = {}
+    examined = skipped = 0
     for item in items:
         if len(found) == len(wanted):
             break
+        examined += 1
         try:
             if getattr(item, "Class", 0) != 43:
                 continue
@@ -502,14 +511,36 @@ def _scan_sent(queries: list[dict]) -> list[dict]:
                                 or getattr(item, "Subject", None))
             if topic not in wanted or topic in found:
                 continue
-            found[topic] = {
-                "record_id": wanted[topic],
-                "sent_on": item.SentOn.isoformat()
-                    if hasattr(item.SentOn, "isoformat") else str(item.SentOn),
-                "to": getattr(item, "To", None),
-            }
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            skipped += 1
+            log.warning("sent scan: unreadable item skipped (%s: %s)",
+                        type(exc).__name__, exc)
             continue
+
+        # THE MATCH IS THE FACT; the timestamp and recipient are garnish.
+        # These reads used to live in the same try as the match, so a COM
+        # conversion error on SentOn voided a successful match — the record
+        # stayed Draft forever while the scan cheerfully reported the item as
+        # merely 'unreadable'. The server treats a missing sent_at as "now",
+        # which is close enough for a fact whose alternative was 'never'.
+        entry: dict = {"record_id": wanted[topic], "sent_on": None, "to": None}
+        try:
+            so = item.SentOn
+            entry["sent_on"] = (so.isoformat() if hasattr(so, "isoformat")
+                                else str(so))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("sent scan: matched %r but SentOn unreadable (%s: %s)",
+                        topic, type(exc).__name__, exc)
+        try:
+            entry["to"] = getattr(item, "To", None)
+        except Exception:  # noqa: BLE001
+            pass
+        found[topic] = entry
+    # Silence here is what made this hard to diagnose: a scan that examined
+    # nothing and a scan that examined everything and matched nothing looked
+    # identical from outside.
+    log.info("sent scan: %d items examined, %d unreadable, looking for %d topic(s) %s, matched %d",
+             examined, skipped, len(wanted), sorted(wanted)[:3], len(found))
     return list(found.values())
 
 

@@ -1246,6 +1246,30 @@ main.addEventListener("click", async (e) => {
   await loadSchedule();
 });
 
+/* "+ Task" had no handler at all — the form rendered, the generic submit
+   listener preventDefault()ed and returned, and the button did nothing. The
+   Schedule page has therefore never been able to add a task by hand. */
+main.addEventListener("submit", async (e) => {
+  const f = e.target.closest("#addTask");
+  if (!f) return;
+  e.preventDefault();
+  const body = Object.fromEntries(
+    [...new FormData(f).entries()].filter(([, v]) => String(v).trim() !== ""));
+  if (!body.name) return;
+  const btn = f.querySelector("button[type=submit]");
+  btn.disabled = true;
+  try {
+    await api(`/api/jobs/${encodeURIComponent(current.job)}/schedule/tasks`,
+              { method: "POST", body: JSON.stringify(body) });
+    f.reset();
+    await loadSchedule();
+  } catch (err) {
+    schedMsg(`couldn't add that task: ${err.message}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 /* ---- page: Two-Week Look Ahead (Phase 4) ---------------------------------------------- */
 
 let laCache = null;        // {job, data}

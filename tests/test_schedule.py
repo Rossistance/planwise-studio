@@ -104,9 +104,30 @@ def test_replace_and_merge_modes():
     assert "PM-added punch walk" in names       # survives a re-import
     assert len(names) == 4
 
-    # replace wipes the slate, including the manual row
-    schedule.import_tasks("24-003", v2, "mspdi", mode="replace")
-    assert len(schedule.list_tasks("24-003")) == 3
+    # Replace reconciles rather than wiping. It used to DELETE every row for
+    # the job, which threw away the ids the look ahead points at
+    # (lookahead_items.task_id) and now the ids dependencies hang off — a
+    # re-import silently orphaned every seeded look-ahead item. So: imported
+    # rows the file still knows about are updated in place, imported rows it
+    # has dropped are removed, and the PM's hand-added row survives, which is
+    # the promise that made two modes worth having.
+    ids_before = {t["external_id"]: t["id"] for t in schedule.list_tasks("24-003")
+                  if t["external_id"]}
+    res = schedule.import_tasks("24-003", v2, "mspdi", mode="replace")
+    after = schedule.list_tasks("24-003")
+    assert len(after) == 4
+    assert "PM-added punch walk" in [t["name"] for t in after]
+    assert res["removed"] == 0                      # nothing was dropped by v2
+    assert {t["external_id"]: t["id"] for t in after if t["external_id"]} == ids_before
+
+    # A file that drops a task removes exactly that task, and only because it
+    # came from a file in the first place.
+    v3 = schedule.parse_mspdi(mspdi(task(1, "Mobilize (revised)", "2026-08-11", "2026-08-15")))
+    res = schedule.import_tasks("24-003", v3, "mspdi", mode="replace")
+    assert res["removed"] == 2
+    names = [t["name"] for t in schedule.list_tasks("24-003")]
+    assert names == ["Mobilize (revised)", "PM-added punch walk"]
+
     with pytest.raises(schedule.ScheduleError, match="mode"):
         schedule.import_tasks("24-003", v2, "mspdi", mode="sideways")
 

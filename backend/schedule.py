@@ -13,6 +13,7 @@ not a format one, so the capability is real as soon as a JRE exists.
 from __future__ import annotations
 
 import re
+import sqlite3
 import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 from typing import Any
@@ -23,7 +24,16 @@ MSPDI_NS = {"m": "http://schemas.microsoft.com/project"}
 HOURS_PER_DAY = 8.0
 
 FIELDS = {"name", "start", "finish", "duration_days", "percent_complete",
-          "outline_level", "is_milestone", "is_summary", "predecessors", "sort_order"}
+          "outline_level", "is_milestone", "is_summary", "predecessors", "sort_order",
+          # Added with the typed-link rebuild. `wbs` is what every real source
+          # carries and the old schema dropped; the constraint/actual/deadline
+          # fields are what an MS Project or Smartsheet export holds.
+          "wbs", "notes", "duration_unit", "constraint_type", "constraint_date",
+          "actual_start", "actual_finish", "deadline", "collapsed"}
+
+# Constraints an imported schedule can carry. Deliberately a short list: these
+# are the ones that change a date, and the ones every source expresses.
+CONSTRAINTS = ("ASAP", "ALAP", "SNET", "SNLT", "FNET", "FNLT", "MSO", "MFO")
 
 
 class ScheduleError(ValueError):
@@ -45,7 +55,14 @@ def _iso_date(value: str | None) -> str | None:
 
 
 def _duration_days(value: str | None) -> float | None:
-    """MSPDI durations are ISO-8601 like 'PT40H0M0S' or 'P5D'."""
+    """MSPDI durations are ISO-8601 like 'PT40H0M0S' or 'P5D'.
+
+    Zero is a real duration, not a missing one: a milestone is exactly 'PT0H'.
+    This used to end in `or None`, which turned every milestone's duration into
+    NULL and sent it down the start/finish fallback in analyze() — where
+    `_weekdays_between(start, finish) + 1` gives a milestone a length of one
+    day and pushes everything downstream of it a day late.
+    """
     if not value:
         return None
     m = re.match(r"^P(?:(\d+(?:\.\d+)?)D)?(?:T(?:(\d+(?:\.\d+)?)H)?"
@@ -54,7 +71,7 @@ def _duration_days(value: str | None) -> float | None:
         return None
     days, hours, minutes, seconds = (float(g or 0) for g in m.groups())
     total_hours = days * HOURS_PER_DAY + hours + minutes / 60 + seconds / 3600
-    return round(total_hours / HOURS_PER_DAY, 3) or None
+    return round(total_hours / HOURS_PER_DAY, 3)
 
 
 def parse_mspdi(data: bytes) -> list[dict[str, Any]]:
@@ -142,6 +159,7 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
         raise ScheduleError(detail)
 
     import pathlib
+    import shutil
     import tempfile
 
     import jpype
@@ -153,37 +171,46 @@ def parse_mpp(data: bytes) -> list[dict[str, Any]]:
 
     from net.sf.mpxj.reader import UniversalProjectReader  # type: ignore
 
-    tmp = pathlib.Path(tempfile.mkdtemp(prefix="planwise_mpp_")) / "schedule.mpp"
-    tmp.write_bytes(data)
-    project = UniversalProjectReader().read(str(tmp))
+    # MPXJ reads from a path, not a stream, so the upload has to touch disk.
+    # The directory is removed afterwards — it used to be left behind on every
+    # import, quietly filling the temp folder with copies of the schedule.
+    workdir = tempfile.mkdtemp(prefix="planwise_mpp_")
+    try:
+        tmp = pathlib.Path(workdir) / "schedule.mpp"
+        tmp.write_bytes(data)
+        project = UniversalProjectReader().read(str(tmp))
 
-    def as_date(v):
-        return _iso_date(str(v)[:10]) if v is not None else None
+        def as_date(v):
+            return _iso_date(str(v)[:10]) if v is not None else None
 
-    out = []
-    for i, t in enumerate(project.getTasks()):
-        name = t.getName()
-        if not name or t.getUniqueID() is None:
-            continue
-        dur = t.getDuration()
-        preds = []
-        for rel in (t.getPredecessors() or []):
-            tgt = rel.getTargetTask()
-            if tgt is not None:
-                preds.append(str(tgt.getUniqueID()))
-        out.append({
-            "external_id": str(t.getUniqueID()),
-            "name": str(name),
-            "start": as_date(t.getStart()),
-            "finish": as_date(t.getFinish()),
-            "duration_days": round(dur.getDuration(), 3) if dur is not None else None,
-            "percent_complete": float(t.getPercentageComplete() or 0),
-            "outline_level": int(t.getOutlineLevel() or 1),
-            "is_milestone": 1 if t.getMilestone() else 0,
-            "is_summary": 1 if t.getSummary() else 0,
-            "predecessors": ",".join(preds) or None,
-            "sort_order": i,
-        })
+        out = []
+        for i, t in enumerate(project.getTasks()):
+            name = t.getName()
+            if not name or t.getUniqueID() is None:
+                continue
+            dur = t.getDuration()
+            preds = []
+            for rel in (t.getPredecessors() or []):
+                tgt = rel.getTargetTask()
+                if tgt is not None:
+                    preds.append(str(tgt.getUniqueID()))
+            out.append({
+                "external_id": str(t.getUniqueID()),
+                "name": str(name),
+                "start": as_date(t.getStart()),
+                "finish": as_date(t.getFinish()),
+                "duration_days": round(dur.getDuration(), 3) if dur is not None else None,
+                "percent_complete": float(t.getPercentageComplete() or 0),
+                "outline_level": int(t.getOutlineLevel() or 1),
+                "is_milestone": 1 if t.getMilestone() else 0,
+                "is_summary": 1 if t.getSummary() else 0,
+                "predecessors": ",".join(preds) or None,
+                "sort_order": i,
+            })
+    finally:
+        # Windows can still hold the file open through the JVM; a leftover
+        # temp directory is not worth failing an otherwise good import over.
+        shutil.rmtree(workdir, ignore_errors=True)
     if not out:
         raise ScheduleError("The .mpp parsed but contained no tasks.")
     return out
@@ -215,12 +242,27 @@ def list_tasks(job_number: str) -> list[dict[str, Any]]:
 
 
 def import_tasks(job_number: str, tasks: list[dict[str, Any]], source: str,
-                 mode: str = "replace", actor: str | None = None) -> dict[str, Any]:
+                 mode: str = "replace", actor: str | None = None,
+                 commit: bool = True) -> dict[str, Any]:
     """Replace the schedule, or merge onto it by external_id.
 
     Merge updates authoritative fields on tasks the source still knows about
     and leaves locally-added ones alone — re-importing a revised schedule
     must not orphan work the PM added by hand.
+
+    **Replace no longer means delete-everything.** It used to, and the row ids
+    it threw away were the ids the look ahead points at (`lookahead_items
+    .task_id`) and, now, the ids dependencies hang off. A re-import silently
+    orphaned every seeded look-ahead item and would have taken every link with
+    it. Replace now reconciles instead: tasks the file still knows about are
+    updated *in place* so their ids survive, genuinely new ones are inserted,
+    and only previously-IMPORTED rows the file has dropped are deleted. Rows
+    somebody added by hand always survive both modes — that promise is the
+    whole point of having two modes at all.
+
+    `commit=False` lets a caller wrap this in a larger transaction, which the
+    staged-import commit needs: tasks and their links have to land together or
+    a crash leaves a schedule whose dependencies quietly went missing.
     """
     if mode not in ("replace", "merge"):
         raise ScheduleError("mode must be 'replace' or 'merge'.")
@@ -228,31 +270,149 @@ def import_tasks(job_number: str, tasks: list[dict[str, Any]], source: str,
     existing = {t["external_id"]: t for t in list_tasks(job_number) if t["external_id"]}
 
     added = updated = 0
-    if mode == "replace":
-        conn.execute("DELETE FROM schedule_tasks WHERE job_number = ?", (job_number,))
-        existing = {}
-
+    seen: set[str] = set()
     for t in tasks:
-        prior = existing.get(t.get("external_id"))
+        ext = t.get("external_id")
+        prior = existing.get(ext) if ext else None
+        if ext:
+            seen.add(str(ext))
         if prior:
             sets = ", ".join(f"{k} = ?" for k in FIELDS if k in t)
-            conn.execute(f"UPDATE schedule_tasks SET {sets} WHERE id = ?",  # noqa: S608
-                         (*[t[k] for k in FIELDS if k in t], prior["id"]))
+            if sets:
+                conn.execute(f"UPDATE schedule_tasks SET {sets} WHERE id = ?",  # noqa: S608
+                             (*[t[k] for k in FIELDS if k in t], prior["id"]))
             updated += 1
         else:
             rec = {k: t.get(k) for k in FIELDS}
-            rec.update({"id": db.new_id(), "job_number": job_number,
-                        "external_id": t.get("external_id"), "source": source,
+            rec.update({"id": t.get("id") or db.new_id(), "job_number": job_number,
+                        "external_id": ext, "source": source,
                         "created_by": actor, "created_at": db.now()})
             cols = ", ".join(rec)
             conn.execute(
                 f"INSERT INTO schedule_tasks ({cols}) VALUES ({','.join('?' * len(rec))})",  # noqa: S608
                 tuple(rec.values()))
             added += 1
-    conn.commit()
+
+    removed = 0
+    if mode == "replace":
+        # Only rows that came from a file and are no longer in it. Hand-added
+        # rows have source='manual' and are never swept.
+        for ext, row in existing.items():
+            if str(ext) in seen or (row["source"] or "manual") == "manual":
+                continue
+            conn.execute("DELETE FROM schedule_tasks WHERE id = ?", (row["id"],))
+            removed += 1
+
+    # Drop the dependencies this file supplied last time before re-deriving
+    # them, or a link the revised schedule REMOVED would survive forever (and,
+    # worse, an edited lag would lose to the old row on the unique index).
+    # Hand-drawn links and accepted inferred ones are somebody's decision, not
+    # this file's, so they stay.
+    conn.execute(
+        "DELETE FROM schedule_links WHERE job_number = ? AND inferred = 0 "
+        "AND COALESCE(source, 'manual') NOT IN ('manual')", (job_number,))
+
+    # Whatever arrived as predecessor TEXT becomes real link rows here — the
+    # engine reads nothing else. Typed links supplied alongside the tasks are
+    # inserted separately by the caller (see commit_import).
+    made = sync_links_from_text(job_number, source=source, actor=actor, commit=False)
+
+    if commit:
+        conn.commit()
     db.log_activity(actor, job_number, "schedule.import",
-                    f"{source} · {added} added, {updated} updated ({mode})")
-    return {"added": added, "updated": updated, "mode": mode, "source": source}
+                    f"{source} · {added} added, {updated} updated, "
+                    f"{removed} removed ({mode})")
+    return {"added": added, "updated": updated, "removed": removed,
+            "links": made, "mode": mode, "source": source}
+
+
+# --- dependencies -------------------------------------------------------------
+
+LINK_TYPES = ("FS", "SS", "FF", "SF")
+
+
+def list_links(job_number: str) -> list[dict[str, Any]]:
+    conn = db.connect()
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM schedule_links WHERE job_number = ?", (job_number,))]
+
+
+def add_link(job_number: str, pred_id: str, succ_id: str, *, link_type: str = "FS",
+             lag_days: float = 0.0, source: str = "manual", inferred: bool = False,
+             confidence: float | None = None, actor: str | None = None,
+             commit: bool = True) -> dict[str, Any] | None:
+    """One dependency. Returns None when it would be a duplicate or a self-link.
+
+    A task depending on itself is always a data error, never an intention, and
+    it would make the forward pass chase its own tail.
+    """
+    link_type = (link_type or "FS").upper()
+    if link_type not in LINK_TYPES:
+        raise ScheduleError(f"Link type must be one of {', '.join(LINK_TYPES)}.")
+    if pred_id == succ_id:
+        return None
+    rec = {"id": db.new_id(), "job_number": job_number, "pred_id": pred_id,
+           "succ_id": succ_id, "link_type": link_type,
+           "lag_days": float(lag_days or 0), "source": source,
+           "inferred": 1 if inferred else 0, "confidence": confidence,
+           "confirmed_at": db.now() if inferred else None,
+           "confirmed_by": actor if inferred else None,
+           "created_at": db.now()}
+    conn = db.connect()
+    try:
+        cols = ", ".join(rec)
+        conn.execute(f"INSERT INTO schedule_links ({cols}) "  # noqa: S608
+                     f"VALUES ({','.join('?' * len(rec))})", tuple(rec.values()))
+    except sqlite3.IntegrityError:
+        return None                     # already linked, or a task that vanished
+    if commit:
+        conn.commit()
+    return rec
+
+
+def delete_link(job_number: str, link_id: str, actor: str | None = None) -> bool:
+    conn = db.connect()
+    cur = conn.execute("DELETE FROM schedule_links WHERE id = ? AND job_number = ?",
+                       (link_id, job_number))
+    conn.commit()
+    if cur.rowcount:
+        db.log_activity(actor, job_number, "schedule.link.delete", link_id)
+    return cur.rowcount > 0
+
+
+def sync_links_from_text(job_number: str, source: str = "manual",
+                         actor: str | None = None, commit: bool = True) -> int:
+    """Materialise the `predecessors` text column into real link rows.
+
+    The text column is an input format — what you type in the grid, what an
+    xlsx "Predecessors" column holds — and this is the one place it becomes
+    something the engine reads. Idempotent: existing links are left alone and
+    duplicates are refused by the unique index, so running it twice is a no-op.
+
+    References that don't resolve to a task in this job are skipped rather than
+    guessed at; they show up as a task with fewer predecessors than its text
+    claims, which is visible, instead of a link to the wrong task, which isn't.
+    """
+    tasks = list_tasks(job_number)
+    by_ext = {str(t["external_id"]): t["id"] for t in tasks if t["external_id"]}
+    # Hand-added tasks have no external_id; let people reference them by name
+    # so a manual task can be a predecessor at all (it never could before).
+    by_name = {(t["name"] or "").strip().lower(): t["id"] for t in tasks if t["name"]}
+
+    made = 0
+    for t in tasks:
+        if not t["predecessors"]:
+            continue
+        for ext, ltype, lag in _parse_preds(t["predecessors"]):
+            pred = by_ext.get(ext) or by_name.get(ext.strip().lower())
+            if not pred or pred == t["id"]:
+                continue
+            if add_link(job_number, pred, t["id"], link_type=ltype, lag_days=lag,
+                        source=source, actor=actor, commit=False):
+                made += 1
+    if commit:
+        db.connect().commit()
+    return made
 
 
 def add_task(job_number: str, fields: dict[str, Any],
@@ -270,6 +430,8 @@ def add_task(job_number: str, fields: dict[str, Any],
     conn.execute(f"INSERT INTO schedule_tasks ({cols}) VALUES ({','.join('?' * len(rec))})",  # noqa: S608
                  tuple(rec.values()))
     conn.commit()
+    if rec.get("predecessors"):
+        sync_links_from_text(job_number, source="manual", actor=actor)
     db.log_activity(actor, job_number, "schedule.task.add", rec["name"] or "(unnamed)")
     return dict(conn.execute("SELECT * FROM schedule_tasks WHERE id = ?",
                              (rec["id"],)).fetchone())
@@ -287,6 +449,14 @@ def update_task(job_number: str, task_id: str, fields: dict[str, Any],
     conn.commit()
     if cur.rowcount == 0:
         return None
+    if "predecessors" in clean:
+        # Retyping the predecessors of a task replaces that task's links.
+        # Only the ones pointing AT this task are cleared — a link somebody
+        # drew by hand from this task to something else is not being edited.
+        conn.execute("DELETE FROM schedule_links WHERE succ_id = ? AND inferred = 0",
+                     (task_id,))
+        conn.commit()
+        sync_links_from_text(job_number, source="manual", actor=actor)
     db.log_activity(actor, job_number, "schedule.task.update",
                     f"{task_id}: {', '.join(clean)}")
     return dict(conn.execute("SELECT * FROM schedule_tasks WHERE id = ?",
@@ -303,132 +473,350 @@ def delete_task(job_number: str, task_id: str, actor: str | None = None) -> bool
     return cur.rowcount > 0
 
 
-# --- critical path ----------------------------------------------------------
+# --- working time -------------------------------------------------------------
+
+DEFAULT_WORKDAYS = "1111100"          # Mon-Fri, index 0 = Monday
+
+
+class Calendar:
+    """Working time for a job: which weekdays count, and which dates don't.
+
+    One calendar per job. Per-task calendars are a real MS Project feature, but
+    nothing importable carries them — a printed PDF certainly doesn't — and
+    inventing one per task is exactly the kind of guess this refuses to make.
+    """
+
+    __slots__ = ("workdays", "holidays")
+
+    def __init__(self, workdays: str = DEFAULT_WORKDAYS,
+                 holidays: set[date] | None = None):
+        mask = (workdays or DEFAULT_WORKDAYS).strip()
+        if len(mask) != 7 or set(mask) - {"0", "1"} or "1" not in mask:
+            mask = DEFAULT_WORKDAYS      # a calendar with no working day never ends
+        self.workdays = mask
+        self.holidays = holidays or set()
+
+    def is_workday(self, d: date) -> bool:
+        return self.workdays[d.weekday()] == "1" and d not in self.holidays
+
+    def next_workday(self, d: date) -> date:
+        cur, guard = d, 0
+        while not self.is_workday(cur) and guard < 400:
+            cur += timedelta(days=1)
+            guard += 1
+        return cur
+
+    def workdays_between(self, a: date, b: date) -> int:
+        """Working days from `a` to `b`; same day = 0, signed."""
+        if b < a:
+            return -self.workdays_between(b, a)
+        n, cur = 0, a
+        while cur < b:
+            cur += timedelta(days=1)
+            if self.is_workday(cur):
+                n += 1
+        return n
+
+    def add_workdays(self, base: date, n: float) -> date:
+        """Advance `n` working days from `base`, landing on a working day."""
+        cur = self.next_workday(base)
+        rem = int(round(n))
+        if rem <= 0:
+            return cur
+        guard = 0
+        while rem and guard < 20000:
+            cur += timedelta(days=1)
+            guard += 1
+            if self.is_workday(cur):
+                rem -= 1
+        return cur
+
+    def add_calendar_days(self, base: date, n: float) -> date:
+        """Elapsed duration: runs straight through weekends and holidays.
+
+        MS Project's "edays" mean exactly this, which is why the unit is kept
+        rather than converted — a 60-eday delivery lead that gets silently
+        turned into 60 working days lands twelve weeks late.
+        """
+        return base + timedelta(days=int(round(n)))
+
+
+def get_calendar(job_number: str) -> Calendar:
+    conn = db.connect()
+    row = conn.execute("SELECT * FROM schedule_calendars WHERE job_number = ?",
+                       (job_number,)).fetchone()
+    if row is None:
+        return Calendar()
+    holidays = set()
+    if row["holidays"]:
+        import json
+        try:
+            holidays = {date.fromisoformat(d) for d in json.loads(row["holidays"])}
+        except (ValueError, TypeError):
+            holidays = set()
+    return Calendar(row["workdays"], holidays)
+
+
+def set_calendar(job_number: str, workdays: str | None = None,
+                 holidays: list[str] | None = None,
+                 actor: str | None = None) -> dict[str, Any]:
+    import json
+    cal = get_calendar(job_number)
+    mask = workdays if workdays is not None else cal.workdays
+    days = holidays if holidays is not None else sorted(d.isoformat() for d in cal.holidays)
+    conn = db.connect()
+    conn.execute(
+        "INSERT INTO schedule_calendars (job_number, workdays, holidays, updated_at, updated_by) "
+        "VALUES (?,?,?,?,?) ON CONFLICT(job_number) DO UPDATE SET "
+        "workdays = excluded.workdays, holidays = excluded.holidays, "
+        "updated_at = excluded.updated_at, updated_by = excluded.updated_by",
+        (job_number, Calendar(mask).workdays, json.dumps(days), db.now(), actor))
+    conn.commit()
+    db.log_activity(actor, job_number, "schedule.calendar", f"{mask} · {len(days)} holidays")
+    return {"workdays": Calendar(mask).workdays, "holidays": days}
+
+
+# Kept as module-level helpers on the default calendar: the look ahead and the
+# older tests reach for these, and a Mon-Fri week is still the common case.
+_DEFAULT_CAL = Calendar()
+
 
 def _weekdays_between(a: date, b: date) -> int:
-    """Work days from `a` to `b` (same day = 0, Mon-Fri only)."""
-    if b < a:
-        return -_weekdays_between(b, a)
-    weeks, rem = divmod((b - a).days, 7)
-    n = weeks * 5
-    cur = a
-    for _ in range(rem):
-        cur += timedelta(days=1)
-        if cur.weekday() < 5:
-            n += 1
-    return n
+    return _DEFAULT_CAL.workdays_between(a, b)
 
 
 def _add_workdays(base: date, n: int) -> date:
-    cur = base
-    while cur.weekday() >= 5:          # start from a working day
-        cur += timedelta(days=1)
-    weeks, rem = divmod(max(0, int(n)), 5)
-    cur += timedelta(weeks=weeks)
-    while rem:
-        cur += timedelta(days=1)
-        if cur.weekday() < 5:
-            rem -= 1
-    return cur
+    return _DEFAULT_CAL.add_workdays(base, n)
 
 
-def _parse_preds(raw: str | None) -> list[tuple[str, float]]:
-    out = []
-    for part in (raw or "").split(","):
+# Lag units, expressed in working days. MS Project and Smartsheet both write
+# the unit out ("12FS+2 days", "5SS-1 wk"); a week of lag is a WORK week.
+_LAG_UNITS = {
+    "d": 1.0, "day": 1.0, "days": 1.0,
+    "w": 5.0, "wk": 5.0, "wks": 5.0, "week": 5.0, "weeks": 5.0,
+    "mon": 20.0, "mons": 20.0, "month": 20.0, "months": 20.0,
+    "h": 1.0 / HOURS_PER_DAY, "hr": 1.0 / HOURS_PER_DAY, "hrs": 1.0 / HOURS_PER_DAY,
+    "hour": 1.0 / HOURS_PER_DAY, "hours": 1.0 / HOURS_PER_DAY,
+}
+_LINK_TYPES = ("FS", "SS", "FF", "SF")
+
+# A predecessor reference, taken apart from the end: optional lag with a unit,
+# optional two-letter link type, and whatever precedes both is the id.
+_PRED_RE = re.compile(
+    r"^(?P<id>.+?)\s*"
+    r"(?P<type>FS|SS|FF|SF)?\s*"
+    r"(?:(?P<lag>[+-]\s*\d+(?:\.\d+)?)\s*(?P<unit>[A-Za-z]+))?$",
+    re.IGNORECASE)
+# The unitless form, allowed ONLY when the id is purely numeric — see below.
+_PRED_NUMERIC_RE = re.compile(
+    r"^(?P<id>\d+)\s*(?P<type>FS|SS|FF|SF)?\s*"
+    r"(?P<lag>[+-]\s*\d+(?:\.\d+)?)?\s*(?P<unit>[A-Za-z]*)$",
+    re.IGNORECASE)
+
+
+def _parse_preds(raw: str | None) -> list[tuple[str, str, float]]:
+    """Parse a predecessor string into (external_id, link_type, lag_days).
+
+    Accepts what MS Project, Smartsheet and hand-typing all produce:
+    `12`, `12FS`, `12FS+2 days`, `5SS-1wk`, `A-100`, `A-100FF+3d`.
+
+    Two things this has to get right that the previous version did not.
+
+    **Ids containing a hyphen.** `A-100` is an extremely common activity id,
+    and the old pattern (`[^+\\-]+?`) split it into id `A` with a lag of -100.
+    So a lag is only recognised when it carries a UNIT — except where the id is
+    purely numeric, in which case `12+2` is unambiguous and allowed. That rule
+    is what separates `A-100` (an id) from `12-2d` (id 12, two days of lead).
+
+    **Link types.** `12SS+2d` used to fail the pattern entirely and fall
+    through to a predecessor literally named "12SS+2d", which then resolved to
+    nothing — a dependency silently dropped. Types are now parsed; the engine
+    treats everything as FS until the typed-link rewrite, but the value is
+    carried so nothing is lost on the way through.
+
+    Unknown trailing text is treated as part of the id rather than guessed at.
+    """
+    out: list[tuple[str, str, float]] = []
+    for part in (raw or "").replace(";", ",").split(","):
         part = part.strip()
         if not part:
             continue
-        m = re.match(r"^([^+\-]+?)\s*([+-]\s*\d+(?:\.\d+)?)?\s*d?$", part, re.I)
-        if not m:
-            out.append((part, 0.0))
+
+        m = _PRED_RE.match(part)
+        unit = (m.group("unit") or "").lower() if m else ""
+        if m and m.group("lag") and unit in _LAG_UNITS:
+            lag = float(m.group("lag").replace(" ", "")) * _LAG_UNITS[unit]
+            out.append((m.group("id").strip(), (m.group("type") or "FS").upper(), lag))
             continue
-        lag = float(m.group(2).replace(" ", "")) if m.group(2) else 0.0
-        out.append((m.group(1).strip(), lag))
+
+        n = _PRED_NUMERIC_RE.match(part)
+        if n and not n.group("unit"):
+            lag = float(n.group("lag").replace(" ", "")) if n.group("lag") else 0.0
+            out.append((n.group("id"), (n.group("type") or "FS").upper(), lag))
+            continue
+
+        # No recognisable lag. Strip a trailing link type if there is one and
+        # take the rest as the id verbatim.
+        bare = part
+        ltype = "FS"
+        if len(bare) > 2 and bare[-2:].upper() in _LINK_TYPES:
+            ltype, bare = bare[-2:].upper(), bare[:-2].strip()
+        out.append((bare, ltype, 0.0))
     return out
 
 
 def analyze(job_number: str) -> dict[str, Any]:
-    """Forward/backward pass -> early/late dates, total float, critical path.
+    """Forward/backward pass -> early/late dates, float, critical path.
 
     Arithmetic is in WORK DAYS off the project start, because that is the unit
     Microsoft Project durations are in. Running it in calendar days made every
     weekend gap look like slack — a chain whose tasks ran Fri→Mon appeared to
     have two days of float and nothing came out critical.
 
-    Summary rows are excluded from the network (their dates are roll-ups of
-    their children, not work).
+    Three rules worth stating outright, because each one is load-bearing:
+
+    **A task's own start is a floor, not a suggestion.** The network only ever
+    pushes a task *later*; it never pulls one earlier than the date the source
+    gave it. Real schedules are full of tasks held by procurement, weather and
+    constraints that no dependency in the file explains, and a schedule
+    imported from a PDF has no links at all until a human confirms them — drop
+    the floor and all 392 tasks stack up on the project start date. Treat this
+    as an implicit start-no-earlier-than on everything, because that is what an
+    imported date means.
+
+    **Links come from `schedule_links` only.** The `predecessors` text column
+    is an input format; `sync_links_from_text` turns it into rows. Two sources
+    of truth would mean a schedule that reschedules differently depending on
+    which one you believed.
+
+    **Summary rows are excluded from the network.** Their dates are roll-ups of
+    their children, not work of their own; including them double-counts every
+    child's duration.
+
+    Cycle tolerance is deliberate: imported schedules occasionally contain
+    them, and a bounded relaxation degrades where a topological sort raises.
     """
-    tasks = [t for t in list_tasks(job_number)]
+    cal = get_calendar(job_number)
+    tasks = list_tasks(job_number)
     net = [t for t in tasks if not t["is_summary"]]
     if not net:
-        return {"tasks": [], "project_start": None, "project_finish": None,
-                "critical_count": 0, "duration_days": 0}
+        # Same shape as a populated result — an empty schedule must not make
+        # callers branch on which keys exist.
+        return {"tasks": [], "links": [], "project_start": None,
+                "project_finish": None, "critical_count": 0, "duration_days": 0,
+                "calendar": {"workdays": cal.workdays,
+                             "holidays": sorted(d.isoformat() for d in cal.holidays)}}
 
     starts = [t["start"] for t in net if t["start"]]
     project_start = min(starts) if starts else date.today().isoformat()
     base = date.fromisoformat(project_start)
 
-    def offset(d: str | None) -> float | None:
-        return float(_weekdays_between(base, date.fromisoformat(d))) if d else None
-
     dur: dict[str, float] = {}
-    by_ext: dict[str, str] = {}
+    floor: dict[str, float] = {}
+    ids = {t["id"] for t in net}
     for t in net:
         d = t["duration_days"]
         if d is None and t["start"] and t["finish"]:
-            d = _weekdays_between(date.fromisoformat(t["start"]),
-                                  date.fromisoformat(t["finish"])) + 1
-        dur[t["id"]] = max(0.0, float(d or 0))
-        if t["external_id"]:
-            by_ext[str(t["external_id"])] = t["id"]
+            # No stated duration: measure it. +1 because a task that starts and
+            # finishes on the same day is one day long, not zero.
+            d = cal.workdays_between(date.fromisoformat(t["start"]),
+                                     date.fromisoformat(t["finish"])) + 1
+        dur[t["id"]] = max(0.0, float(d if d is not None else 0))
+        floor[t["id"]] = (float(cal.workdays_between(base, date.fromisoformat(t["start"])))
+                          if t["start"] else 0.0)
 
-    preds: dict[str, list[tuple[str, float]]] = {}
-    for t in net:
-        links = []
-        for ext, lag in _parse_preds(t["predecessors"]):
-            tid = by_ext.get(ext)
-            if tid and tid != t["id"]:
-                links.append((tid, lag))
-        preds[t["id"]] = links
+    # Predecessor lists, typed. (pred_id, link_type, lag)
+    preds: dict[str, list[tuple[str, str, float]]] = {tid: [] for tid in ids}
+    succs: dict[str, list[tuple[str, str, float]]] = {tid: [] for tid in ids}
+    links = [dict(row) for row in list_links(job_number)]
+    for lk in links:
+        p, s = lk["pred_id"], lk["succ_id"]
+        if p in ids and s in ids and p != s:
+            preds[s].append((p, lk["link_type"], float(lk["lag_days"] or 0)))
+            succs[p].append((s, lk["link_type"], float(lk["lag_days"] or 0)))
 
     order = [t["id"] for t in net]
-    es: dict[str, float] = {}
-    # Forward pass. Iterate to a fixed point rather than topologically sorting:
-    # imported schedules occasionally contain cycles, and a bounded loop
-    # degrades gracefully where a topological sort would raise.
-    for tid in order:
-        es[tid] = offset(next(t["start"] for t in net if t["id"] == tid)) or 0.0
-    for _ in range(len(order)):
+
+    # --- forward pass: earliest start honouring the link type ---------------
+    # FS: successor starts after predecessor FINISHES
+    # SS: after predecessor STARTS
+    # FF: successor FINISHES after predecessor finishes -> start = that - own duration
+    # SF: successor FINISHES after predecessor starts
+    es = {tid: floor[tid] for tid in order}
+    for _ in range(len(order) + 1):
         changed = False
-        for t in net:
-            tid = t["id"]
-            if preds[tid]:
-                want = max(es[p] + dur[p] + lag for p, lag in preds[tid])
-                if want > es[tid] + 1e-9:
-                    es[tid] = want
-                    changed = True
+        for tid in order:
+            if not preds[tid]:
+                continue
+            want = es[tid]
+            for p, ltype, lag in preds[tid]:
+                if ltype == "SS":
+                    cand = es[p] + lag
+                elif ltype == "FF":
+                    cand = es[p] + dur[p] + lag - dur[tid]
+                elif ltype == "SF":
+                    cand = es[p] + lag - dur[tid]
+                else:                                   # FS
+                    cand = es[p] + dur[p] + lag
+                want = max(want, cand)
+            # The floor again: a link may push a task later, never earlier.
+            want = max(want, floor[tid])
+            if want > es[tid] + 1e-9:
+                es[tid] = want
+                changed = True
         if not changed:
             break
 
     ef = {tid: es[tid] + dur[tid] for tid in order}
     project_finish_off = max(ef.values()) if ef else 0.0
 
-    succs: dict[str, list[tuple[str, float]]] = {tid: [] for tid in order}
-    for tid, links in preds.items():
-        for p, lag in links:
-            succs[p].append((tid, lag))
-
+    # --- backward pass: latest finish ---------------------------------------
     lf = {tid: project_finish_off for tid in order}
-    for _ in range(len(order)):
+    for _ in range(len(order) + 1):
         changed = False
         for tid in reversed(order):
-            if succs[tid]:
-                want = min(lf[s] - dur[s] - lag for s, lag in succs[tid])
-                if want < lf[tid] - 1e-9:
-                    lf[tid] = want
-                    changed = True
+            if not succs[tid]:
+                continue
+            want = lf[tid]
+            for s, ltype, lag in succs[tid]:
+                ls_s = lf[s] - dur[s]
+                if ltype == "SS":
+                    cand = ls_s - lag + dur[tid]        # own LS >= ... -> LF
+                elif ltype == "FF":
+                    cand = lf[s] - lag
+                elif ltype == "SF":
+                    cand = lf[s] - lag + dur[tid]
+                else:                                   # FS
+                    cand = ls_s - lag
+                want = min(want, cand)
+            if want < lf[tid] - 1e-9:
+                lf[tid] = want
+                changed = True
         if not changed:
             break
+
+    # Free float: how far a task can slip without moving ANY successor —
+    # distinct from total float, which is slack against the project end.
+    free: dict[str, float] = {}
+    for tid in order:
+        if not succs[tid]:
+            free[tid] = round(lf[tid] - ef[tid], 2)
+            continue
+        room = None
+        for s, ltype, lag in succs[tid]:
+            if ltype == "SS":
+                slack = es[s] - (es[tid] + lag)
+            elif ltype == "FF":
+                slack = (es[s] + dur[s]) - (ef[tid] + lag)
+            elif ltype == "SF":
+                slack = (es[s] + dur[s]) - (es[tid] + lag)
+            else:
+                slack = es[s] - (ef[tid] + lag)
+            room = slack if room is None else min(room, slack)
+        free[tid] = round(max(0.0, room or 0.0), 2)
+
+    def as_date(offset_days: float) -> str:
+        return cal.add_workdays(base, int(round(offset_days))).isoformat()
 
     out = []
     critical = 0
@@ -436,23 +824,29 @@ def analyze(job_number: str) -> dict[str, Any]:
         tid = t["id"]
         row = dict(t)
         if t["is_summary"] or tid not in es:
-            row.update({"total_float": None, "is_critical": 0,
-                        "early_start": None, "late_finish": None})
+            row.update({"total_float": None, "free_float": None, "is_critical": 0,
+                        "early_start": None, "early_finish": None,
+                        "late_start": None, "late_finish": None})
         else:
             float_days = round(lf[tid] - ef[tid], 2)
             row["total_float"] = float_days
+            row["free_float"] = free[tid]
             row["is_critical"] = 1 if float_days <= 0.01 else 0
-            row["early_start"] = _add_workdays(base, int(es[tid])).isoformat()
-            row["late_finish"] = _add_workdays(base, int(lf[tid])).isoformat()
+            row["early_start"] = as_date(es[tid])
+            row["early_finish"] = as_date(max(es[tid], ef[tid] - 1))
+            row["late_start"] = as_date(lf[tid] - dur[tid])
+            row["late_finish"] = as_date(max(0.0, lf[tid] - 1))
             critical += row["is_critical"]
         out.append(row)
 
     finishes = [t["finish"] for t in net if t["finish"]]
     return {
         "tasks": out,
+        "links": links,
         "project_start": project_start,
-        "project_finish": max(finishes) if finishes else
-            _add_workdays(base, int(project_finish_off)).isoformat(),
+        "project_finish": max(finishes) if finishes else as_date(project_finish_off),
         "critical_count": critical,
         "duration_days": int(project_finish_off),
+        "calendar": {"workdays": cal.workdays,
+                     "holidays": sorted(d.isoformat() for d in cal.holidays)},
     }

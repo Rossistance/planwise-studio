@@ -268,6 +268,75 @@ CREATE TABLE IF NOT EXISTS schedule_tasks (
 );
 CREATE INDEX IF NOT EXISTS ix_sched_job ON schedule_tasks(job_number, sort_order);
 
+-- Dependencies, as real rows rather than a text column.
+--
+-- The text column above survives as an INPUT format — what you type in the
+-- grid, what an xlsx "Predecessors" column holds — but it is materialised into
+-- rows here at write time, and the scheduling engine reads ONLY this table.
+-- One source of truth: a text column and a link table that can disagree is a
+-- schedule that reschedules differently depending on which one you believe.
+--
+-- `inferred` and `confidence` are provenance, NOT a gate. Links traced out of
+-- a printed PDF's arrows never reach this table until a human accepts them
+-- (they wait in schedule_imports.payload), so everything here is accepted
+-- truth and no consumer has to remember to filter. What the columns buy is the
+-- ability to say later "this link came from PDF geometry at 0.8 confidence,
+-- accepted by Ross on the 12th" — and to draw it differently on the chart.
+CREATE TABLE IF NOT EXISTS schedule_links (
+    id           TEXT PRIMARY KEY,
+    job_number   TEXT NOT NULL,
+    pred_id      TEXT NOT NULL REFERENCES schedule_tasks(id) ON DELETE CASCADE,
+    succ_id      TEXT NOT NULL REFERENCES schedule_tasks(id) ON DELETE CASCADE,
+    link_type    TEXT NOT NULL DEFAULT 'FS',   -- FS | SS | FF | SF
+    lag_days     REAL NOT NULL DEFAULT 0,
+    source       TEXT,                          -- manual | mspdi | mpp | xlsx | csv | pdf
+    inferred     INTEGER NOT NULL DEFAULT 0,
+    confidence   REAL,
+    confirmed_at TEXT,
+    confirmed_by TEXT,
+    created_at   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_sched_link_job ON schedule_links(job_number);
+CREATE INDEX IF NOT EXISTS ix_sched_link_succ ON schedule_links(succ_id);
+-- The same dependency must not exist twice, however many times a file is
+-- re-imported.
+CREATE UNIQUE INDEX IF NOT EXISTS ix_sched_link_pair
+    ON schedule_links(pred_id, succ_id, link_type);
+
+-- Working time. One calendar per job for now: per-task calendars are a real
+-- MS Project feature but nothing in the data we can import carries them, and
+-- inventing one per task would be exactly the kind of guess this rebuild
+-- refuses to make. `workdays` is a 7-character mask starting Monday.
+CREATE TABLE IF NOT EXISTS schedule_calendars (
+    job_number TEXT PRIMARY KEY,
+    workdays   TEXT NOT NULL DEFAULT '1111100',
+    holidays   TEXT,                            -- JSON array of ISO dates
+    updated_at TEXT,
+    updated_by TEXT
+);
+
+-- Staged imports: parse, show, then commit — never parse-and-apply.
+--
+-- Two reasons. A schedule import replaces the plan the whole team is working
+-- to, so it deserves the same "validated before it is trusted" treatment as
+-- the Vista extract (D28). And a PDF import produces *candidate* dependencies
+-- traced from arrows, which must be looked at by a human before they can move
+-- a single date — the payload is where they wait.
+CREATE TABLE IF NOT EXISTS schedule_imports (
+    id          TEXT PRIMARY KEY,
+    job_number  TEXT NOT NULL,
+    filename    TEXT,
+    source      TEXT,                           -- mspdi | mpp | xlsx | csv | pdf
+    payload     TEXT NOT NULL,                  -- JSON {tasks, links, warnings}
+    status      TEXT NOT NULL DEFAULT 'staged', -- staged | committed | discarded
+    created_at  TEXT NOT NULL,
+    created_by  TEXT,
+    settled_at  TEXT,
+    settled_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_sched_import_job
+    ON schedule_imports(job_number, status, created_at);
+
 -- Two-week look ahead. Seeded from the schedule, then fully hand-editable —
 -- the master schedule doesn't reach daily granularity and the field changes.
 CREATE TABLE IF NOT EXISTS lookahead_periods (
@@ -357,6 +426,21 @@ MIGRATIONS = [
     ("users", "last_name", "TEXT"),
     ("users", "pending", "INTEGER"),
     ("users", "companion_token", "TEXT"),
+    # Schedule rebuild (2026-08-11). WBS and the outline it implies come from
+    # every real source; the constraint/actual/deadline fields are what an
+    # MS Project or Smartsheet export carries and the old schema dropped on
+    # the floor. `duration_unit` keeps "5 ewks" distinguishable from "5 wks" —
+    # elapsed duration runs through weekends and silently converting it would
+    # move a finish date.
+    ("schedule_tasks", "wbs", "TEXT"),
+    ("schedule_tasks", "notes", "TEXT"),
+    ("schedule_tasks", "duration_unit", "TEXT"),
+    ("schedule_tasks", "constraint_type", "TEXT"),
+    ("schedule_tasks", "constraint_date", "TEXT"),
+    ("schedule_tasks", "actual_start", "TEXT"),
+    ("schedule_tasks", "actual_finish", "TEXT"),
+    ("schedule_tasks", "deadline", "TEXT"),
+    ("schedule_tasks", "collapsed", "INTEGER"),
 ]
 
 POST_MIGRATION_SQL = """

@@ -24,7 +24,13 @@ services:
     numInstances: 1               # see above — never raise this
     healthCheckPath: /api/health
 
-    buildCommand: pip install -r requirements.txt
+    # The JRE step is deliberately allowed to fail: reading binary .mpp needs a
+    # Java runtime (MPXJ), but MSPDI XML and printed PDFs both import without
+    # one, so a missing JVM costs a convenience while a failed build costs the
+    # whole app. See scripts/install-jre.sh.
+    buildCommand: |
+      pip install -r requirements.txt
+      bash scripts/install-jre.sh || true
 
     # --proxy-headers + --forwarded-allow-ips: Render terminates TLS at its
     # edge and forwards plain HTTP, so without these the app sees every request
@@ -63,6 +69,15 @@ services:
 
       - key: PYTHON_VERSION
         value: "3.12.7"
+
+      # Where install-jre.sh puts the runtime, and where JPype looks for it.
+      # Render's native runtimes build and run from the same filesystem, so
+      # what the build writes here is still there when the app starts. If the
+      # download failed the directory is empty, JPype raises, and
+      # schedule.mpp_available() reports "no Java runtime" honestly instead of
+      # the app pretending .mpp works.
+      - key: JAVA_HOME
+        value: /opt/render/project/src/.jre
 
       # Unbuffered so uvicorn's log lines — including the first-run setup
       # token — appear in Render's log tail immediately rather than in blocks.

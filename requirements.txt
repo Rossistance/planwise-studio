@@ -20,3 +20,12 @@ truststore>=0.9
 # Phase 5e: web push, so an RFI reply reaches a phone in the field. Pulls in
 # py-vapid and cryptography for the VAPID signing the push services require.
 pywebpush>=2.0
+
+# Binary .mpp import. MPXJ is a Java library — the only production-grade reader
+# for Microsoft Project's proprietary format — so it needs a JVM alongside it;
+# scripts/install-jre.sh puts one in the Render build. Both ship Linux and
+# Windows wheels, and neither is imported unless somebody actually uploads an
+# .mpp, so an environment with no Java installs these harmlessly and simply
+# reports that .mpp is unavailable (MSPDI XML and printed PDFs still import).
+mpxj>=13.0
+JPype1>=1.5

@@ -90,6 +90,24 @@ app.add_middleware(
     allow_origins=["*"],  # token is the gate; the port only listens on loopback
     allow_methods=["*"],
     allow_headers=["*"],
+    # PRIVATE NETWORK ACCESS. Hosting PlanWise turned every browser call to
+    # this companion into a *public HTTPS origin* reaching a *loopback*
+    # address, and Chrome and Edge gate exactly that: the browser sends a
+    # preflight carrying `Access-Control-Request-Private-Network: true`, and a
+    # server that doesn't answer `Access-Control-Allow-Private-Network: true`
+    # has the whole request blocked before it is ever made.
+    #
+    # Starlette refuses those preflights by default — it answers 400
+    # "Disallowed CORS private-network" — so drafting from the hosted app
+    # failed at the network layer, which is indistinguishable from the
+    # companion not running, and was reported as exactly that. It never
+    # appeared while PlanWise was served from 127.0.0.1, because a private
+    # origin reaching a private address sends no such preflight.
+    #
+    # This does not widen what the port accepts: the token still gates every
+    # endpoint that does anything, and the socket is still bound to loopback,
+    # so nothing off this machine can reach it at all.
+    allow_private_network=True,
 )
 
 # Background-poll status, surfaced on /health so the UI can show it.

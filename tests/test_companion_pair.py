@@ -161,3 +161,30 @@ def test_health_reports_the_paired_user(client, planwise):
     h = client.get("/health").json()
     assert h["paired"] is True and h["paired_user"] == "Dana Wallace"
     assert h["server"] == "https://planwise.example"
+
+
+# --- reachable from a hosted PlanWise ------------------------------------------
+
+def test_the_companion_answers_a_private_network_preflight(client):
+    """Hosting PlanWise made every browser call to this companion a public
+    HTTPS origin reaching a loopback address, which Chrome and Edge gate behind
+    Private Network Access. Refusing that preflight blocks the request before
+    it is made, and looks exactly like the companion not running — which is
+    what it looked like."""
+    r = client.options("/draft", headers={
+        "Origin": "https://planwise-rahj.onrender.com",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+        "Access-Control-Request-Private-Network": "true",
+    })
+    assert r.status_code == 200, r.text
+    assert r.headers.get("access-control-allow-private-network") == "true"
+
+
+def test_an_ordinary_preflight_still_works(client):
+    r = client.options("/draft", headers={
+        "Origin": "http://127.0.0.1:8771",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+    })
+    assert r.status_code == 200

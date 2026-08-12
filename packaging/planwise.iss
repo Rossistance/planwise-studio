@@ -81,6 +81,32 @@ begin
   Result := ExpandConstant('{%USERPROFILE}') + '\.planwise';
 end;
 
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  Code: Integer;
+begin
+  Result := '';
+  { Close both programs before replacing their files.
+
+    CloseApplications alone is not enough: it drives the Restart Manager,
+    which asks a program to close by posting to its WINDOWS — and the
+    companion deliberately has none (it is a background service, D37). So the
+    file stayed locked and an unattended upgrade aborted with exit code 5,
+    having installed nothing. Found by upgrading this machine.
+
+    The app is closed too, since a running window would otherwise keep the
+    old build on screen after a successful upgrade. Both are restarted by the
+    post-install Run entry, or by the Startup shortcut at next sign-in.
+    (Do not start a line in this comment with a bracketed word — the parser
+    reads it as a section tag.) }
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM PlanWiseCompanion.exe',
+       '', SW_HIDE, ewWaitUntilTerminated, Code);
+  Exec(ExpandConstant('{sys}\taskkill.exe'), '/F /IM PlanWise.exe',
+       '', SW_HIDE, ewWaitUntilTerminated, Code);
+  { taskkill returns before the handles are actually released. }
+  Sleep(1500);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   UrlFile: String;

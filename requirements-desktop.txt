@@ -1,0 +1,17 @@
+# Build-only dependencies for the Windows desktop app (PlanWise.exe).
+#
+# Deliberately NOT in requirements.txt: the Render service must never install
+# these. They are Windows-only, pull in a .NET bridge, and the server has no
+# use for a window. Keeping them separate also keeps the hosted build's
+# install surface small, which matters on a platform that reinstalls
+# everything on every deploy.
+#
+#   .venv/Scripts/python.exe -m pip install -r requirements-desktop.txt
+#   .venv/Scripts/python.exe -m PyInstaller planwise-desktop.spec --noconfirm
+#
+# pywebview hosts WebView2 inside PlanWise.exe, so the window belongs to us —
+# which is what gives it its own taskbar icon and identity (D42). pythonnet
+# and clr_loader are its Windows backend; bottle and proxy_tools come along
+# with pywebview and are unused here.
+pywebview>=6.2
+pythonnet>=3.0

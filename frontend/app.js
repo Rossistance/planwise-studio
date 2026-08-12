@@ -1082,112 +1082,341 @@ let uploadErrors = [];
 
 let schedCache = null;   // {job, data}
 
+/* Zoom levels for the chart. Named the way Project names them, because that's
+   what the people using this will look for. */
+const SCHED_ZOOM = { day: 26, week: 9, month: 2.6, quarter: 1.0 };
+let schedZoom = "month";
+let schedCollapsed = new Set();   // ids of summary rows folded shut
+let schedStaged = null;           // an import waiting to be reviewed
+
+const ROW_H = 24;                 // one grid row and one chart row, in lockstep
+
 function schedulePage(d) {
   if (!schedCache || schedCache.job !== current.job) {
     loadSchedule();
     return `<p class="placeholder">Loading schedule…</p>`;
   }
   const s = schedCache.data;
-  const tasks = s.tasks;
   const mpp = s.mpp || {};
 
-  const importBar = `
+  const head = `
     <div class="panel">
       <div class="panel-head"><h3>Schedule</h3>
-        <span class="sub">${tasks.length} tasks · ${s.critical_count} on the critical path
+        <span class="sub">${s.tasks.length} tasks · ${s.critical_count} on the critical path
         ${s.project_start ? `· ${esc(s.project_start)} → ${esc(s.project_finish)}` : ""}</span></div>
       <div class="inline-form top" style="border-top:none;border-bottom:1px solid var(--line-strong)">
         <label class="btn primary sm" style="cursor:pointer">Import Schedule
-          <input id="schedUpload" type="file" accept=".mpp,.xml,.mspdi" hidden>
+          <input id="schedUpload" type="file"
+                 accept=".mpp,.xml,.mspdi,.pdf,.xlsx,.xlsm,.csv" hidden>
         </label>
         <select id="schedMode" title="How an import treats tasks already here">
-          <option value="replace">Replace all tasks</option>
-          <option value="merge">Merge / update by ID</option>
+          <option value="replace">Replace — update matching, drop what's gone</option>
+          <option value="merge">Merge — update matching, keep the rest</option>
         </select>
         <span class="grow small muted">
-          ${mpp.available
-            ? "Microsoft Project .mpp and MSPDI .xml both supported."
-            : `.mpp needs a Java runtime on this machine — export <b>File &gt; Save As &gt; XML</b> from Project and import that.`}
+          Microsoft Project (.mpp${mpp.available ? "" : " needs Java here"}), MSPDI .xml,
+          a <b>printed schedule PDF</b>, or a spreadsheet (.xlsx/.csv) such as a Smartsheet export.
         </span>
         <span id="schedMsg" class="small muted"></span>
       </div>
     </div>`;
 
-  if (!tasks.length) {
-    return importBar + `
+  if (schedStaged && schedStaged.id) return head + importReview(schedStaged);
+
+  if (!s.tasks.length) {
+    return head + `
       <div class="panel"><div class="panel-body">
-        <div class="none">No schedule yet — import an .mpp / .xml above, or add tasks by hand below.</div>
+        <div class="none">No schedule yet — import one above, or add tasks by hand below.</div>
       </div></div>` + schedTaskForm();
   }
 
-  // Gantt geometry: one column per day across the project span.
+  return head + ganttWorkspace(s) + schedTaskForm() + `
+    <div class="note">Dates, float and the critical path are computed in <b>working days</b>
+    against this job's calendar (${esc((s.calendar || {}).workdays || "1111100")
+      .split("").map((c, i) => c === "1" ? "MTWTFSS"[i] : "").join("") || "Mon–Fri"}),
+    the way Microsoft Project measures them. An imported date is treated as the earliest a task
+    may start: dependencies push work later, never earlier. Summary rows roll up their children
+    and stay out of the network.</div>`;
+}
+
+/* ---- the split pane: grid left, chart right, one scroll ------------------------------- */
+
+function ganttWorkspace(s) {
+  const rows = visibleRows(s.tasks);
   const start = new Date(s.project_start + "T00:00:00");
   const finish = new Date(s.project_finish + "T00:00:00");
   const totalDays = Math.max(1, Math.round((finish - start) / 86400000) + 1);
-  const dayPct = 100 / totalDays;
+  const px = SCHED_ZOOM[schedZoom];
+  const chartW = Math.max(360, Math.round(totalDays * px));
   const off = (iso) => Math.round((new Date(iso + "T00:00:00") - start) / 86400000);
+  const x = (iso) => off(iso) * px;
 
-  const bar = (t) => {
-    if (!t.start) return "";
-    const a = off(t.start);
-    const b = t.finish ? off(t.finish) : a;
-    const left = a * dayPct;
-    const width = Math.max(dayPct * 0.6, (b - a + 1) * dayPct);
-    const done = Math.max(0, Math.min(100, t.percent_complete || 0));
-    if (t.is_milestone) {
-      return `<div class="gantt-ms" style="left:${left}%" title="${esc(t.name)} · ${esc(t.start)}"></div>`;
-    }
-    const cls = t.is_summary ? "summary" : t.is_critical ? "critical" : "";
-    return `<div class="gantt-bar ${cls}" style="left:${left}%;width:${width}%"
-              title="${esc(t.name)} · ${esc(t.start)} → ${esc(t.finish || t.start)}${
-                t.total_float !== null && t.total_float !== undefined ? ` · float ${t.total_float}d` : ""}">
-              <i style="width:${done}%"></i></div>`;
-  };
+  const byId = Object.fromEntries(s.tasks.map((t) => [t.id, t]));
+  const rowIndex = Object.fromEntries(rows.map((t, i) => [t.id, i]));
 
-  // Month ticks. The first month begins before the project does, so its label
-  // is pinned to 0 rather than skipped — dropping it left a single tick and no
-  // sense of where the timeline started.
-  const ticks = [];
+  return `
+    <div class="panel"><div class="panel-body flush">
+      <div class="gx-toolbar">
+        <div class="gx-zoom">
+          ${Object.keys(SCHED_ZOOM).map((z) => `<button class="btn sm ${z === schedZoom ? "primary" : ""}"
+             data-sched-zoom="${z}">${z[0].toUpperCase() + z.slice(1)}</button>`).join("")}
+        </div>
+        <span class="grow"></span>
+        <button class="btn sm" data-sched-fold="all">Collapse all</button>
+        <button class="btn sm" data-sched-fold="none">Expand all</button>
+      </div>
+      <div class="gx" id="gx">
+        <div class="gx-grid">
+          <div class="gx-head">
+            <div class="gx-th gx-c-id">ID</div>
+            <div class="gx-th gx-c-name">Task Name</div>
+            <div class="gx-th gx-c-dur num">Dur</div>
+            <div class="gx-th gx-c-date">Start</div>
+            <div class="gx-th gx-c-date">Finish</div>
+            <div class="gx-th gx-c-pred">Predecessors</div>
+            <div class="gx-th gx-c-pct num">%</div>
+            <div class="gx-th gx-c-float num">Float</div>
+          </div>
+          <div class="gx-body" id="gxGrid">${rows.map(gridRow).join("")}</div>
+        </div>
+        <div class="gx-chart" id="gxChart">
+          ${timescale(start, totalDays, px, chartW)}
+          <div class="gx-canvas" style="width:${chartW}px;height:${rows.length * ROW_H}px">
+            ${weekendShading(start, totalDays, px, rows.length)}
+            ${todayLine(start, totalDays, px, rows.length)}
+            <svg class="gx-links" width="${chartW}" height="${rows.length * ROW_H}">
+              ${linkArrows(s.links || [], byId, rowIndex, x)}
+            </svg>
+            ${rows.map((t, i) => chartRow(t, i, x, px)).join("")}
+          </div>
+        </div>
+      </div>
+    </div></div>`;
+}
+
+/* Summary folding. A 106-row imported schedule is unreadable fully expanded,
+   and Project users expect the triangle. */
+function visibleRows(tasks) {
+  const out = [];
+  let hideUnder = null;
+  for (const t of tasks) {
+    const lvl = Math.max(1, t.outline_level || 1);
+    if (hideUnder !== null && lvl > hideUnder) continue;
+    hideUnder = null;
+    out.push(t);
+    if (t.is_summary && schedCollapsed.has(t.id)) hideUnder = lvl;
+  }
+  return out;
+}
+
+function gridRow(t) {
+  const lvl = Math.max(1, t.outline_level || 1);
+  const twist = t.is_summary
+    ? `<button class="gx-twist" data-sched-fold-row="${t.id}"
+         title="${schedCollapsed.has(t.id) ? "Expand" : "Collapse"}">${
+         schedCollapsed.has(t.id) ? "▸" : "▾"}</button>`
+    : `<span class="gx-twist"></span>`;
+  const fl = t.total_float === null || t.total_float === undefined ? "" : `${t.total_float}d`;
+  return `<div class="gx-row ${t.is_summary ? "is-summary" : ""} ${t.is_critical ? "is-crit" : ""}"
+            data-row="${t.id}">
+    <div class="gx-td gx-c-id">${esc(t.external_id || "")}</div>
+    <div class="gx-td gx-c-name" style="padding-left:${2 + (lvl - 1) * 13}px">
+      ${twist}<input class="ecell" value="${esc(t.name || "")}" data-task="${t.id}" data-field="name">
+    </div>
+    <div class="gx-td gx-c-dur num">${t.duration_days ?? ""}${
+      t.duration_unit === "ed" ? " ed" : ""}</div>
+    <div class="gx-td gx-c-date"><input class="ecell" type="date" value="${esc(t.start || "")}"
+        data-task="${t.id}" data-field="start"></div>
+    <div class="gx-td gx-c-date"><input class="ecell" type="date" value="${esc(t.finish || "")}"
+        data-task="${t.id}" data-field="finish"></div>
+    <div class="gx-td gx-c-pred"><input class="ecell" value="${esc(t.predecessors || "")}"
+        placeholder="—" title="e.g. 12, 14FS+2d, 9SS"
+        data-task="${t.id}" data-field="predecessors"></div>
+    <div class="gx-td gx-c-pct num"><input class="ecell num" type="number" min="0" max="100"
+        value="${t.percent_complete ?? 0}" data-task="${t.id}" data-field="percent_complete"></div>
+    <div class="gx-td gx-c-float num ${t.is_critical ? "neg" : ""}">${fl}</div>
+    <button class="gx-del link danger" data-del-task="${t.id}" title="Delete task">×</button>
+  </div>`;
+}
+
+function chartRow(t, i, x, px) {
+  const top = i * ROW_H;
+  if (!t.start) return "";
+  const a = x(t.start);
+  const b = t.finish ? x(t.finish) + px : a + px;
+  const w = Math.max(3, b - a);
+  const done = Math.max(0, Math.min(100, t.percent_complete || 0));
+  const tip = `${t.name} · ${t.start} → ${t.finish || t.start}` +
+    (t.total_float != null ? ` · float ${t.total_float}d` : "");
+
+  if (t.is_milestone) {
+    return `<div class="gx-ms" style="left:${a}px;top:${top + 6}px" title="${esc(tip)}"></div>`;
+  }
+  if (t.is_summary) {
+    // Project draws summaries as a bracket, not a bar.
+    return `<div class="gx-sum" style="left:${a}px;top:${top + 8}px;width:${w}px"
+              title="${esc(tip)}"></div>`;
+  }
+  return `<div class="gx-bar ${t.is_critical ? "crit" : ""}"
+            style="left:${a}px;top:${top + 6}px;width:${w}px" title="${esc(tip)}">
+            <i style="width:${done}%"></i></div>`;
+}
+
+function timescale(start, totalDays, px, chartW) {
+  const months = [];
+  const weeks = [];
   const cur = new Date(start); cur.setDate(1);
-  while (cur <= finish) {
-    const o = Math.max(0, Math.round((cur - start) / 86400000));
-    ticks.push(`<span style="left:${o * dayPct}%">${cur.toLocaleDateString("en-US", { month: "short", year: "2-digit" })}</span>`);
+  while (true) {
+    const o = Math.round((cur - start) / 86400000);
+    if (o > totalDays) break;
+    const next = new Date(cur); next.setMonth(next.getMonth() + 1);
+    const wpx = Math.round((Math.min(totalDays, (next - start) / 86400000) - Math.max(0, o)) * px);
+    if (wpx > 0) {
+      months.push(`<div class="gx-tick" style="left:${Math.max(0, o) * px}px;width:${wpx}px">${
+        cur.toLocaleDateString("en-US", { month: "short", year: "2-digit" })}</div>`);
+    }
     cur.setMonth(cur.getMonth() + 1);
   }
+  // The lower tier only earns its space when zoomed in enough to read it.
+  if (px >= SCHED_ZOOM.week) {
+    const w = new Date(start);
+    w.setDate(w.getDate() - ((w.getDay() + 6) % 7));      // back to Monday
+    while ((w - start) / 86400000 <= totalDays) {
+      const o = Math.round((w - start) / 86400000);
+      if (o >= 0) {
+        weeks.push(`<div class="gx-tick sm" style="left:${o * px}px;width:${7 * px}px">${
+          w.getDate()}</div>`);
+      }
+      w.setDate(w.getDate() + 7);
+    }
+  }
+  return `<div class="gx-scale" style="width:${chartW}px">
+    <div class="gx-tier">${months.join("")}</div>
+    ${weeks.length ? `<div class="gx-tier lower">${weeks.join("")}</div>` : ""}
+  </div>`;
+}
 
-  return importBar + `
+function weekendShading(start, totalDays, px, rowCount) {
+  if (px < SCHED_ZOOM.week) return "";      // invisible and expensive when zoomed out
+  const out = [];
+  const d = new Date(start);
+  for (let i = 0; i < totalDays; i++) {
+    if (d.getDay() === 6) {
+      out.push(`<div class="gx-weekend" style="left:${i * px}px;width:${2 * px}px;
+                 height:${rowCount * ROW_H}px"></div>`);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return out.join("");
+}
+
+function todayLine(start, totalDays, px, rowCount) {
+  const o = Math.round((new Date(new Date().toDateString()) - start) / 86400000);
+  if (o < 0 || o > totalDays) return "";
+  return `<div class="gx-today" style="left:${o * px}px;height:${rowCount * ROW_H}px"
+            title="today"></div>`;
+}
+
+/* Elbow connectors, the way Project draws them: out of the predecessor, down
+   or up to the successor's row, then into its start with an arrowhead. */
+function linkArrows(links, byId, rowIndex, x) {
+  const out = [];
+  for (const lk of links) {
+    const p = byId[lk.pred_id], s = byId[lk.succ_id];
+    if (!p || !s || !p.start || !s.start) continue;
+    const pi = rowIndex[p.id], si = rowIndex[s.id];
+    if (pi === undefined || si === undefined) continue;   // folded away
+    const py = pi * ROW_H + ROW_H / 2;
+    const sy = si * ROW_H + ROW_H / 2;
+    const pxEnd = lk.link_type === "SS" || lk.link_type === "SF"
+      ? x(p.start) : x(p.finish || p.start) + 6;
+    const sxStart = lk.link_type === "FF" || lk.link_type === "SF"
+      ? x(s.finish || s.start) : x(s.start);
+    const mid = Math.max(pxEnd + 6, sxStart - 8);
+    const dashed = lk.inferred ? ` stroke-dasharray="3 2"` : "";
+    out.push(`<path d="M${pxEnd},${py} H${mid} V${sy} H${sxStart}"
+      fill="none" class="gx-link"${dashed}></path>
+      <path d="M${sxStart},${sy} l-5,-3 l0,6 z" class="gx-arrow"></path>`);
+  }
+  return out.join("");
+}
+
+/* ---- the import review screen --------------------------------------------------------
+   A schedule import replaces the plan the whole team works to, and a PDF's
+   dependencies are traced from arrows rather than stated. So: show what was
+   read, say plainly what could not be, and let a human decide each proposed
+   link before anything moves. */
+
+function importReview(v) {
+  const c = v.counts;
+  const links = v.links || [];
+  return `
     <div class="panel">
-      <div class="panel-body flush">
-        <table class="tbl sched" data-sort-key="schedule">
-          <thead><tr>
-            <th>Task</th><th>Start</th><th>Finish</th><th class="num">Days</th>
-            <th class="num">%</th><th class="num">Float</th>
-            <th class="gantt-head"><div class="gantt-ticks">${ticks.join("")}</div></th><th></th>
-          </tr></thead>
-          <tbody>
-            ${tasks.map((t) => `<tr class="${t.is_summary ? "sched-summary" : ""}">
-              <td style="padding-left:${8 + (Math.max(1, t.outline_level) - 1) * 14}px">
-                ${t.is_critical ? `<span class="crit-dot" title="critical path"></span>` : ""}
-                <input class="ecell" value="${esc(t.name || "")}" data-task="${t.id}" data-field="name">
-              </td>
-              <td><input class="ecell" type="date" value="${esc(t.start || "")}" data-task="${t.id}" data-field="start"></td>
-              <td><input class="ecell" type="date" value="${esc(t.finish || "")}" data-task="${t.id}" data-field="finish"></td>
-              <td class="num">${t.duration_days ?? ""}</td>
-              <td class="num"><input class="ecell num" type="number" min="0" max="100" style="width:56px"
-                    value="${t.percent_complete ?? 0}" data-task="${t.id}" data-field="percent_complete"></td>
-              ${cell(t.total_float === null || t.total_float === undefined ? null : `${t.total_float}d`,
-                     t.is_critical ? "neg" : "")}
-              <td class="gantt-cell"><div class="gantt-row">${bar(t)}</div></td>
-              <td><button class="link danger" data-del-task="${t.id}">delete</button></td>
-            </tr>`).join("")}
-          </tbody>
-        </table>
+      <div class="panel-head"><h3>Review this import</h3>
+        <span class="sub">${esc(v.filename)} · read as ${esc((v.source || "").toUpperCase())}</span></div>
+      <div class="panel-body">
+        <div class="note" style="margin-bottom:12px">
+          <b>${c.tasks} tasks</b> · ${c.dated} with dates · ${c.milestones} milestones ·
+          ${c.summaries} summary rows${links.length ? ` · <b>${links.length} proposed dependencies</b>` : ""}.
+          Nothing has been applied yet.
+        </div>
+
+        ${v.warnings.length ? `<div class="field" style="margin-bottom:12px">
+          <label>Worth knowing</label>
+          <ul class="gx-warn">${v.warnings.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>
+        </div>` : ""}
+
+        ${links.length ? `<div class="field" style="margin-bottom:12px">
+          <label>Proposed dependencies — tick the ones to keep</label>
+          <div class="hint small muted" style="margin-bottom:6px">
+            These were traced from the arrows drawn on the chart, not read from a
+            column — this file doesn't state its dependencies. Anything you leave
+            unticked is discarded. Nothing here has moved a date.
+          </div>
+          <div class="gx-links-review">
+            ${links.map((l) => `<label class="gx-linkrow">
+              <input type="checkbox" data-link-pick="${esc(l.id)}"
+                     ${l.confidence >= 0.45 ? "checked" : ""}>
+              <span class="mono">${esc(l.pred_external_id)}</span>
+              <span class="muted">${esc(l.pred_name || "")}</span>
+              <b>→</b>
+              <span class="mono">${esc(l.succ_external_id)}</span>
+              <span class="muted">${esc(l.succ_name || "")}</span>
+              <span class="tag">${esc(l.link_type)}</span>
+              <span class="small ${l.confidence >= 0.45 ? "" : "muted"}">confidence ${
+                Math.round(l.confidence * 100)}%</span>
+            </label>`).join("")}
+          </div>
+          <div style="margin-top:6px">
+            <button class="btn sm" data-link-all="1">Tick all</button>
+            <button class="btn sm" data-link-all="0">Untick all</button>
+          </div>
+        </div>` : ""}
+
+        <details style="margin-bottom:12px">
+          <summary class="small">Preview the ${c.tasks} tasks</summary>
+          <div class="gx-preview">
+            <table class="tbl">
+              <thead><tr><th>ID</th><th>WBS</th><th>Task</th><th class="num">Dur</th>
+                <th>Start</th><th>Finish</th><th class="num">%</th></tr></thead>
+              <tbody>${v.tasks.slice(0, 400).map((t) => `<tr>
+                <td class="mono">${esc(t.external_id || "")}</td>
+                <td class="mono small">${esc(t.wbs || "")}</td>
+                <td style="padding-left:${4 + ((t.outline_level || 1) - 1) * 12}px">${esc(t.name)}</td>
+                <td class="num">${t.duration_days ?? ""}</td>
+                <td>${esc(t.start || "")}</td><td>${esc(t.finish || "")}</td>
+                <td class="num">${t.percent_complete ?? 0}</td></tr>`).join("")}</tbody>
+            </table>
+          </div>
+        </details>
       </div>
-    </div>
-    ${schedTaskForm()}
-    <div class="note">Float and the critical path are computed in <b>work days</b> (Mon–Fri),
-    matching how Microsoft Project measures durations. Summary rows roll up their children and
-    are excluded from the network.</div>`;
+      <div class="dialog-actions" style="position:static;margin:0;border-radius:0">
+        <span class="grow small muted" id="schedReviewMsg"></span>
+        <button class="btn" data-import-discard="${esc(v.id)}">Discard</button>
+        <button class="btn primary" data-import-commit="${esc(v.id)}">
+          Apply ${c.tasks} tasks${links.length ? " + ticked links" : ""}</button>
+      </div>
+    </div>`;
 }
 
 function schedTaskForm() {
@@ -1204,8 +1433,18 @@ function schedTaskForm() {
 }
 
 async function loadSchedule() {
-  const data = await api(`/api/jobs/${encodeURIComponent(current.job)}/schedule`);
+  const job = encodeURIComponent(current.job);
+  const data = await api(`/api/jobs/${job}/schedule`);
   schedCache = { job: current.job, data };
+  // An import waiting on review belongs to the JOB, not to the tab that
+  // uploaded it. Without this, refreshing the page — or a colleague opening
+  // it — would lose a staged import with no way back to it.
+  if (!schedStaged) {
+    try {
+      const staged = await api(`/api/jobs/${job}/schedule/import/staged`);
+      if (staged && staged.id) schedStaged = { ...staged, mode: "replace" };
+    } catch { /* nothing staged is the normal case */ }
+  }
   if (current.page === "schedule") render();
 }
 
@@ -1216,7 +1455,7 @@ main.addEventListener("change", async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     const mode = document.querySelector("#schedMode")?.value || "replace";
-    schedMsg(`importing ${file.name}…`);
+    schedMsg(`reading ${file.name}…`);
     const form = new FormData();
     form.append("file", file);
     const headers = currentUser ? { "X-PlanWise-User": currentUser } : {};
@@ -1224,9 +1463,19 @@ main.addEventListener("change", async (e) => {
       `/api/jobs/${encodeURIComponent(current.job)}/schedule/import?mode=${mode}`,
       { method: "POST", body: form, headers });
     const body = await r.json().catch(() => ({}));
-    if (!r.ok) { schedMsg(`failed: ${body.detail || r.statusText}`); return; }
+    if (!r.ok) { schedMsg(`couldn't read that file: ${body.detail || r.statusText}`); return; }
+    if (body.staged) {
+      // Something to decide: proposed dependencies, or warnings worth reading.
+      schedStaged = body;
+      schedMsg("");
+      render();
+      return;
+    }
+    schedStaged = null;
     await loadSchedule();
-    schedMsg(`${body.added} added, ${body.updated} updated from ${body.source.toUpperCase()}`);
+    schedMsg(`${body.added} added, ${body.updated} updated`
+      + (body.removed ? `, ${body.removed} removed` : "")
+      + ` from ${(body.source || "").toUpperCase()}`);
     return;
   }
   const t = e.target.closest("[data-task]");
@@ -1239,12 +1488,94 @@ main.addEventListener("change", async (e) => {
 
 main.addEventListener("click", async (e) => {
   const del = e.target.closest("[data-del-task]");
-  if (!del) return;
-  if (!armed(del)) return;
-  await api(`/api/jobs/${encodeURIComponent(current.job)}/schedule/tasks/${del.dataset.delTask}`,
-            { method: "DELETE" });
-  await loadSchedule();
+  if (del) {
+    if (!armed(del)) return;
+    await api(`/api/jobs/${encodeURIComponent(current.job)}/schedule/tasks/${del.dataset.delTask}`,
+              { method: "DELETE" });
+    await loadSchedule();
+    return;
+  }
+
+  const zoom = e.target.closest("[data-sched-zoom]");
+  if (zoom) { schedZoom = zoom.dataset.schedZoom; render(); return; }
+
+  const foldRow = e.target.closest("[data-sched-fold-row]");
+  if (foldRow) {
+    const id = foldRow.dataset.schedFoldRow;
+    schedCollapsed.has(id) ? schedCollapsed.delete(id) : schedCollapsed.add(id);
+    render();
+    return;
+  }
+
+  const foldAll = e.target.closest("[data-sched-fold]");
+  if (foldAll) {
+    schedCollapsed = foldAll.dataset.schedFold === "all"
+      ? new Set((schedCache?.data.tasks || []).filter((t) => t.is_summary).map((t) => t.id))
+      : new Set();
+    render();
+    return;
+  }
+
+  // --- the import review screen ---
+  const pickAll = e.target.closest("[data-link-all]");
+  if (pickAll) {
+    const on = pickAll.dataset.linkAll === "1";
+    document.querySelectorAll("[data-link-pick]").forEach((c) => { c.checked = on; });
+    return;
+  }
+
+  const discard = e.target.closest("[data-import-discard]");
+  if (discard) {
+    await api(`/api/schedule/import/${discard.dataset.importDiscard}/discard`,
+              { method: "POST" }).catch(() => {});
+    schedStaged = null;
+    await loadSchedule();
+    schedMsg("Import discarded — the schedule is unchanged.");
+    return;
+  }
+
+  const commit = e.target.closest("[data-import-commit]");
+  if (commit) {
+    const accepted = [...document.querySelectorAll("[data-link-pick]")]
+      .filter((c) => c.checked).map((c) => c.dataset.linkPick);
+    const msg = (t) => { const el = $("#schedReviewMsg"); if (el) el.textContent = t; };
+    commit.disabled = true;
+    msg("applying…");
+    try {
+      const out = await api(`/api/schedule/import/${commit.dataset.importCommit}/commit`, {
+        method: "POST",
+        body: JSON.stringify({ mode: schedStaged?.mode || "replace",
+                               accepted_link_ids: accepted }) });
+      schedStaged = null;
+      await loadSchedule();
+      schedMsg(`${out.added} added, ${out.updated} updated`
+        + (out.removed ? `, ${out.removed} removed` : "")
+        + (out.links_accepted ? `, ${out.links_accepted} dependencies accepted` : "")
+        + (out.links_rejected ? ` (${out.links_rejected} rejected)` : ""));
+    } catch (err) {
+      commit.disabled = false;
+      msg(`couldn't apply it: ${err.message}`);
+    }
+  }
 });
+
+/* The two panes scroll as one — that lock is most of what makes this read as
+   MS Project rather than as a table with a picture beside it.
+
+   Listener on DOCUMENT, not on `main`: scroll events don't bubble, and a
+   capturing listener on an intermediate ancestor never saw them. document
+   with capture is the one place that reliably does, and it survives the
+   innerHTML replacement that every render does. */
+document.addEventListener("scroll", (e) => {
+  const grid = document.querySelector("#gxGrid");
+  const chart = document.querySelector("#gxChart");
+  if (!grid || !chart) return;
+  if (e.target === grid && Math.abs(chart.scrollTop - grid.scrollTop) > 1) {
+    chart.scrollTop = grid.scrollTop;
+  } else if (e.target === chart && Math.abs(grid.scrollTop - chart.scrollTop) > 1) {
+    grid.scrollTop = chart.scrollTop;
+  }
+}, true);
 
 /* "+ Task" had no handler at all — the form rendered, the generic submit
    listener preventDefault()ed and returned, and the button did nothing. The

@@ -525,29 +525,147 @@ select { cursor: pointer; }
   padding: 3px 6px; border-radius: 3px;
 }
 
-/* ---- schedule Gantt (Phase 4) ------------------------------------------------------------ */
-table.tbl.sched th.gantt-head { width: 42%; min-width: 260px; position: relative; }
-.gantt-ticks { position: relative; height: 12px; }
-.gantt-ticks span {
-  position: absolute; font-family: var(--font-mono); font-size: 9.5px;
-  color: var(--faint); white-space: nowrap; border-left: 1px solid var(--line);
-  padding-left: 3px; top: 0;
+/* ---- schedule: split-pane grid + Gantt -----------------------------------------------------
+   Laid out the way Microsoft Project lays it out, because the people using this
+   have spent twenty years in Project and Smartsheet: table on the left, chart on
+   the right, one shared vertical scroll, and a row height that is identical in
+   both halves so a bar always sits on its own row. That last part is the whole
+   trick — if the two panes drift by even a pixel per row the chart stops meaning
+   anything a few dozen rows down. Hence --gx-row, used by both. */
+:root { --gx-row: 24px; }
+
+.gx-toolbar {
+  display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+  border-bottom: 1px solid var(--line-strong); background: var(--panel-2);
 }
-.gantt-cell { padding: 6px 12px !important; }
-.gantt-row { position: relative; height: 16px; background: var(--panel-2);
-  border-radius: 3px; overflow: hidden; }
-.gantt-bar {
-  position: absolute; top: 3px; height: 10px; border-radius: 2px;
-  background: var(--blueprint); opacity: .85; min-width: 3px;
+.gx-zoom { display: flex; gap: 4px; }
+
+/* A DEFINITE height, not max-height: the chart pane is taller than the
+   viewport by design (2500px of rows), and with only a max-height it simply
+   grew past its parent instead of scrolling — the grid scrolled inside 242px
+   while the chart stood 2578px tall, so the two halves shared no scroll
+   position at all. min-height:0 on both children is the flexbox rule that
+   lets a flex item actually be smaller than its content. */
+.gx { display: flex; align-items: stretch; height: 62vh; min-height: 320px; }
+.gx-grid {
+  flex: 0 0 auto; width: 54%; min-width: 420px; min-height: 0;
+  display: flex; flex-direction: column;
+  border-right: 2px solid var(--line-strong);
 }
-.gantt-bar > i { display: block; height: 100%; background: rgba(0,0,0,.35); border-radius: 2px; }
-.gantt-bar.critical { background: var(--err); opacity: 1; }
-.gantt-bar.summary { background: var(--ink); height: 6px; top: 5px; opacity: .55; }
-.gantt-ms {
-  position: absolute; top: 3px; width: 10px; height: 10px; margin-left: -5px;
+.gx-chart { flex: 1 1 auto; min-height: 0; overflow: auto; position: relative; }
+.gx-body { overflow-y: auto; overflow-x: hidden; flex: 1 1 auto; min-height: 0; }
+
+.gx-head, .gx-row { display: flex; align-items: stretch; height: var(--gx-row); }
+.gx-head {
+  height: 34px; background: var(--panel-2); border-bottom: 1px solid var(--line-strong);
+  position: sticky; top: 0; z-index: 2;
+}
+.gx-th {
+  display: flex; align-items: center; padding: 0 6px;
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .07em;
+  text-transform: uppercase; color: var(--muted); border-right: 1px solid var(--line);
+}
+.gx-td {
+  display: flex; align-items: center; padding: 0 6px; font-size: 12.5px;
+  border-right: 1px solid var(--line); border-bottom: 1px solid var(--line);
+  overflow: hidden; white-space: nowrap;
+}
+.gx-th.num, .gx-td.num { justify-content: flex-end; font-family: var(--font-mono); }
+.gx-c-id { flex: 0 0 46px; color: var(--faint); font-family: var(--font-mono); font-size: 11px; }
+.gx-c-name { flex: 1 1 auto; min-width: 0; }
+.gx-c-dur { flex: 0 0 54px; }
+.gx-c-date { flex: 0 0 104px; }
+.gx-c-pred { flex: 0 0 116px; }
+.gx-c-pct { flex: 0 0 46px; }
+.gx-c-float { flex: 0 0 52px; border-right: 0; }
+
+.gx-row { position: relative; }
+.gx-row:hover { background: var(--accent-soft); }
+.gx-row.is-summary { background: var(--panel-2); font-weight: 600; }
+.gx-row.is-crit .gx-c-float { color: var(--err); }
+.gx-row .ecell {
+  border: 0; background: none; width: 100%; font: inherit; color: inherit;
+  padding: 0; height: 100%; min-height: 0;
+}
+.gx-row .ecell:focus { background: var(--panel); outline: 1px solid var(--accent); }
+.gx-twist {
+  flex: 0 0 14px; width: 14px; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font-size: 10px; padding: 0; line-height: 1;
+}
+.gx-del {
+  position: absolute; right: 2px; top: 3px; opacity: 0; font-size: 14px;
+  line-height: 1; padding: 0 4px;
+}
+.gx-row:hover .gx-del { opacity: 1; }
+
+/* --- the chart --- */
+.gx-scale {
+  position: sticky; top: 0; z-index: 2; background: var(--panel-2);
+  border-bottom: 1px solid var(--line-strong); height: 34px;
+}
+.gx-tier { position: relative; height: 17px; }
+.gx-tier.lower { border-top: 1px solid var(--line); }
+.gx-tick {
+  position: absolute; top: 0; height: 100%; box-sizing: border-box;
+  border-left: 1px solid var(--line); padding-left: 4px; overflow: hidden;
+  font-family: var(--font-mono); font-size: 9.5px; line-height: 17px;
+  color: var(--muted); white-space: nowrap;
+}
+.gx-tick.sm { color: var(--faint); font-size: 8.5px; }
+
+.gx-canvas { position: relative; }
+.gx-weekend { position: absolute; top: 0; background: var(--panel-2); opacity: .7; }
+.gx-today { position: absolute; top: 0; width: 2px; background: var(--accent); opacity: .5; }
+.gx-links { position: absolute; inset: 0; pointer-events: none; }
+.gx-link { stroke: var(--muted); stroke-width: 1; }
+.gx-arrow { fill: var(--muted); }
+
+.gx-bar {
+  position: absolute; height: 12px; border-radius: 2px; overflow: hidden;
+  background: var(--blueprint); opacity: .9; min-width: 3px;
+}
+.gx-bar > i { display: block; height: 100%; background: rgba(0,0,0,.38); }
+.gx-bar.crit { background: var(--err); opacity: 1; }
+/* A summary is a bracket, not a bar — the same shape Project draws, so the
+   eye reads roll-ups and real work differently without being told. */
+.gx-sum {
+  position: absolute; height: 8px; background: var(--ink); opacity: .65;
+  clip-path: polygon(0 0, 100% 0, 100% 100%, calc(100% - 5px) 45%,
+                     5px 45%, 0 100%);
+}
+.gx-ms {
+  position: absolute; width: 11px; height: 11px; margin-left: -5px;
   background: var(--accent); transform: rotate(45deg);
 }
-tr.sched-summary td { background: var(--panel-2); font-weight: 600; }
+
+/* --- import review --- */
+.gx-warn { margin: 0; padding-left: 18px; font-size: 12.5px; color: var(--muted); }
+.gx-warn li { margin-bottom: 3px; }
+.gx-links-review { max-height: 240px; overflow-y: auto; border: 1px solid var(--line);
+  border-radius: var(--radius); }
+.gx-linkrow {
+  display: flex; align-items: center; gap: 7px; padding: 5px 9px;
+  border-bottom: 1px solid var(--line); font-size: 12.5px; cursor: pointer;
+}
+.gx-linkrow:last-child { border-bottom: 0; }
+.gx-linkrow:hover { background: var(--accent-soft); }
+.gx-linkrow .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 190px; }
+.gx-preview { max-height: 340px; overflow: auto; margin-top: 8px; }
+
+/* A phone can't show a split pane usefully; stack it and let the chart scroll. */
+@media (max-width: 900px) {
+  /* height:auto, not just max-height — the split pane sets a DEFINITE height,
+     and leaving it set while stacking squeezed both halves into one viewport's
+     worth between them (the chart ended up 97px tall). */
+  .gx { flex-direction: column; height: auto; max-height: none; }
+  .gx-grid { width: 100%; min-width: 0; border-right: 0;
+             border-bottom: 2px solid var(--line-strong); }
+  .gx-body { max-height: 40vh; }
+  .gx-chart { max-height: 45vh; }
+  .gx-c-pred, .gx-c-float { display: none; }
+}
+
 .crit-dot {
   display: inline-block; width: 6px; height: 6px; border-radius: 50%;
   background: var(--err); margin-right: 5px; vertical-align: middle;

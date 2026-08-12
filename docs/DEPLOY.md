@@ -282,3 +282,49 @@ both running programs to replace them, and the post-install launch is skipped
 in silent mode — so an unattended upgrade leaves the companion stopped until
 the next sign-in. Neither installer ever overwrites an existing
 `server_url.txt` or pairing.
+
+## Importing a schedule
+
+PlanWise reads five things:
+
+| Format | Notes |
+|---|---|
+| `.mpp` | Needs a Java runtime on the machine running PlanWise (MPXJ). Render has none, so in practice this is the local-development path. |
+| `.xml` / `.mspdi` | Project's **File → Save As → XML**. The always-works path, and the richest: it carries typed dependencies and lags. |
+| **`.pdf`** | A printed schedule — what customers actually send. See below. |
+| `.xlsx` / `.csv` | Spreadsheet exports, including Smartsheet. Columns are matched by synonym, so "End Date", "Primary Column" and "Progress" all land correctly. |
+
+Uploads are capped at 32MB and parsed **before** anything is applied. Nothing
+reaches the live schedule until it has been read successfully.
+
+### What a printed PDF can and cannot give you
+
+A "print to PDF" of a Gantt view is vector, not a picture, so the printed table
+comes back exactly: id, WBS, task name, duration, start, finish, % complete.
+Bar geometry is used to *check* those dates, never to overwrite them.
+
+What is **not** in such a file, at all: resources, costs, calendars, baselines,
+constraints, actual dates. If it wasn't printed it isn't there, and PlanWise
+leaves those fields empty rather than inventing them.
+
+Dependencies are the sharp edge. A print rarely includes a Predecessors column,
+so the only evidence is the arrow drawn between two bars. Those are traced and
+offered as **proposals with a confidence score** on a review screen — tick the
+ones to keep. Nothing inferred moves a date until you accept it, links between
+tasks printed on different pages can't be seen at all, and where an arrow's
+direction is ambiguous the pair is dropped rather than guessed.
+
+Two things that look like faults and aren't. The printed row count is usually
+lower than the highest id, because the view was collapsed or filtered before
+printing — everything on the page is imported, and the gaps were never there.
+And a scanned or image-only PDF cannot be read; it needs to be a real print.
+
+### Re-importing
+
+`Replace` reconciles rather than wiping: rows the file still knows about are
+updated in place (so look-ahead links and dependencies survive), rows it has
+dropped are removed, and anything added by hand always stays. `Merge` updates
+what matches and leaves everything else alone.
+
+Rows are matched on the **printed ID**, never on the task name — names drift
+between revisions, and matching on them would turn a rename into a new task.

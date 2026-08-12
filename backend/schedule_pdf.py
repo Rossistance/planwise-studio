@@ -22,6 +22,57 @@ there is printed text for it. Bars and arrows may *corroborate* or *flag*, and
 arrows may *propose* a dependency, but nothing geometric ever creates a task or
 silently sets a date. Proposals leave here marked `inferred` with a confidence
 and go to a human before they can move anything.
+
+
+WHAT WE LEARNED BY MARKING OUR OWN HOMEWORK (2026-08-12)
+========================================================
+This importer was written against the printed 24-003 Siemens schedule with no
+access to the source file. Afterwards the customer's actual `.mpp` turned up
+and was used to score the result. Findings, because the next PDF will NOT come
+with a source file to check against and these are the lessons that transfer:
+
+**1. The printed text layer is trustworthy. Reading it is not the hard part.**
+All 106 printed rows were recovered, with no phantom rows and no missed ones.
+Of 106 task names, 94 matched the .mpp verbatim. Every one of the other 12
+turned out to be a genuine revision difference, not a misread — "MGC DES"
+became "MGC Equipment DES", "Installation of Car Ports" became "Erection of
+Car Ports (Parking Lot East Side)" and was split in two, "EV Chargers
+Transformers SRE" lost a word. Against the same revision, name fidelity is
+effectively total. Trust the text; spend the effort on structure.
+
+**2. A print is a SNAPSHOT, and schedules are renamed constantly.** The PDF was
+October, the .mpp was January, and three months moved a dozen task names. So
+matching an imported row to an existing one by NAME is unsafe — the same task
+routinely arrives with different words. Match on the printed ID (which is what
+`external_id` is for), and treat name changes as edits rather than as new
+tasks. This is also why re-import reconciles by external_id rather than name.
+
+**3. The printed row count is not the task count.** IDs on this sheet run to
+393 while only 106 rows are printed: the view was outline-collapsed and
+filtered before printing. Do not treat a gap in IDs as missing data, do not try
+to "fill in" the absent ids, and never warn that rows are missing — the printer
+chose what to show, and that choice is itself information about what the
+customer considered worth sending.
+
+**4. Typography drifts between the file and the print.** The .mpp holds
+typographic quotes and dashes ("Disconnect Switch", en-dashes in ranges) which
+a print may render — and a text extractor may decode — as their ASCII
+equivalents, or not. Names are normalised on the way out for exactly this
+reason; without it, two spellings of the same task look like two tasks.
+
+**5. What could NOT be checked, and therefore stays humble.** Outline levels,
+summary flags and dependencies could not be verified against the .mpp without
+a Java runtime (MPXJ needs a JVM; this machine has none). The hierarchy
+derived here from WBS codes and printed indentation is *consistent* with the
+document but unverified against the source. That is precisely why inferred
+dependencies go to a human, and why the importer says out loud what it could
+not see rather than presenting a complete-looking plan.
+
+**6. If a source file is ever available, prefer it outright.** This module
+exists because customers send prints. An .mpp or MSPDI export carries
+resources, calendars, constraints, baselines and real typed dependencies —
+none of which any print contains. A PDF import is a good answer to a bad
+situation, not a substitute for the file.
 """
 from __future__ import annotations
 
@@ -248,7 +299,7 @@ def parse_page(page: Page, warnings: list[str], page_no: int) -> list[dict[str, 
             if tasks and cells and head["x"] >= name_x - 4:
                 extra = " ".join(c["text"] for c in cells).strip()
                 if extra and not _looks_like_furniture(extra):
-                    tasks[-1]["name"] = f"{tasks[-1]['name']} {extra}".strip()
+                    tasks[-1]["name"] = normalise_name(f"{tasks[-1]['name']} {extra}")
             continue
 
         task = _row_to_task(cells, head, name_x, page_no, warnings)
@@ -262,6 +313,24 @@ def _looks_like_furniture(s: str) -> bool:
     low = s.lower()
     return (low.startswith(("page ", "project:", "date:")) or
             bool(re.match(r"^[\d/\-\s]+$", s)) and len(s) < 12)
+
+
+# Typography drifts between a source file and its print: Project stores
+# typographic quotes and dashes, and a print — or a text extractor — may hand
+# back either those or their ASCII equivalents. Left alone, the same task reads
+# as two different ones depending on which side you came from. Found by
+# comparing this importer's output against the customer's own .mpp, where
+# «"Disconnect Switch" SRE» could not be matched for exactly this reason.
+_TYPOGRAPHY = {
+    "“": '"', "”": '"', "„": '"', "‘": "'", "’": "'",
+    "–": "-", "—": "-", "−": "-", " ": " ", "…": "...",
+}
+
+
+def normalise_name(s: str) -> str:
+    for a, b in _TYPOGRAPHY.items():
+        s = s.replace(a, b)
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def _row_to_task(cells, head, name_x, page_no, warnings) -> dict[str, Any] | None:
@@ -302,7 +371,7 @@ def _row_to_task(cells, head, name_x, page_no, warnings) -> dict[str, Any] | Non
             continue
         name_parts.append(s)
 
-    name = " ".join(name_parts).strip()
+    name = normalise_name(" ".join(name_parts))
     if not name:
         return None
 
@@ -736,6 +805,18 @@ def parse_pdf(data: bytes) -> dict[str, Any]:
     known = {t["external_id"] for t in tasks}
     links = [lk for lk in link_props
              if lk["pred_external_id"] in known and lk["succ_external_id"] in known]
+
+    # A printed view is usually outline-collapsed and filtered, so the ids jump
+    # (this file prints 106 rows with ids running to 393). That is NOT missing
+    # data and must never be reported as such — the person printing chose what
+    # to show, and the choice is itself information. Said plainly here so that
+    # a gap in the numbers doesn't look like a fault in the import.
+    numeric = [int(t["external_id"]) for t in tasks if str(t["external_id"]).isdigit()]
+    if numeric and (max(numeric) - min(numeric) + 1) > len(numeric) * 1.5:
+        warnings.append(
+            f"The printed view is filtered or collapsed: {len(tasks)} rows are "
+            f"shown with ids running to {max(numeric)}. Everything printed has "
+            f"been imported — the rows in between were not on the page.")
 
     if reader.pages and len(reader.pages) > 1:
         warnings.append(

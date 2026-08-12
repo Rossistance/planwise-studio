@@ -107,6 +107,47 @@ def test_reply_attachments_round_trip(tmp_path):
     assert [a["filename"] for a in listed["attachments"]] == ["markup.pdf"]
 
 
+def test_returned_files_a_browser_can_show_are_served_inline(tmp_path):
+    """A customer answers with whatever their phone produced. Serving every
+    returned file as Content-Disposition: attachment forced a download, so an
+    image could not be displayed in the sent-vs-returned comparison at all —
+    the audit trail vanished on exactly the reply worth looking at."""
+    import base64
+    from fastapi.testclient import TestClient
+    from backend import app as app_module, auth
+
+    rec = make_sub()
+    rep = records.add_reply(rec["id"], {"body": "Approved, see attached."}, attachments=[
+        {"filename": "site-photo.png", "content_b64": base64.b64encode(b"fake-png-bytes").decode()},
+        {"filename": "markup.pdf", "content_b64": base64.b64encode(b"%PDF-fake").decode()},
+        {"filename": "notes.docx", "content_b64": base64.b64encode(b"fake-docx").decode()},
+        {"filename": "notes.docx", "content_b64": base64.b64encode(b"PK").decode()},
+    ])
+    listed = records.list_replies(rec["id"])[0]
+    by_name = {a["filename"]: a["id"] for a in listed["attachments"]}
+
+    c = TestClient(app_module.app)
+    auth.bootstrap_admin(auth.setup_token(), "Ross Hixon", "a-good-password")
+    c.post("/api/auth/login", json={"name": "Ross Hixon", "password": "a-good-password"})
+
+    def disposition(name):
+        r = c.get(f"/api/replies/{listed['id']}/attachments/{by_name[name]}")
+        assert r.status_code == 200, r.text
+        return r.headers.get("content-disposition", ""), r.headers.get("content-type", "")
+
+    png_disp, png_type = disposition("site-photo.png")
+    assert png_disp.startswith("inline"), png_disp
+    assert png_type.startswith("image/"), png_type      # <img> needs this
+
+    pdf_disp, _ = disposition("markup.pdf")
+    assert pdf_disp.startswith("inline"), pdf_disp
+
+    # Anything a browser can't render still downloads, which is what you want
+    # for a Word document.
+    doc_disp, _ = disposition("notes.docx")
+    assert doc_disp.startswith("attachment"), doc_disp
+
+
 # --- spend gate + settings ---------------------------------------------------
 
 def test_spend_gate_blocks_at_cap():

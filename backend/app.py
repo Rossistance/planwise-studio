@@ -1210,7 +1210,18 @@ def reply_attachment(reply_id: str, att_id: str):
                        (att_id, reply_id)).fetchone()
     if row is None:
         raise HTTPException(status_code=404, detail="No such attachment.")
-    return FileResponse(row["path"], filename=row["filename"] or "attachment")
+
+    name = row["filename"] or "attachment"
+    # Serve anything a browser can render INLINE. `filename=` alone sets
+    # Content-Disposition: attachment, which forced a download for every
+    # returned file — so a customer's screenshot could not be shown in the
+    # sent-vs-returned comparison, and clicking the link saved the file
+    # instead of previewing it. Everything else still downloads, which is
+    # right for a .docx or a .zip.
+    inline = name.lower().endswith(
+        (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".avif", ".txt"))
+    return FileResponse(row["path"], filename=name,
+                        content_disposition_type="inline" if inline else "attachment")
 
 
 # --- schedule (Phase 4) ------------------------------------------------------

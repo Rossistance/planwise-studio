@@ -2145,7 +2145,7 @@ function communicationPanel(rec, label) {
             ${rep.attachments.length ? `<div class="small" style="margin-bottom:10px">Returned files:
               ${rep.attachments.map((a) => `
                 <a href="/api/replies/${rep.id}/attachments/${a.id}" target="_blank">${esc(a.filename)}</a>${
-                  /\.pdf$/i.test(a.filename || "") ? `
+                  comparable(a.filename) ? `
                   <button class="link" data-compare-reply="${rep.id}" data-compare-att="${a.id}"
                     data-compare-name="${esc(a.filename)}" style="margin-left:6px">${
                       compareView && compareView.attId === a.id ? "hide comparison" : "compare with what we sent"}</button>` : ""}`).join(" · ")}</div>` : ""}
@@ -2157,13 +2157,18 @@ function communicationPanel(rec, label) {
               </div>
               <div class="compare-panes">
                 <div class="compare-pane"><canvas id="cmpSent"></canvas></div>
-                <div class="compare-pane"><canvas id="cmpBack"></canvas></div>
+                <div class="compare-pane">${compareView.image
+                  ? `<img id="cmpBackImg" alt="${esc(compareView.name)}"
+                       src="/api/replies/${compareView.replyId}/attachments/${compareView.attId}">`
+                  : `<canvas id="cmpBack"></canvas>`}</div>
               </div>
               <div class="compare-nav">
                 <button class="btn sm" data-cmp-page="-1">‹ Prev</button>
                 <span id="cmpMeta" class="mono muted">page ${compareView.page || 1}</span>
                 <button class="btn sm" data-cmp-page="1">Next ›</button>
               </div>
+              ${compareView.image ? `<div class="hint small muted" style="padding:0 8px 8px;text-align:center">
+                They returned an image, so the pages belong to our package — the picture stays put beside whichever page you're on.</div>` : ""}
             </div>` : ""}
             ${rep.confirmed_at ? "" : `
             <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2181,25 +2186,47 @@ function communicationPanel(rec, label) {
     </div>`;
 }
 
-/* Sent-vs-returned. The outbound package and the file they sent back, same
-   page, side by side — the visual audit trail for a marked-up RFI. */
+/* What can sit in the right-hand pane.
+   A customer answering an RFI sends back whatever their phone or their markup
+   tool produced: a re-marked PDF, a screenshot, a photo of the drawing on a
+   tailgate. Only PDFs used to offer the comparison, so an image reply landed
+   as a bare link with nothing to check it against — the audit trail silently
+   went missing on exactly the reply that most needed looking at. */
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|avif)$/i;
+const comparable = (name) => /\.pdf$/i.test(name || "") || IMAGE_RE.test(name || "");
+const isImageReply = (name) => IMAGE_RE.test(name || "");
+
+/* Sent-vs-returned. The outbound package and the file they sent back, side by
+   side — the visual audit trail for a marked-up RFI. */
 async function renderCompare() {
   if (!compareView) return;
   const sent = document.querySelector("#cmpSent");
-  const back = document.querySelector("#cmpBack");
-  if (!sent || !back) return;
+  if (!sent) return;
   const page = compareView.page || 1;
   const width = Math.max(240, Math.floor((main.clientWidth - 120) / 2));
+  const meta = document.querySelector("#cmpMeta");
   try {
-    const [nSent, nBack] = await Promise.all([
-      DW.renderPdfPage(sent, `/api/records/${current.sub}/package`, page, width),
-      DW.renderPdfPage(back, `/api/replies/${compareView.replyId}/attachments/${compareView.attId}`, page, width),
-    ]);
+    const nSent = await DW.renderPdfPage(
+      sent, `/api/records/${current.sub}/package`, page, width);
+
+    if (compareView.image) {
+      // An image has no pages, so the navigation belongs to the sent package
+      // alone; the returned picture stays put beside whichever page you're on.
+      compareView.pages = nSent;
+      if (meta) meta.textContent = nSent > 1
+        ? `sent page ${page} / ${nSent} · returned image`
+        : "returned image";
+      return;
+    }
+
+    const back = document.querySelector("#cmpBack");
+    if (!back) return;
+    const nBack = await DW.renderPdfPage(
+      back, `/api/replies/${compareView.replyId}/attachments/${compareView.attId}`,
+      page, width);
     compareView.pages = Math.max(nSent, nBack);
-    const meta = document.querySelector("#cmpMeta");
     if (meta) meta.textContent = `page ${page} / ${compareView.pages}`;
   } catch (err) {
-    const meta = document.querySelector("#cmpMeta");
     if (meta) meta.textContent = `could not render: ${err.message}`;
   }
 }
@@ -2210,7 +2237,8 @@ main.addEventListener("click", async (e) => {
     compareView = compareView && compareView.attId === cmp.dataset.compareAtt
       ? null
       : { replyId: cmp.dataset.compareReply, attId: cmp.dataset.compareAtt,
-          name: cmp.dataset.compareName, page: 1 };
+          name: cmp.dataset.compareName, page: 1,
+          image: isImageReply(cmp.dataset.compareName) };
     return render();
   }
   const nav = e.target.closest("[data-cmp-page]");

@@ -745,10 +745,22 @@ function costTable(d, compact = false) {
   const rows = d.cost_types;
   const sum = (f) => rows.reduce((s, r) => (r[f] == null ? s : s + r[f]), 0);
   const varTotal = sum("current_estimate") - sum("actual_cost");
+  /* Phase codes are classifiers — "92-100 - Underground" tells you where the
+     money sits. One cost type can span several, so the extras are counted
+     rather than allowed to wrap the column; the full list is on hover. */
+  const phaseCodes = (r) => {
+    const codes = r.phase_codes || [];
+    if (!codes.length) return `<span class="none">—</span>`;
+    const first = String(codes[0]).split(" - ")[0];
+    const rest = codes.length - 1;
+    return `<span title="${esc(codes.join("\n"))}">${esc(first)}${
+      rest ? ` <span class="muted">+${rest}</span>` : ""}</span>`;
+  };
+
   return `
     <table class="tbl" data-sort-key="costs-${compact ? "compact" : "full"}">
       <thead><tr>
-        <th>Cost Type</th>${compact ? "" : `<th class="num">Phases</th>`}
+        <th>Cost Type</th>${compact ? "" : `<th>Phase Code</th>`}
         <th class="num">Estimate</th><th class="num">Month to Date</th>
         <th class="num">Actual (JTD)</th><th class="num">Projected</th>
         <th class="num">Variance</th><th class="num">% Complete</th>
@@ -758,7 +770,7 @@ function costTable(d, compact = false) {
       <tbody>
         ${rows.map((r) => `<tr>
           <td>${esc(r.cost_type)}${r.po_only ? `<span class="tag" title="No Vista cost lines — exists only on the PO register">PO only</span>` : ""}</td>
-          ${compact ? "" : `<td class="num">${r.phase_count}</td>`}
+          ${compact ? "" : `<td class="mono">${phaseCodes(r)}</td>`}
           ${cell(money(r.current_estimate))}
           ${cell(money(r.mtd_cost))}
           ${cell(money(r.actual_cost))}
@@ -770,7 +782,7 @@ function costTable(d, compact = false) {
         </tr>`).join("")}
       </tbody>
       <tfoot><tr>
-        <td>Total</td>${compact ? "" : `<td class="num">${sum("phase_count")}</td>`}
+        <td>Total</td>${compact ? "" : "<td></td>"}
         <td class="num">${money(sum("current_estimate"))}</td>
         <td class="num">${money(sum("mtd_cost"))}</td>
         <td class="num">${money(sum("actual_cost"))}</td>
@@ -806,6 +818,8 @@ function costs(d) {
    mistake you can take back. */
 let coDocSel = { customer: null, subcontractor: null };
 let coPreview = null;        // {kind, coId} — the inline PDF currently shown
+let coPreviewRev = 0;        // bumped to bust the iframe's cache of the PDF
+let coItems = [];            // breakout rows being edited, mirrored to the server
 let coClarifOpen = false;
 let coClarifLib = null;      // the standing library, fetched once
 let coClarifPick = new Set();
@@ -835,14 +849,57 @@ function coDocBar(d, kind, list) {
         ? `<button class="btn primary sm" data-co-share="${kind}">Send PDF</button>`
         : `<button class="btn sm" data-co-clarify>Clarifications &amp; Exceptions</button>
            <button class="btn primary sm" data-co-share="${kind}">Share to Customer</button>`}
+      <button class="btn sm" data-co-pdf="${kind}">Download PDF</button>
       <button class="btn sm" data-co-docx="${kind}">Download Word</button>
       <span class="hint small muted" id="coMsg-${kind}"></span>
     </div>
     ${!isSub && coClarifOpen ? clarificationPicker() : ""}
-    ${coPreview && coPreview.kind === kind
-      ? `<div class="la-preview"><iframe title="Change order preview"
-           src="/api/jobs/${encodeURIComponent(current.job)}/cos/${coPreview.coId}/document.pdf#toolbar=1"></iframe></div>`
-      : ""}`;
+    ${coPreview && coPreview.kind === kind ? `
+      <div class="co-compose">
+        ${isSub ? "" : composePane(list.find((c) => c.id === coPreview.coId) || {})}
+        <div class="la-preview" style="margin:0">
+          <iframe title="Change order preview" id="coFrame"
+            src="/api/jobs/${encodeURIComponent(current.job)}/cos/${coPreview.coId}/document.pdf#toolbar=1&v=${coPreviewRev}"></iframe>
+        </div>
+      </div>` : ""}`;
+}
+
+/* Writing the letter, beside the letter.
+   The narrative and the breakout are what a PM actually composes; putting
+   them next to the preview means you watch the document change as you type
+   rather than editing a form and guessing. Saves are debounced and the frame
+   reloads on the way back, so "live" costs one request per pause, not one per
+   keystroke. */
+function composePane(co) {
+  const rows = coItems.length ? coItems : [{ description: "", amount: "" }];
+  const total = coItems.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  return `
+    <div class="co-editor">
+      <label class="eyebrow">What changed and why</label>
+      <textarea id="coNarrative" rows="7" data-co-narr="${co.id}"
+        placeholder="This is to notify … of several changes in scope to the above-referenced project. Additional information and clarification has been provided by the engineering team that requires an adjustment to …">${esc(co.narrative || "")}</textarea>
+
+      <label class="eyebrow" style="margin-top:12px">Breakout pricing</label>
+      <div class="co-items">
+        ${rows.map((r, i) => `
+          <div class="co-item">
+            <input data-item-desc="${i}" value="${esc(r.description || "")}"
+              placeholder="Cable Tray Install">
+            <input data-item-amt="${i}" class="num" inputmode="decimal"
+              value="${esc(r.amount ?? "")}" placeholder="0.00">
+            <button class="link danger" data-item-del="${i}" title="Remove this line">×</button>
+          </div>`).join("")}
+      </div>
+      <div class="co-item-foot">
+        <button class="btn sm" data-item-add>+ Line</button>
+        <span class="grow"></span>
+        <span class="eyebrow">Total</span>
+        <b class="num">${coItems.length ? money(total) : "—"}</b>
+      </div>
+      <div class="hint small muted">Leave the breakout empty and the letter shows the
+        amount typed on the register. Add lines and they are itemised, totalled, and the
+        register follows them — a credit is a negative number.</div>
+    </div>`;
 }
 
 /* Tick the standing ones, type a new one. New wording is saved to the library
@@ -953,6 +1010,48 @@ function changeorders(d) {
 
 let invoiceFormPo = null; // PO id whose inline invoice form is open
 
+/* Approved subcontractor change orders, waiting for a purchase order.
+   An approved sub CO is an agreement: the sub is owed the money and will
+   invoice against it — but they cannot invoice against a change order, only
+   against a PO. Leaving these on the Change Orders tab meant the commitment
+   existed on one page and the paperwork that satisfies it on another, with
+   nothing joining them. */
+function subCoCommitments(d) {
+  const covered = new Set((d.purchase_orders || [])
+    .map((p) => p.source_co_id).filter(Boolean));
+  const waiting = (d.change_orders || []).filter(
+    (c) => c.kind === "subcontractor" && (c.amount_approved || 0) > 0
+           && !covered.has(c.id));
+  if (!waiting.length) return "";
+
+  const total = waiting.reduce((s, c) => s + (c.amount_approved || 0), 0);
+  return `
+    <div class="panel">
+      <div class="panel-head"><h3>Approved Sub COs Awaiting a PO</h3>
+        <span class="sub num">${waiting.length} · ${money(total)} committed, not yet on a PO</span></div>
+      <div class="panel-body flush">
+        <table class="tbl">
+          <thead><tr>
+            <th>CO #</th><th>Subcontractor</th><th>Description</th>
+            <th class="num">Approved</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${waiting.map((c) => `<tr>
+              <td class="mono">${esc(c.co_number ?? "—")}</td>
+              <td>${esc(c.subcontractor ?? "—")}</td>
+              <td>${esc(c.description ?? "—")}</td>
+              <td class="num">${money(c.amount_approved)}</td>
+              <td><button class="link" data-co-to-po="${c.id}">issue PO</button></td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+        <div class="note">These are agreed with the subcontractor and will be invoiced against.
+          Issuing the PO copies the number, vendor, description and amount across; the change
+          order stays the record of what was agreed.</div>
+      </div>
+    </div>`;
+}
+
 function pos(d) {
   const list = d.purchase_orders;
   const vistaTypes = d.cost_types.filter((r) => !r.po_only).map((r) => r.cost_type);
@@ -970,6 +1069,8 @@ function pos(d) {
       <div class="cell"><div class="n num">${money(openRemaining)}</div><div class="l eyebrow">Open Commitment</div></div>
       <div class="cell"><div class="n num">${open.length} / ${list.length}</div><div class="l eyebrow">Open POs</div></div>
     </div>
+
+    ${subCoCommitments(d)}
 
     <div class="panel">
       <div class="panel-head"><h3>Purchase Order Register</h3>
@@ -1681,6 +1782,63 @@ main.addEventListener("change", (e) => {
   }
 });
 
+/* Read the breakout back out of the DOM rather than tracking every keystroke
+   in state — the inputs are the source of truth while you're typing in them,
+   and re-rendering on each character would steal the caret. */
+function readItems() {
+  return [...document.querySelectorAll("[data-item-desc]")].map((el, i) => ({
+    description: el.value,
+    amount: (document.querySelector(`[data-item-amt="${i}"]`) || {}).value || "",
+  }));
+}
+
+async function saveItems() {
+  const coId = coSelected("customer");
+  if (!coId) return;
+  const items = readItems()
+    .filter((r) => (r.description || "").trim())
+    .map((r) => ({ description: r.description, amount: parseFloat(r.amount) || 0 }));
+  const out = await api(`/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/items`,
+                        { method: "PUT", body: JSON.stringify({ items }) });
+  coItems = out.items.map((r) => ({ description: r.description, amount: r.amount }));
+  refreshCoPreview();
+  return out;
+}
+
+/* Reload the embedded PDF. The URL carries a revision so the browser fetches
+   the new document instead of showing the one it already has. */
+function refreshCoPreview() {
+  coPreviewRev += 1;
+  const f = document.querySelector("#coFrame");
+  if (f && coPreview) {
+    f.src = `/api/jobs/${encodeURIComponent(current.job)}/cos/${coPreview.coId}`
+          + `/document.pdf#toolbar=1&v=${coPreviewRev}`;
+  }
+}
+
+let coSaveTimer = null;
+const debounceCoSave = (fn) => {
+  clearTimeout(coSaveTimer);
+  coSaveTimer = setTimeout(fn, 700);
+};
+
+main.addEventListener("input", (e) => {
+  const narr = e.target.closest("[data-co-narr]");
+  if (narr) {
+    debounceCoSave(async () => {
+      await api(`/api/jobs/${encodeURIComponent(current.job)}/cos/${narr.dataset.coNarr}`,
+                { method: "PATCH", body: JSON.stringify({ narrative: narr.value }) });
+      const c = (current.data.change_orders || []).find((x) => x.id === narr.dataset.coNarr);
+      if (c) c.narrative = narr.value;            // keep the cache honest
+      refreshCoPreview();
+    });
+    return;
+  }
+  if (e.target.closest("[data-item-desc]") || e.target.closest("[data-item-amt]")) {
+    debounceCoSave(saveItems);
+  }
+});
+
 async function saveClarifications() {
   const coId = coSelected("customer");
   if (!coId) return;
@@ -1720,7 +1878,13 @@ main.addEventListener("click", async (e) => {
         if (handleCoError(body, kind)) return;
         return coMsg(kind, (body.detail && body.detail.detail) || body.detail || `HTTP ${r.status}`);
       }
-      coPreview = coPreview && coPreview.coId === coId ? null : { kind, coId };
+      const closing = coPreview && coPreview.coId === coId;
+      coPreview = closing ? null : { kind, coId };
+      if (!closing && kind === "customer") {
+        coItems = ((await api(
+          `/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/items`)).items || [])
+          .map((r) => ({ description: r.description, amount: r.amount }));
+      }
       coMsg(kind, "");
       render();
     } catch (err) { coMsg(kind, err.message); }
@@ -1748,6 +1912,62 @@ main.addEventListener("click", async (e) => {
     await api(`/api/co-clarifications/${arch.dataset.clarifArchive}`, { method: "DELETE" });
     coClarifLib = (await api("/api/co-clarifications")).clarifications;
     render();
+    return;
+  }
+
+  const toPo = e.target.closest("[data-co-to-po]");
+  if (toPo) {
+    const co = (current.data.change_orders || []).find((c) => c.id === toPo.dataset.coToPo);
+    if (!co) return;
+    // Pre-filled from the agreement, then editable like any other PO — the
+    // number and cost type are the PM's call, but nobody should retype a
+    // vendor and an amount that are already recorded three rows away.
+    const num = prompt(`PO number for ${co.subcontractor || "this subcontractor"} `
+      + `(Sub CO #${co.co_number || "—"}, ${money(co.amount_approved)}):`,
+      `PO-${co.co_number || ""}`);
+    if (num === null) return;
+    await api(`/api/jobs/${encodeURIComponent(current.job)}/pos`, {
+      method: "POST",
+      body: JSON.stringify({
+        po_number: num.trim(),
+        vendor: co.subcontractor || "",
+        description: co.description || `Sub CO ${co.co_number || ""}`.trim(),
+        adjusted_amount: co.amount_approved,
+        original_amount: co.amount_approved,
+        cost_type: "Subcontractor",
+        source_co_id: co.id,
+      }),
+    });
+    await refreshJob();
+    return;
+  }
+
+  const addItem = e.target.closest("[data-item-add]");
+  if (addItem) {
+    coItems = [...readItems(), { description: "", amount: "" }];
+    render();
+    return;
+  }
+
+  const delItem = e.target.closest("[data-item-del]");
+  if (delItem) {
+    const rows = readItems();
+    rows.splice(Number(delItem.dataset.itemDel), 1);
+    coItems = rows;
+    await saveItems();
+    render();
+    return;
+  }
+
+  const dlpdf = e.target.closest("[data-co-pdf]");
+  if (dlpdf) {
+    const kind = dlpdf.dataset.coPdf;
+    const coId = coSelected(kind);
+    if (!coId) return coMsg(kind, "Pick a change order first.");
+    const ok = await downloadEml(
+      `/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/document.pdf`,
+      (t) => coMsg(kind, t));
+    if (ok) coMsg(kind, "PDF downloaded.");
     return;
   }
 

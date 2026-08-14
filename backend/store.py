@@ -42,10 +42,14 @@ def ensure_user(name: str) -> dict[str, Any]:
 # --- helpers ----------------------------------------------------------------
 
 PO_FIELDS = {"po_number", "vendor", "description", "order_date", "ordered_by",
-             "original_amount", "adjusted_amount", "cost_type", "status"}
+             "original_amount", "adjusted_amount", "cost_type", "status",
+             "source_co_id"}
 CO_FIELDS = {"kind", "co_number", "cust_co_number", "date_submitted",
              "description", "amount_submitted", "amount_pending",
-             "amount_approved", "approved_by", "subcontractor", "status"}
+             "amount_approved", "approved_by", "subcontractor", "status",
+             # The prose explaining what changed and why. `description` stays
+             # the short register label; this is what the letter says.
+             "narrative"}
 INVOICE_FIELDS = {"invoice_number", "date", "amount"}
 _NUMERIC = {"original_amount", "adjusted_amount", "amount",
             "amount_submitted", "amount_pending", "amount_approved"}
@@ -93,7 +97,10 @@ def list_pos(job_number: str) -> list[dict[str, Any]]:
 def add_po(job_number: str, fields: dict[str, Any], actor: str | None = None) -> dict[str, Any]:
     rec = {"po_number": None, "vendor": None, "description": None,
            "order_date": None, "ordered_by": None, "original_amount": None,
-           "adjusted_amount": None, "cost_type": None, "status": "Open"}
+           "adjusted_amount": None, "cost_type": None, "status": "Open",
+           # Set when the PO was raised against an approved subcontractor
+           # change order, so that CO stops appearing as awaiting one.
+           "source_co_id": None}
     rec.update(_clean(fields, PO_FIELDS))
     rec.update({"id": db.new_id(), "job_number": job_number,
                 "created_by": actor, "created_at": db.now()})

@@ -1035,3 +1035,27 @@ table.tbl.la-grid td.la-day.weekend { background: var(--accent-soft); }
 .clarif .link { flex: none; opacity: 0; }
 .clarif:hover .link { opacity: 1; }
 .sub-panel { border: 1px solid var(--line); }
+
+/* ---- change order: compose beside the preview ----------------------------------------- */
+/* The narrative and breakout sit next to the document they produce, so you
+   watch the letter change instead of editing a form and guessing. */
+.co-compose { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 12px; padding: 0 12px 12px; }
+@media (max-width: 1100px) { .co-compose { grid-template-columns: 1fr; } }
+.co-editor {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel-2); padding: 12px; display: flex; flex-direction: column;
+}
+.co-editor textarea {
+  width: 100%; resize: vertical; min-height: 120px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); color: var(--ink); padding: 8px 10px;
+  font: 14px/1.5 var(--font-body);
+}
+.co-items { display: flex; flex-direction: column; gap: 5px; }
+.co-item { display: grid; grid-template-columns: 1fr 110px 22px; gap: 6px; align-items: center; }
+.co-item input {
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--panel); color: var(--ink); padding: 5px 8px; font: 13px var(--font-body);
+  min-width: 0;
+}
+.co-item-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; }

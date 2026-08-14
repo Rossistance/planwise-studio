@@ -811,7 +811,7 @@ def get_job(job_number: str):
         row["open_committed"] = committed.pop(row["cost_type"], None)
     for name, amount in committed.items():
         cost_types.append({
-            "cost_type": name, "phase_count": 0,
+            "cost_type": name, "phase_count": 0, "phase_codes": [],
             "actual_cost": None, "current_estimate": None,
             "projected_cost": None, "hours_units": None, "mtd_cost": None,
             "variance": None, "pct_complete": None,
@@ -961,14 +961,55 @@ def _co_document(job_number: str, co_id: str, clarifications: list[str] | None):
     doc = changeorder.compose(
         co, job,
         clarifications=selected,
+        items=changeorder.list_items(co_id),
         contact=contacts[0] if contacts else None,
         customer=meta.get("customer"),
         prepared_by={"name": me.get("name"), "phone": meta.get("pm_phone")})
     return co, doc, contacts
 
 
+@app.get("/api/jobs/{job_number}/cos/{co_id}/items")
+def get_co_items(job_number: str, co_id: str):
+    return {"items": changeorder.list_items(co_id),
+            "total": changeorder.items_total(co_id)}
+
+
+@app.put("/api/jobs/{job_number}/cos/{co_id}/items")
+def put_co_items(job_number: str, co_id: str, body: dict = Body(...)):
+    items = changeorder.set_items(co_id, body.get("items") or [])
+    # The register's headline figure follows the breakout, so the table and the
+    # letter can never show two different numbers for the same change order.
+    total = changeorder.items_total(co_id)
+    if total is not None:
+        me = _CURRENT_USER.get() or {}
+        store.update_co(job_number, co_id, {"amount_submitted": total},
+                        actor=me.get("name"))
+    return {"items": items, "total": total}
+
+
+def _sub_log(job_number: str) -> tuple[dict, bytes, str]:
+    """The subcontractor register as a log document."""
+    try:
+        job = _snapshot().jobs.get(job_number, {})
+    except HTTPException:
+        job = {}
+    job = {**job, "job_number": job_number}
+    cos = [c for c in store.list_cos(job_number) if (c.get("kind") or "") == "subcontractor"]
+    name = f"Subcontractor_CO_Log_{job_number}"
+    return job, changeorder.build_sub_log_pdf(job, cos), name
+
+
 @app.get("/api/jobs/{job_number}/cos/{co_id}/document.pdf")
 def co_document_pdf(job_number: str, co_id: str):
+    co = next((c for c in store.list_cos(job_number) if c["id"] == co_id), None)
+    if co is None:
+        raise HTTPException(status_code=404, detail="No such change order.")
+    if (co.get("kind") or "customer") == "subcontractor":
+        # A sub CO is a log entry, not a letter to anybody — see
+        # changeorder.build_sub_log_pdf.
+        _job, pdf, name = _sub_log(job_number)
+        return Response(content=pdf, media_type="application/pdf",
+                        headers={"Content-Disposition": f'inline; filename="{name}.pdf"'})
     _co, doc, _contacts = _co_document(job_number, co_id, None)
     return Response(content=changeorder.build_pdf(doc), media_type="application/pdf",
                     headers={"Content-Disposition":
@@ -1030,6 +1071,24 @@ def share_co(job_number: str, co_id: str):
     """
     import base64
 
+    co = next((c for c in store.list_cos(job_number) if c["id"] == co_id), None)
+    if co is None:
+        raise HTTPException(status_code=404, detail="No such change order.")
+
+    if (co.get("kind") or "customer") == "subcontractor":
+        job, pdf, name = _sub_log(job_number)
+        project = job.get("job_name") or job_number
+        return {
+            "subject": f"Subcontractor Change Order Log — {project}",
+            "body": (f"Attached is the current subcontractor change order log for "
+                     f"{project}.\n\nThank you,"),
+            "to": "",                     # blank on purpose — the PM addresses it
+            "contacts": [],
+            "kind": "subcontractor",
+            "attachments": [{"filename": f"{name}.pdf",
+                             "content_b64": __import__("base64").b64encode(pdf).decode()}],
+        }
+
     co, doc, contacts = _co_document(job_number, co_id, None)
     is_customer = doc["is_customer"]
     number = co.get("co_number") or co.get("cust_co_number") or ""
@@ -1038,9 +1097,6 @@ def share_co(job_number: str, co_id: str):
     body = (f"{doc['salutation']}\n\nPlease find attached Change Order Request "
             f"#{number} for {doc['project']}, in the amount of {doc['total']}.\n\n"
             f"{changeorder.CLOSING}\n\nThank you,")
-    if not is_customer:
-        body = (f"Attached is Change Order #{number} for {doc['project']}, "
-                f"in the amount of {doc['total']}.\n\nThank you,")
 
     return {
         "subject": subject,
@@ -1048,9 +1104,9 @@ def share_co(job_number: str, co_id: str):
         # A subcontractor CO deliberately ships with a blank To: line — the PM
         # picks the sub's contact themselves in Outlook (same reasoning as the
         # internal look-ahead share, D19).
-        "to": ";".join(c["email"] for c in contacts) if is_customer else "",
+        "to": ";".join(c["email"] for c in contacts),
         "contacts": [{"name": c.get("name") or c["email"], "email": c["email"]}
-                     for c in contacts] if is_customer else [],
+                     for c in contacts],
         "kind": doc["kind"],
         "attachments": [
             {"filename": f"{doc['filename']}.pdf",

@@ -186,3 +186,110 @@ def test_editing_the_library_never_rewrites_a_sent_letter(client):
     from pypdf import PdfReader
     r = client.get(f"/api/jobs/24-003/cos/{co['id']}/document.pdf")
     assert original.split(".")[0][:40] in PdfReader(BytesIO(r.content)).pages[0].extract_text()
+
+
+# --- breakout pricing ---------------------------------------------------------
+
+def test_line_items_are_itemised_and_drive_the_total(client):
+    with_contact()
+    co = make_co(amount_submitted=1.00)          # deliberately wrong on the row
+    client.put(f"/api/jobs/24-003/cos/{co['id']}/items", json={"items": [
+        {"description": "Cable Tray Install", "amount": 149049.00},
+        {"description": "Duke Meter H Frame", "amount": 4901.00},
+        {"description": "BESS Reactor Firewall", "amount": -1500.00},
+    ]})
+
+    from pypdf import PdfReader
+    text = PdfReader(BytesIO(
+        client.get(f"/api/jobs/24-003/cos/{co['id']}/document.pdf").content)).pages[0].extract_text()
+    assert "Cable Tray Install" in text
+    assert "$149,049.00" in text
+    assert "($1,500.00)" in text                 # a credit reads as a credit
+    assert "$152,450.00" in text                 # totalled from the lines, not the row
+
+    # The register follows the breakout, so the table and the letter agree.
+    row = next(c for c in store.list_cos("24-003") if c["id"] == co["id"])
+    assert row["amount_submitted"] == 152450.00
+
+
+def test_without_line_items_the_typed_amount_still_rules(client):
+    with_contact()
+    co = make_co(amount_submitted=177353.00)
+    from pypdf import PdfReader
+    text = PdfReader(BytesIO(
+        client.get(f"/api/jobs/24-003/cos/{co['id']}/document.pdf").content)).pages[0].extract_text()
+    assert "$177,353.00" in text
+
+
+def test_the_narrative_is_what_the_letter_says(client):
+    """`description` is a register label — "Additional Conduit" — and reads as
+    nothing in a letter."""
+    with_contact()
+    co = make_co(description="Additional Conduit")
+    store.update_co("24-003", co["id"], {
+        "narrative": "The engineering team has requested the feeder be installed in "
+                     "cable tray along the roof of the building."}, actor="Ross Hixon")
+
+    from pypdf import PdfReader
+    text = PdfReader(BytesIO(
+        client.get(f"/api/jobs/24-003/cos/{co['id']}/document.pdf").content)).pages[0].extract_text()
+    assert "cable tray along the roof" in text
+
+
+# --- the subcontractor log ----------------------------------------------------
+
+def test_the_subcontractor_pdf_is_a_log_and_never_names_the_customer(client):
+    """It was rendering as a customer letter — "Dear Jon," and the customer's
+    company on a document about a subcontractor's money."""
+    with_contact()                               # customer contact exists...
+    store.add_co("24-003", {"kind": "subcontractor", "co_number": "001",
+                            "subcontractor": "Badger Electric",
+                            "description": "delay compensation",
+                            "amount_submitted": 1000.00,
+                            "amount_approved": 1000.00}, actor="Ross Hixon")
+    sub = next(c for c in store.list_cos("24-003") if c["kind"] == "subcontractor")
+
+    from pypdf import PdfReader
+    text = PdfReader(BytesIO(
+        client.get(f"/api/jobs/24-003/cos/{sub['id']}/document.pdf").content)).pages[0].extract_text()
+
+    assert "Subcontractor Change Order Log" in text
+    assert "Badger Electric" in text
+    assert "delay compensation" in text
+    assert "Dear" not in text                    # ...and it is addressed to nobody
+    assert "Axis Energy" not in text
+    assert changeorder.CLOSING[:30] not in text
+
+
+def test_the_sub_log_totals_the_register(client):
+    for n, amt in (("001", 1000.00), ("002", 2500.00)):
+        store.add_co("24-003", {"kind": "subcontractor", "co_number": n,
+                                "subcontractor": "Badger Electric",
+                                "description": f"work {n}",
+                                "amount_submitted": amt, "amount_approved": amt},
+                     actor="Ross Hixon")
+    sub = next(c for c in store.list_cos("24-003") if c["kind"] == "subcontractor")
+    from pypdf import PdfReader
+    text = PdfReader(BytesIO(
+        client.get(f"/api/jobs/24-003/cos/{sub['id']}/document.pdf").content)).pages[0].extract_text()
+    assert "$3,500.00" in text                   # both, added up
+    assert "2 change orders" in text
+
+
+def test_a_po_raised_against_a_sub_co_records_which_one(client):
+    """An approved sub CO is a commitment the sub will invoice against — but
+    they can only invoice a PO. Without the link the change order would sit on
+    the "awaiting a PO" list forever, even after the PO existed."""
+    sub = store.add_co("24-003", {"kind": "subcontractor", "co_number": "001",
+                                  "subcontractor": "Badger Electric",
+                                  "description": "delay compensation",
+                                  "amount_approved": 1000.00}, actor="Ross Hixon")
+    po = client.post("/api/jobs/24-003/pos", json={
+        "po_number": "PO-001", "vendor": "Badger Electric",
+        "adjusted_amount": 1000.00, "cost_type": "Subcontractor",
+        "source_co_id": sub["id"]}).json()
+    assert po["source_co_id"] == sub["id"]
+
+    # And it survives the round trip, which is what the UI filters on.
+    stored = next(p for p in store.list_pos("24-003") if p["id"] == po["id"])
+    assert stored["source_co_id"] == sub["id"]

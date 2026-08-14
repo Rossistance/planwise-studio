@@ -134,10 +134,19 @@ CREATE TABLE IF NOT EXISTS co_clarifications (
     created_at  TEXT NOT NULL
 );
 
--- Which ones this change order carries, and in what order. Free text is
--- stored inline rather than as a library reference: a clarification edited
--- for one CO must not silently rewrite what a CO sent last year said, which
--- is the whole reason the sent document is a record at all.
+-- Breakout pricing. A change order reads as one number to the customer only
+-- when it has one cause; the real ones itemise ("Cable Tray Install:
+-- $149,049.00 / Duke Meter H Frame: $4,901.00 / ... Total: $177,353.00"), and
+-- a credit is a negative line rather than a separate concept.
+CREATE TABLE IF NOT EXISTS change_order_items (
+    id           TEXT PRIMARY KEY,
+    co_id        TEXT NOT NULL REFERENCES change_orders(id) ON DELETE CASCADE,
+    description  TEXT,
+    amount       REAL,
+    sort_order   INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_coi_co ON change_order_items(co_id, sort_order);
+
 CREATE TABLE IF NOT EXISTS change_order_clarifications (
     id           TEXT PRIMARY KEY,
     co_id        TEXT NOT NULL REFERENCES change_orders(id) ON DELETE CASCADE,
@@ -470,6 +479,15 @@ MIGRATIONS = [
     ("schedule_tasks", "actual_finish", "TEXT"),
     ("schedule_tasks", "deadline", "TEXT"),
     ("schedule_tasks", "collapsed", "INTEGER"),
+    # The paragraph that explains what changed and why. `description` is a
+    # register label — "Additional Conduit" — which reads as nothing in a
+    # letter; this is the prose a PM actually writes to the customer.
+    ("change_orders", "narrative", "TEXT"),
+    # Which approved subcontractor change order this PO was raised against.
+    # Without it, a sub CO stays on the "awaiting a PO" list forever after the
+    # PO exists — the commitment and the paperwork have no way to find each
+    # other.
+    ("purchase_orders", "source_co_id", "TEXT"),
 ]
 
 POST_MIGRATION_SQL = """

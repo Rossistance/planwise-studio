@@ -396,8 +396,16 @@ def cost_types_for(snap: Snapshot, job_number: str) -> list[dict[str, Any]]:
             "hours_units": None,
             "mtd_cost": None,
             "phase_count": 0,
+            # The phase CODES this cost type is carried under. A code is a
+            # classifier, not a quantity — counting them told you how many
+            # buckets existed, which is not a fact anybody needed, while the
+            # codes themselves say where the money actually sits.
+            "phase_codes": [],
         })
         b["phase_count"] += 1
+        code = (row.get("phase") or "").strip()
+        if code and code not in b["phase_codes"]:
+            b["phase_codes"].append(code)
         for f in ("actual_cost", "current_estimate", "projected_cost",
                   "hours_units", "mtd_cost"):
             v = row.get(f)

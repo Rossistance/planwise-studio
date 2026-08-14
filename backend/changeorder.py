@@ -147,6 +147,48 @@ def archive_clarification(cid: str, actor: str | None = None) -> bool:
     return cur.rowcount > 0
 
 
+# --- breakout pricing ---------------------------------------------------------
+
+def list_items(co_id: str) -> list[dict[str, Any]]:
+    conn = db.connect()
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM change_order_items WHERE co_id = ? ORDER BY sort_order, rowid",
+        (co_id,))]
+
+
+def set_items(co_id: str, items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Replace the breakout for this change order.
+
+    Replace rather than patch: the UI edits the whole list, and reconciling
+    per-row identity would buy nothing but a chance to lose a line.
+    """
+    conn = db.connect()
+    conn.execute("DELETE FROM change_order_items WHERE co_id = ?", (co_id,))
+    for i, it in enumerate(items or []):
+        desc = " ".join(str(it.get("description") or "").split())
+        if not desc:
+            continue                       # a blank row is the UI's spare, not data
+        try:
+            amount = float(it.get("amount") or 0)
+        except (TypeError, ValueError):
+            amount = 0.0
+        conn.execute("INSERT INTO change_order_items (id, co_id, description, amount, sort_order) "
+                     "VALUES (?,?,?,?,?)", (db.new_id(), co_id, desc, amount, i))
+    conn.commit()
+    return list_items(co_id)
+
+
+def items_total(co_id: str) -> float | None:
+    """What the breakout adds up to, or None when there is no breakout.
+
+    None is the distinction that matters: a change order with no line items
+    keeps whatever amount was typed on the register, and one WITH them is
+    totalled from them, so the letter and its arithmetic can never disagree.
+    """
+    rows = list_items(co_id)
+    return sum(float(r["amount"] or 0) for r in rows) if rows else None
+
+
 def get_selected(co_id: str) -> list[str]:
     conn = db.connect()
     return [r["text"] for r in conn.execute(
@@ -198,7 +240,7 @@ def _first_name(full: str | None) -> str:
 
 def compose(co: dict, job: dict, *, clarifications: list[str] | None = None,
             contact: dict | None = None, prepared_by: dict | None = None,
-            customer: str | None = None) -> dict:
+            customer: str | None = None, items: list[dict] | None = None) -> dict:
     """Everything both writers need, worked out once.
 
     Keeping this separate is what stops the .docx and the .pdf drifting into
@@ -215,11 +257,18 @@ def compose(co: dict, job: dict, *, clarifications: list[str] | None = None,
     addressee = addressee.strip() or (contact or {}).get("name") or ""
     project = job.get("job_name") or job.get("job_number") or ""
 
-    amount = co.get("amount_submitted")
+    # Breakout wins when there is one: the letter's arithmetic and its lines
+    # must agree, and a typed total that disagrees with the lines beneath it is
+    # the kind of error a customer finds first.
+    lines = [{"description": i.get("description") or "",
+              "amount": float(i.get("amount") or 0)} for i in (items or [])]
+    amount = sum(l["amount"] for l in lines) if lines else co.get("amount_submitted")
     if amount is None:
         amount = co.get("amount_pending") or co.get("amount_approved") or 0
 
-    body = (co.get("description") or "").strip()
+    # The narrative is what a PM writes; `description` is the register label
+    # and is only a fallback so a letter is never wordless.
+    body = (co.get("narrative") or "").strip() or (co.get("description") or "").strip()
     if not body:
         body = ("This is to notify you of a change in scope to the "
                 "above-referenced project.")
@@ -237,6 +286,8 @@ def compose(co: dict, job: dict, *, clarifications: list[str] | None = None,
         "project": project,
         "salutation": f"Dear {_first_name((contact or {}).get('name'))},",
         "body": body,
+        "items": [{"description": l["description"], "amount": _money(l["amount"])}
+                  for l in lines],
         "total_label": "Total:",
         "total": _money(amount),
         "clarifications": list(clarifications or []) if is_customer else [],
@@ -283,8 +334,12 @@ def build_docx(doc: dict) -> bytes:
         _p(""),
         _p(doc["salutation"]),
         _p(doc["body"]),
-        _p(f"{doc['total_label']} {doc['total']}", bold=True),
     ]
+    for it in doc["items"]:
+        body.append(_p(f"{it['description']}: {it['amount']}", space_after=60))
+    if doc["items"]:
+        body.append(_p(""))
+    body.append(_p(f"{doc['total_label']} {doc['total']}", bold=True))
     if doc["is_customer"]:
         body.append(_p(COMPENSATION))
         for line in doc["clarifications"]:
@@ -472,6 +527,17 @@ def build_pdf(doc: dict) -> bytes:
     line(doc["salutation"], gap=22)
     line(doc["body"], gap=15)
     y -= 8
+    for it in doc["items"]:
+        # Description left, price right-aligned against the margin, so a
+        # column of money reads as a column rather than ragged prose.
+        ops.append(f"BT /F1 11 Tf 0 g 1 0 0 1 {_MARGIN:.1f} {y:.1f} Tm "
+                   f"({_esc_pdf(_latin1(it['description']))}) Tj ET")
+        w = _tw(it["amount"], 11)
+        ops.append(f"BT /F1 11 Tf 0 g 1 0 0 1 {_PW - _MARGIN - w:.1f} {y:.1f} Tm "
+                   f"({_esc_pdf(it['amount'])}) Tj ET")
+        y -= 15
+    if doc["items"]:
+        y -= 6
     line(f"{doc['total_label']} {doc['total']}", bold=True, gap=24)
 
     if doc["is_customer"]:
@@ -504,13 +570,108 @@ def build_pdf(doc: dict) -> bytes:
     return _write_pdf(stream, img, iw, ih)
 
 
-def _write_pdf(stream: bytes, img: bytes | None, iw: int, ih: int) -> bytes:
+def build_sub_log_pdf(job: dict, cos: list[dict]) -> bytes:
+    """Subcontractor change orders as a LOG, not a letter.
+
+    A sub CO is not a negotiation with the party paying us — it is a record of
+    what a subcontractor is owed, and what the customer has therefore agreed
+    to. So this is the register itself: the same columns the screen shows,
+    ruled and totalled, under the same letterhead. Addressing it "Dear
+    <customer>" was simply wrong, and worse than wrong — it put the customer's
+    name on a document about a subcontractor's money.
+
+    Landscape, because eight columns do not fit across a portrait page without
+    squeezing the description to uselessness.
+    """
+    img = LETTERHEAD.read_bytes() if LETTERHEAD.is_file() else None
+    iw, ih = _jpeg_size(img) if img else (0, 0)
+    pw, ph = 792.0, 612.0                       # letter, landscape
+    left, right = 36.0, pw - 36.0
+
+    cols = [("CO #", 52.0, "l"), ("Subcontractor", 118.0, "l"), ("Date", 62.0, "l"),
+            ("Description", 216.0, "l"), ("Submitted", 78.0, "r"),
+            ("Pending", 70.0, "r"), ("Approved", 78.0, "r"), ("Approved By", 46.0, "l")]
+
+    ops: list[str] = []
+    y = ph - 20.0
+    if img:
+        bw = (right - left) * 0.52
+        bh = bw * ih / iw
+        y = ph - 18.0 - bh
+        ops.append(f"q {bw:.2f} 0 0 {bh:.2f} {left:.1f} {y:.2f} cm /Im0 Do Q")
+        y -= 18
+
+    title = f"Subcontractor Change Order Log — {job.get('job_name') or job.get('job_number') or ''}"
+    ops.append(f"BT /F2 13 Tf 0 g 1 0 0 1 {left:.1f} {y:.1f} Tm "
+               f"({_esc_pdf(_latin1(title))}) Tj ET")
+    stamp = dt.date.today().strftime("%m/%d/%Y")
+    n = len(cos)
+    sub = (f"Job {job.get('job_number') or ''} · {n} change order"
+           f"{'' if n == 1 else 's'} · as of {stamp}")
+    y -= 14
+    ops.append(f"BT /F1 9 Tf 0.35 0.37 0.4 rg 1 0 0 1 {left:.1f} {y:.1f} Tm "
+               f"({_esc_pdf(_latin1(sub))}) Tj ET")
+    y -= 18
+
+    def rule(at: float, weight: float = 0.6):
+        ops.append(f"q {weight} w 0.72 0.71 0.68 RG {left:.1f} {at:.1f} m "
+                   f"{right:.1f} {at:.1f} l S Q")
+
+    def row(values: list[str], *, bold=False, size=8.5, height=15.0):
+        nonlocal y
+        x = left
+        for (label, w, align), val in zip(cols, values):
+            text = _latin1(str(val or ""))
+            while text and _tw(text, size, bold) > w - 8:
+                text = text[:-1]
+            tx = x + (w - 8 - _tw(text, size, bold)) if align == "r" else x
+            ops.append(f"BT /{'F2' if bold else 'F1'} {size} Tf 0 g "
+                       f"1 0 0 1 {tx + 3:.1f} {y:.1f} Tm ({_esc_pdf(text)}) Tj ET")
+            x += w
+        y -= height
+
+    rule(y + 11)
+    row([c[0] for c in cols], bold=True)
+    rule(y + 11, 0.9)
+
+    tot_s = tot_p = tot_a = 0.0
+    for co in cos:
+        tot_s += float(co.get("amount_submitted") or 0)
+        tot_p += float(co.get("amount_pending") or 0)
+        tot_a += float(co.get("amount_approved") or 0)
+        row([co.get("co_number") or "", co.get("subcontractor") or "",
+             _us_date(co.get("date_submitted")) if co.get("date_submitted") else "",
+             co.get("description") or "",
+             _money(co.get("amount_submitted")) if co.get("amount_submitted") is not None else "",
+             _money(co.get("amount_pending")) if co.get("amount_pending") else "",
+             _money(co.get("amount_approved")) if co.get("amount_approved") is not None else "",
+             co.get("approved_by") or ""])
+        rule(y + 11, 0.4)
+        if y < 90:                              # one page is the log's scope today
+            break
+
+    y -= 4
+    rule(y + 11, 0.9)
+    row(["", "", "", "Total", _money(tot_s), _money(tot_p) if tot_p else "",
+         _money(tot_a), ""], bold=True)
+
+    ops.append(f"BT /F1 8 Tf 0.0 0.173 0.467 rg 1 0 0 1 "
+               f"{(pw - _tw(_latin1(FOOTER_TEXT), 8)) / 2:.1f} 26 Tm "
+               f"({_esc_pdf(_latin1(FOOTER_TEXT))}) Tj ET")
+
+    return _write_pdf("\n".join(ops).encode("latin-1", "replace"), img, iw, ih,
+                      page=(pw, ph))
+
+
+def _write_pdf(stream: bytes, img: bytes | None, iw: int, ih: int,
+               page: tuple[float, float] | None = None) -> bytes:
+    pw, ph = page or (_PW, _PH)
     objs: list[bytes] = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     ]
     xobj = " /XObject << /Im0 7 0 R >>" if img else ""
-    objs.append((f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_PW:.0f} {_PH:.0f}] "
+    objs.append((f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pw:.0f} {ph:.0f}] "
                  f"/Resources << /Font << /F1 5 0 R /F2 6 0 R >>{xobj} >> "
                  f"/Contents 4 0 R >>").encode())
     objs.append(b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n"

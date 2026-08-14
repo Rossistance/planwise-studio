@@ -23,6 +23,7 @@ drafted into the sender's own Outlook (D10), never sent by the app.
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Any
 
 from . import db, schedule
@@ -453,6 +454,25 @@ covering {_esc(period['start_date'])} through {_esc(_span(period, weeks))}.
 
 _PW, _PH = 792.0, 612.0          # US Letter, landscape
 _MARGIN = 40.0
+
+# The WECC letterhead, shared with the change order documents so every page
+# that leaves this app carries the same mark. Read once; absent is survivable,
+# because a sheet without a logo still tells the field what to do.
+_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "wecc-letterhead.jpg"
+_LOGO_W = 168.0
+_LOGO_H = _LOGO_W * 372.0 / 2550.0        # the banner's own aspect ratio
+
+
+def _logo_bytes() -> bytes | None:
+    try:
+        return _LOGO_PATH.read_bytes()
+    except OSError:
+        return None
+
+
+def _logo_ops(x: float, y: float, w: float, h: float) -> str:
+    return (f"q {w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm /Im0 Do Q"
+            if _logo_bytes() else "")
 _BODY_W = _PW - _MARGIN * 2
 
 # The tail columns, in order. Only the widths vary between layouts.
@@ -727,6 +747,10 @@ def share_pdf(period_id: str, job_name: str, job_number: str,
         title = (f"{'Two' if weeks == 2 else 'Three'}-Week Look Ahead - " + job_name
                  + (" (Internal)" if internal else ""))
         ops = [
+            # WECC's mark, top right, clear of the title. The sheet goes to a
+            # customer, so it should look like it came from the company rather
+            # than from a piece of software.
+            _logo_ops(_PW - 40 - _LOGO_W, _PH - 30 - _LOGO_H, _LOGO_W, _LOGO_H),
             "BT /F2 15 Tf 40 %.1f Td (%s) Tj ET"
             % (_PH - 46, _fit(title, _BODY_W, 15, True)),
             "BT /F1 9.5 Tf 40 %.1f Td (%s) Tj ET"
@@ -847,21 +871,29 @@ def _write_pdf(streams: list[bytes]) -> bytes:
     first_content = 3 + n_pages
     font_regular = first_content + n_pages
     font_bold = font_regular + 1
+    logo = _logo_bytes()
+    logo_obj = font_bold + 1 if logo else None
 
     objs: list[bytes] = [
         b"<< /Type /Catalog /Pages 2 0 R >>",
         ("<< /Type /Pages /Kids [%s] /Count %d >>"
          % (" ".join(f"{3 + i} 0 R" for i in range(n_pages)), n_pages)).encode(),
     ]
+    xobj = f" /XObject << /Im0 {logo_obj} 0 R >>" if logo else ""
     for i in range(n_pages):
         objs.append((
             f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {_PW:.0f} {_PH:.0f}] "
-            f"/Resources << /Font << /F1 {font_regular} 0 R /F2 {font_bold} 0 R >> >> "
+            f"/Resources << /Font << /F1 {font_regular} 0 R /F2 {font_bold} 0 R >>{xobj} >> "
             f"/Contents {first_content + i} 0 R >>").encode())
     for s in streams:
         objs.append(b"<< /Length " + str(len(s)).encode() + b" >>\nstream\n" + s + b"\nendstream")
     objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>")
     objs.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>")
+    if logo:
+        objs.append((b"<< /Type /XObject /Subtype /Image /Width 2550 /Height 372 "
+                     b"/ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode "
+                     b"/Length " + str(len(logo)).encode() + b" >>\nstream\n")
+                    + logo + b"\nendstream")
 
     out = io.BytesIO()
     out.write(b"%PDF-1.4\n")

@@ -134,8 +134,22 @@ def main() -> int:
         webbrowser.open(url)
         return 0
 
-    webview.create_window(APP_NAME, url, width=1440, height=900,
-                          min_size=(900, 600), confirm_close=False)
+    # Open MAXIMISED, every time.
+    #
+    # The default 1440x900 was a guess at a window size, and on a smaller or
+    # scaled display it opened partly off the bottom of the screen — which is
+    # what it did after every launch, not just the first. This app is a wide
+    # table of financial columns and a Gantt chart; there is no size a guess
+    # gets right, and the honest answer is "as much room as the screen has".
+    #
+    # width/height remain as the RESTORE size, for when someone un-maximises.
+    # Measured, not guessed: the machine this was found on is 1280x800 with a
+    # 752px work area once the taskbar is taken out, so anything taller than
+    # ~720 reproduces the same overhang the moment the window is restored.
+    # pywebview centres a window whose x/y are unset.
+    webview.create_window(APP_NAME, url, width=1200, height=720,
+                          min_size=(900, 560), maximized=True,
+                          confirm_close=False)
     try:
         webview.start()
     except Exception as exc:  # noqa: BLE001

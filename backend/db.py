@@ -117,6 +117,35 @@ CREATE TABLE IF NOT EXISTS change_orders (
 );
 CREATE INDEX IF NOT EXISTS ix_co_job ON change_orders(job_number);
 
+-- The standing library of clarifications and exceptions that go out on a
+-- customer change order. Seeded from the change orders WECC has actually
+-- sent, and added to from the UI as new ones come up — a PM should never have
+-- to retype "White Electrical has not included costs for any additional
+-- concrete work required." for the hundredth time.
+--
+-- Company-wide rather than per-job: these are the firm's standing positions,
+-- and the whole point is that the same wording goes out every time.
+CREATE TABLE IF NOT EXISTS co_clarifications (
+    id          TEXT PRIMARY KEY,
+    text        TEXT NOT NULL,
+    seeded      INTEGER DEFAULT 0,   -- shipped with the app vs typed by a PM
+    archived    INTEGER DEFAULT 0,   -- hidden from the picker, kept on old COs
+    created_by  TEXT,
+    created_at  TEXT NOT NULL
+);
+
+-- Which ones this change order carries, and in what order. Free text is
+-- stored inline rather than as a library reference: a clarification edited
+-- for one CO must not silently rewrite what a CO sent last year said, which
+-- is the whole reason the sent document is a record at all.
+CREATE TABLE IF NOT EXISTS change_order_clarifications (
+    id           TEXT PRIMARY KEY,
+    co_id        TEXT NOT NULL REFERENCES change_orders(id) ON DELETE CASCADE,
+    text         TEXT NOT NULL,
+    sort_order   INTEGER
+);
+CREATE INDEX IF NOT EXISTS ix_coc_co ON change_order_clarifications(co_id, sort_order);
+
 -- PM-entered Overview supplements, one JSON blob per job. Schema-light on
 -- purpose: these fields are still being settled page by page.
 CREATE TABLE IF NOT EXISTS project_meta (

@@ -799,6 +799,83 @@ function costs(d) {
 
 /* ---- page: change orders ------------------------------------------------------------ */
 
+/* The document bar above each change order register.
+   Which change order it acts on is an explicit choice rather than "the last
+   one", because a register with eight COs on it makes "the current one"
+   meaningless — and sending the wrong change order to a customer is not a
+   mistake you can take back. */
+let coDocSel = { customer: null, subcontractor: null };
+let coPreview = null;        // {kind, coId} — the inline PDF currently shown
+let coClarifOpen = false;
+let coClarifLib = null;      // the standing library, fetched once
+let coClarifPick = new Set();
+const coMsg = (kind, t) => {
+  const el = document.querySelector(`#coMsg-${kind}`);
+  if (el) el.textContent = t;
+};
+
+function coDocBar(d, kind, list) {
+  const isSub = kind === "subcontractor";
+  const sel = coDocSel[kind] || (list[0] && list[0].id) || "";
+  const label = (c) => `#${c.co_number || c.cust_co_number || "—"}`
+    + (c.description ? ` · ${String(c.description).slice(0, 46)}` : "");
+
+  if (!list.length) {
+    return `<div class="note" style="margin:10px 12px">No ${isSub ? "subcontractor " : ""}change
+      orders yet — add one below and the ${isSub ? "log document" : "customer letter"} becomes available.</div>`;
+  }
+
+  return `
+    <div class="la-toolbar" style="padding:10px 12px">
+      <select data-co-select="${kind}" style="max-width:340px">
+        ${list.map((c) => `<option value="${c.id}" ${c.id === sel ? "selected" : ""}>${esc(label(c))}</option>`).join("")}
+      </select>
+      <button class="btn sm" data-co-preview="${kind}">Preview PDF</button>
+      ${isSub
+        ? `<button class="btn primary sm" data-co-share="${kind}">Send PDF</button>`
+        : `<button class="btn sm" data-co-clarify>Clarifications &amp; Exceptions</button>
+           <button class="btn primary sm" data-co-share="${kind}">Share to Customer</button>`}
+      <button class="btn sm" data-co-docx="${kind}">Download Word</button>
+      <span class="hint small muted" id="coMsg-${kind}"></span>
+    </div>
+    ${!isSub && coClarifOpen ? clarificationPicker() : ""}
+    ${coPreview && coPreview.kind === kind
+      ? `<div class="la-preview"><iframe title="Change order preview"
+           src="/api/jobs/${encodeURIComponent(current.job)}/cos/${coPreview.coId}/document.pdf#toolbar=1"></iframe></div>`
+      : ""}`;
+}
+
+/* Tick the standing ones, type a new one. New wording is saved to the library
+   as well as this change order — the whole point is that the second time
+   someone needs it, it is already on the list. */
+function clarificationPicker() {
+  if (!coClarifLib) return `<div class="note" style="margin:0 12px 10px">loading the standing list…</div>`;
+  return `
+    <div class="panel sub-panel" style="margin:0 12px 10px">
+      <div class="panel-head"><h3>Clarifications &amp; Exceptions</h3>
+        <span class="sub">${coClarifPick.size} selected · customer letter only</span></div>
+      <div class="panel-body">
+        <div class="clarif-list">
+          ${coClarifLib.map((c) => `
+            <label class="clarif">
+              <input type="checkbox" data-clarif="${esc(c.text)}"
+                ${coClarifPick.has(c.text) ? "checked" : ""}>
+              <span>${esc(c.text)}</span>
+              ${c.seeded ? "" : `<button class="link small" data-clarif-archive="${c.id}"
+                 title="Remove from the standing list. Change orders that already used it keep it.">remove</button>`}
+            </label>`).join("")}
+        </div>
+        <form class="inline-form" id="addClarif" style="margin-top:10px">
+          <input name="text" class="grow" placeholder="Add a new clarification or exception…" required>
+          <button class="btn sm" type="submit">Add</button>
+        </form>
+        <div class="hint small muted">Wording you add is kept for next time. Selections are saved
+          to this change order and appear on its letter — editing the list later never changes a
+          letter that has already gone out.</div>
+      </div>
+    </div>`;
+}
+
 function coSection(d, kind, title) {
   const list = d.change_orders.filter((c) => c.kind === kind);
   const approved = list.reduce((s, c) => s + (c.amount_approved || 0), 0);
@@ -819,6 +896,7 @@ function coSection(d, kind, title) {
       <div class="panel-head"><h3>${title}</h3>
         <span class="sub num">Approved ${money(approved)} · Pending ${money(pending)}</span></div>
       <div class="panel-body flush">
+        ${coDocBar(d, kind, list)}
         <form class="inline-form top" data-co-form="${kind}">
           <input name="co_number" placeholder="CO #" style="width:80px" required>
           ${isSub ? `<input name="subcontractor" class="grow" placeholder="Subcontractor">`
@@ -1564,6 +1642,155 @@ main.addEventListener("change", async (e) => {
 main.addEventListener("mousedown", (e) => {
   const grip = e.target.closest("[data-gx-grip]");
   if (grip) startColDrag(e, grip.dataset.gxGrip);
+});
+
+/* ---- change order documents ------------------------------------------------------- */
+
+const coSelected = (kind) => {
+  const el = document.querySelector(`[data-co-select="${kind}"]`);
+  return (el && el.value) || coDocSel[kind];
+};
+
+/* The server refuses a customer letter with nobody to address it to. That is
+   not an error to apologise for — it's a missing prerequisite with an obvious
+   next step, so say what's needed and put them on the page that fixes it. */
+function handleCoError(err, kind) {
+  const d = err && err.detail;
+  if (d && d.needs_contact) {
+    coMsg(kind, `${d.detail} Taking you to Overview…`);
+    setTimeout(() => {
+      location.hash = `/job/${encodeURIComponent(current.job)}/overview`;
+    }, 1400);
+    return true;
+  }
+  return false;
+}
+
+main.addEventListener("change", (e) => {
+  const sel = e.target.closest("[data-co-select]");
+  if (sel) {
+    const kind = sel.dataset.coSelect;
+    coDocSel[kind] = sel.value;
+    if (coPreview && coPreview.kind === kind) { coPreview = null; render(); }
+    return;
+  }
+  const cl = e.target.closest("[data-clarif]");
+  if (cl) {
+    cl.checked ? coClarifPick.add(cl.dataset.clarif) : coClarifPick.delete(cl.dataset.clarif);
+    saveClarifications();
+  }
+});
+
+async function saveClarifications() {
+  const coId = coSelected("customer");
+  if (!coId) return;
+  await api(`/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/clarifications`,
+            { method: "PATCH", body: JSON.stringify({ clarifications: [...coClarifPick] }) });
+  coMsg("customer", `${coClarifPick.size} clarification${coClarifPick.size === 1 ? "" : "s"} on this change order.`);
+  if (coPreview) { coPreview = null; render(); }   // the letter changed
+}
+
+main.addEventListener("submit", async (e) => {
+  const f = e.target.closest("#addClarif");
+  if (!f) return;
+  e.preventDefault();
+  const text = f.text.value.trim();
+  if (!text) return;
+  try {
+    await api("/api/co-clarifications", { method: "POST", body: JSON.stringify({ text }) });
+    coClarifLib = (await api("/api/co-clarifications")).clarifications;
+    coClarifPick.add(text);                        // adding it means wanting it
+    await saveClarifications();
+    render();
+  } catch (err) { coMsg("customer", err.message); }
+});
+
+main.addEventListener("click", async (e) => {
+  const prev = e.target.closest("[data-co-preview]");
+  if (prev) {
+    const kind = prev.dataset.coPreview;
+    const coId = coSelected(kind);
+    if (!coId) return coMsg(kind, "Pick a change order first.");
+    try {
+      // Ask for it before showing the frame: an iframe that 409s renders the
+      // browser's error page, which tells nobody to go and add a contact.
+      const r = await fetch(`/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/document.pdf`);
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        if (handleCoError(body, kind)) return;
+        return coMsg(kind, (body.detail && body.detail.detail) || body.detail || `HTTP ${r.status}`);
+      }
+      coPreview = coPreview && coPreview.coId === coId ? null : { kind, coId };
+      coMsg(kind, "");
+      render();
+    } catch (err) { coMsg(kind, err.message); }
+    return;
+  }
+
+  const clarify = e.target.closest("[data-co-clarify]");
+  if (clarify) {
+    coClarifOpen = !coClarifOpen;
+    if (coClarifOpen) {
+      if (!coClarifLib) coClarifLib = (await api("/api/co-clarifications")).clarifications;
+      // Load what this change order already carries, so the ticks reflect
+      // reality instead of starting blank every time the panel opens.
+      const coId = coSelected("customer");
+      const cur = coId && await api(
+        `/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/clarifications`).catch(() => null);
+      coClarifPick = new Set((cur && cur.clarifications) || []);
+    }
+    render();
+    return;
+  }
+
+  const arch = e.target.closest("[data-clarif-archive]");
+  if (arch) {
+    await api(`/api/co-clarifications/${arch.dataset.clarifArchive}`, { method: "DELETE" });
+    coClarifLib = (await api("/api/co-clarifications")).clarifications;
+    render();
+    return;
+  }
+
+  const docx = e.target.closest("[data-co-docx]");
+  if (docx) {
+    const kind = docx.dataset.coDocx;
+    const coId = coSelected(kind);
+    if (!coId) return coMsg(kind, "Pick a change order first.");
+    const ok = await downloadEml(
+      `/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/document.docx`,
+      (t) => coMsg(kind, t));
+    if (ok) coMsg(kind, "Word document downloaded — edit and send it however you like.");
+    return;
+  }
+
+  const share = e.target.closest("[data-co-share]");
+  if (share) {
+    const kind = share.dataset.coShare;
+    const coId = coSelected(kind);
+    if (!coId) return coMsg(kind, "Pick a change order first.");
+    try {
+      coMsg(kind, "building the document…");
+      const doc = await api(`/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/share`);
+      await companionFetch("/draft", {
+        to: doc.to, subject: doc.subject, body: doc.body,
+        attachments: doc.attachments,
+      });
+      coMsg(kind, kind === "subcontractor"
+        ? "Opened in your Outlook — the To line is blank, add the subcontractor and Send."
+        : `Opened in your Outlook — addressed to ${doc.contacts.map((c) => c.name).join(", ")}, `
+          + "Word and PDF both attached. Review and Send.");
+    } catch (err) {
+      if (handleCoError(err, kind)) return;
+      const emlPath = `/api/jobs/${encodeURIComponent(current.job)}/cos/${coId}/share.eml`;
+      if (noCompanion(err)) {
+        coMsg(kind, "No Outlook companion on this device.");
+        offerEml(`#coMsg-${kind}`, emlPath, "Take it as an email file instead:");
+      } else {
+        coMsg(kind, `Couldn't draft via the companion: ${err.message}.`);
+        offerEml(`#coMsg-${kind}`, emlPath, "You can still send it from this PC's Outlook:");
+      }
+    }
+  }
 });
 
 /* Ctrl + wheel over the chart, the gesture every drawing tool has trained

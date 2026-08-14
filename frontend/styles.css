@@ -1022,3 +1022,16 @@ table.tbl.la-grid td.la-day.weekend { background: var(--accent-soft); }
   /* The topbar wraps on a phone, so it isn't a fixed height to sit under. */
   .netbar { position: static; padding-left: max(12px, env(safe-area-inset-left)); }
 }
+
+/* ---- change order clarifications ------------------------------------------------------ */
+.clarif-list { display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; }
+.clarif {
+  display: flex; gap: 9px; align-items: flex-start; padding: 6px 8px;
+  border-radius: var(--radius); font-size: 13px; line-height: 1.45; cursor: pointer;
+}
+.clarif:hover { background: var(--panel-2); }
+.clarif input { margin-top: 2px; flex: none; }
+.clarif span { flex: 1 1 auto; }
+.clarif .link { flex: none; opacity: 0; }
+.clarif:hover .link { opacity: 1; }
+.sub-panel { border: 1px solid var(--line); }

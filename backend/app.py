@@ -17,8 +17,8 @@ from fastapi import Body, FastAPI, File, Header, HTTPException, Request, Respons
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (ai, auth, config, db, documents, eml, lookahead, outbox, push,
-               records, schedule, store, vista)
+from . import (ai, auth, changeorder, config, db, documents, eml, lookahead,
+               outbox, push, records, schedule, store, vista)
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -902,6 +902,163 @@ def remove_co(job_number: str, co_id: str,
     if not store.delete_co(job_number, co_id, actor=_actor(x_planwise_user)):
         raise HTTPException(status_code=404, detail="No such change order.")
     return {"deleted": co_id}
+
+
+# --- change order documents ---------------------------------------------------
+
+@app.get("/api/co-clarifications")
+def co_clarifications():
+    """The standing library of clarifications and exceptions."""
+    return {"clarifications": changeorder.list_clarifications()}
+
+
+@app.post("/api/co-clarifications")
+def add_co_clarification(body: dict = Body(...)):
+    me = _CURRENT_USER.get()
+    try:
+        return changeorder.add_clarification(body.get("text", ""),
+                                             actor=(me or {}).get("name"))
+    except changeorder.ChangeOrderError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.delete("/api/co-clarifications/{cid}")
+def archive_co_clarification(cid: str):
+    me = _CURRENT_USER.get()
+    if not changeorder.archive_clarification(cid, actor=(me or {}).get("name")):
+        raise HTTPException(status_code=404, detail="No such clarification.")
+    return {"archived": cid}
+
+
+def _co_document(job_number: str, co_id: str, clarifications: list[str] | None):
+    """Assemble one change order letter. Shared by preview and share so the
+    document someone previews is byte-for-byte what gets sent."""
+    co = next((c for c in store.list_cos(job_number) if c["id"] == co_id), None)
+    if co is None:
+        raise HTTPException(status_code=404, detail="No such change order.")
+
+    try:
+        job = _snapshot().jobs.get(job_number, {})
+    except HTTPException:
+        job = {}
+    job = {**job, "job_number": job_number}
+    meta = store.get_meta(job_number)
+    contacts = [c for c in (meta.get("contacts") or []) if c.get("email")]
+
+    is_customer = (co.get("kind") or "customer") == "customer"
+    if is_customer and not contacts:
+        # A customer letter with nobody to send it to is not a document worth
+        # building. Say what's missing and where to fix it, rather than
+        # producing a letter addressed to no one.
+        raise HTTPException(status_code=409, detail={
+            "detail": "This job has no customer contact with an email address yet. "
+                      "Add one on the Overview tab and the change order can go out.",
+            "needs_contact": True, "job_number": job_number})
+
+    me = _CURRENT_USER.get() or {}
+    selected = (changeorder.get_selected(co_id) if clarifications is None
+                else clarifications)
+    doc = changeorder.compose(
+        co, job,
+        clarifications=selected,
+        contact=contacts[0] if contacts else None,
+        customer=meta.get("customer"),
+        prepared_by={"name": me.get("name"), "phone": meta.get("pm_phone")})
+    return co, doc, contacts
+
+
+@app.get("/api/jobs/{job_number}/cos/{co_id}/document.pdf")
+def co_document_pdf(job_number: str, co_id: str):
+    _co, doc, _contacts = _co_document(job_number, co_id, None)
+    return Response(content=changeorder.build_pdf(doc), media_type="application/pdf",
+                    headers={"Content-Disposition":
+                             f'inline; filename="{doc["filename"]}.pdf"'})
+
+
+@app.get("/api/jobs/{job_number}/cos/{co_id}/document.docx")
+def co_document_docx(job_number: str, co_id: str):
+    _co, doc, _contacts = _co_document(job_number, co_id, None)
+    return Response(
+        content=changeorder.build_docx(doc),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{doc["filename"]}.docx"'})
+
+
+@app.get("/api/jobs/{job_number}/cos/{co_id}/clarifications")
+def get_co_clarifications(job_number: str, co_id: str):
+    return {"clarifications": changeorder.get_selected(co_id)}
+
+
+@app.get("/api/jobs/{job_number}/cos/{co_id}/share.eml")
+def co_share_eml(job_number: str, co_id: str):
+    """The letter as a ready-to-send email file, for a PC with no companion —
+    same escape hatch every other share has (D41)."""
+    co, doc, contacts = _co_document(job_number, co_id, None)
+    number = co.get("co_number") or co.get("cust_co_number") or ""
+    is_customer = doc["is_customer"]
+    body = (f"{doc['salutation']}\n\nPlease find attached Change Order Request "
+            f"#{number} for {doc['project']}, in the amount of {doc['total']}.\n\n"
+            f"{changeorder.CLOSING}\n\nThank you,")
+    if not is_customer:
+        body = (f"Attached is Change Order #{number} for {doc['project']}, "
+                f"in the amount of {doc['total']}.\n\nThank you,")
+    data = eml.build_eml(
+        f"Change Order Request #{number} — {doc['project']}".strip(" —"),
+        ";".join(c["email"] for c in contacts) if is_customer else "",
+        text=body,
+        attachments=[(f"{doc['filename']}.pdf", changeorder.build_pdf(doc))])
+    return Response(content=data, media_type="message/rfc822",
+                    headers={"Content-Disposition":
+                             f'attachment; filename="{doc["filename"]}.eml"'})
+
+
+@app.patch("/api/jobs/{job_number}/cos/{co_id}/clarifications")
+def set_co_clarifications(job_number: str, co_id: str, body: dict = Body(...)):
+    me = _CURRENT_USER.get() or {}
+    texts = changeorder.set_selected(co_id, body.get("clarifications") or [],
+                                     actor=me.get("name"))
+    return {"clarifications": texts}
+
+
+@app.get("/api/jobs/{job_number}/cos/{co_id}/share")
+def share_co(job_number: str, co_id: str):
+    """Subject, body, recipients and both attachments for the Outlook draft.
+
+    Word AND PDF go out together on purpose: the customer edits the Word file
+    when they come back with questions, and the PDF is what the job folder
+    keeps as the record of what was sent.
+    """
+    import base64
+
+    co, doc, contacts = _co_document(job_number, co_id, None)
+    is_customer = doc["is_customer"]
+    number = co.get("co_number") or co.get("cust_co_number") or ""
+    subject = f"Change Order Request #{number} — {doc['project']}".strip(" —")
+
+    body = (f"{doc['salutation']}\n\nPlease find attached Change Order Request "
+            f"#{number} for {doc['project']}, in the amount of {doc['total']}.\n\n"
+            f"{changeorder.CLOSING}\n\nThank you,")
+    if not is_customer:
+        body = (f"Attached is Change Order #{number} for {doc['project']}, "
+                f"in the amount of {doc['total']}.\n\nThank you,")
+
+    return {
+        "subject": subject,
+        "body": body,
+        # A subcontractor CO deliberately ships with a blank To: line — the PM
+        # picks the sub's contact themselves in Outlook (same reasoning as the
+        # internal look-ahead share, D19).
+        "to": ";".join(c["email"] for c in contacts) if is_customer else "",
+        "contacts": [{"name": c.get("name") or c["email"], "email": c["email"]}
+                     for c in contacts] if is_customer else [],
+        "kind": doc["kind"],
+        "attachments": [
+            {"filename": f"{doc['filename']}.pdf",
+             "content_b64": base64.b64encode(changeorder.build_pdf(doc)).decode()},
+            {"filename": f"{doc['filename']}.docx",
+             "content_b64": base64.b64encode(changeorder.build_docx(doc)).decode()},
+        ],
+    }
 
 
 # --- project meta -----------------------------------------------------------

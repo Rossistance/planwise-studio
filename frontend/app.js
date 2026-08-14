@@ -1052,6 +1052,43 @@ function subCoCommitments(d) {
     </div>`;
 }
 
+let poImport = null;   // {filename, candidates[]} awaiting confirmation
+
+/* Nothing from a PDF is written until it has been looked at. The reader is
+   working from a printed document, so it reports what it found and says so;
+   the PM confirms, corrects, or throws it away. */
+function poImportReview() {
+  if (!poImport) return "";
+  const rows = poImport.candidates;
+  return `
+    <div class="panel">
+      <div class="panel-head"><h3>Found in ${esc(poImport.filename)}</h3>
+        <span class="sub">${rows.length} possible purchase order${rows.length === 1 ? "" : "s"} · nothing is saved until you accept</span></div>
+      <div class="panel-body flush">
+        <table class="tbl">
+          <thead><tr><th></th><th>PO #</th><th>Vendor</th><th>Description</th>
+            <th class="num">Amount</th><th>Read from</th></tr></thead>
+          <tbody>
+            ${rows.map((r, i) => `<tr>
+              <td><input type="checkbox" data-poi="${i}" checked></td>
+              <td><input class="ecell mono" data-poi-f="po_number" data-poi-i="${i}" value="${esc(r.po_number || "")}"></td>
+              <td><input class="ecell" data-poi-f="vendor" data-poi-i="${i}" value="${esc(r.vendor || "")}"></td>
+              <td><input class="ecell" data-poi-f="description" data-poi-i="${i}" value="${esc(r.description || "")}"></td>
+              <td><input class="ecell num" data-poi-f="adjusted_amount" data-poi-i="${i}" value="${esc(r.amount ?? "")}"></td>
+              <td class="small muted">${esc(r.evidence || "")}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+        <div class="inline-form">
+          <button class="btn primary sm" data-poi-accept>Add the ticked purchase orders</button>
+          <button class="btn sm" data-poi-cancel>Discard</button>
+          <span class="hint small muted grow">Check the amounts against the PDF. These figures
+            feed Open / Committed on the Cost Breakdown.</span>
+        </div>
+      </div>
+    </div>`;
+}
+
 function pos(d) {
   const list = d.purchase_orders;
   const vistaTypes = d.cost_types.filter((r) => !r.po_only).map((r) => r.cost_type);
@@ -1070,6 +1107,7 @@ function pos(d) {
       <div class="cell"><div class="n num">${open.length} / ${list.length}</div><div class="l eyebrow">Open POs</div></div>
     </div>
 
+    ${poImportReview()}
     ${subCoCommitments(d)}
 
     <div class="panel">
@@ -1085,8 +1123,11 @@ function pos(d) {
             <option value="">Cost type…</option>
             ${vistaTypes.map((t) => `<option>${esc(t)}</option>`).join("")}
           </select>
+          <button class="btn sm" type="button" data-po-import>Import Vista PDF</button>
           <button class="btn primary sm" type="submit">+ Purchase Order</button>
         </form>
+        <input type="file" id="poPdf" accept="application/pdf,.pdf" class="hidden">
+        <div class="hint small muted" id="poImportMsg" style="padding:0 12px 8px"></div>
         <table class="tbl" data-sort-key="pos">
           <thead><tr>
             <th>PO #</th><th>Vendor</th><th>Description</th><th>Cost Type</th><th>Status</th>
@@ -1767,6 +1808,36 @@ function handleCoError(err, kind) {
   return false;
 }
 
+/* Import a PO from a Vista PDF. Extracted rows are shown for confirmation
+   before anything is written — a PO register drives Open/Committed on the
+   Cost Breakdown (D8), so a misread amount would quietly move a number the
+   whole job is judged by. */
+main.addEventListener("change", async (e) => {
+  const f = e.target.closest("#poPdf");
+  if (!f || !f.files || !f.files[0]) return;
+  const msg = (t) => { const el = document.querySelector("#poImportMsg"); if (el) el.textContent = t; };
+  try {
+    msg(`reading ${f.files[0].name}…`);
+    const fd = new FormData();
+    fd.append("file", f.files[0]);
+    const out = await api(`/api/jobs/${encodeURIComponent(current.job)}/pos/import`,
+                          { method: "POST", body: fd });
+    if (!out.candidates || !out.candidates.length) {
+      msg(out.detail || "Nothing in that PDF looked like a purchase order. "
+        + "Send Ross a copy and the reader can be taught its layout.");
+      f.value = "";
+      return;
+    }
+    poImport = out;
+    msg("");
+    render();
+  } catch (err) {
+    msg(`couldn't read that PDF: ${err.message}`);
+  } finally {
+    f.value = "";
+  }
+});
+
 main.addEventListener("change", (e) => {
   const sel = e.target.closest("[data-co-select]");
   if (sel) {
@@ -1912,6 +1983,11 @@ main.addEventListener("click", async (e) => {
     await api(`/api/co-clarifications/${arch.dataset.clarifArchive}`, { method: "DELETE" });
     coClarifLib = (await api("/api/co-clarifications")).clarifications;
     render();
+    return;
+  }
+
+  if (e.target.closest("[data-po-import]")) {
+    document.querySelector("#poPdf")?.click();
     return;
   }
 
@@ -3914,3 +3990,30 @@ async function disablePush() {
    flash job data at someone who turns out not to be signed in. */
 boot().then(loadHealth);
 registerWorker();
+
+/* Accept or discard what the PO reader found. */
+main.addEventListener("click", async (e) => {
+  if (e.target.closest("[data-poi-cancel]")) { poImport = null; return render(); }
+  if (!e.target.closest("[data-poi-accept]")) return;
+
+  const field = (i, f) =>
+    (document.querySelector(`[data-poi-f="${f}"][data-poi-i="${i}"]`) || {}).value || "";
+  const wanted = [...document.querySelectorAll("[data-poi]")]
+    .map((cb, i) => (cb.checked ? i : -1)).filter((i) => i >= 0);
+
+  for (const i of wanted) {
+    const amount = parseFloat(String(field(i, "adjusted_amount")).replace(/[$,]/g, "")) || 0;
+    await api(`/api/jobs/${encodeURIComponent(current.job)}/pos`, {
+      method: "POST",
+      body: JSON.stringify({
+        po_number: field(i, "po_number"),
+        vendor: field(i, "vendor"),
+        description: field(i, "description"),
+        adjusted_amount: amount,
+        original_amount: amount,
+      }),
+    });
+  }
+  poImport = null;
+  await refreshJob();
+});

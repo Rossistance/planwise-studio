@@ -8,6 +8,7 @@ identity is now only a local-development fallback — the session wins.
 """
 from __future__ import annotations
 
+import io
 import re
 import secrets
 from contextvars import ContextVar
@@ -905,6 +906,73 @@ def remove_co(job_number: str, co_id: str,
 
 
 # --- change order documents ---------------------------------------------------
+
+@app.post("/api/jobs/{job_number}/pos/import")
+async def import_po_pdf(job_number: str, file: UploadFile = File(...)):
+    """Read purchase orders out of a Vista PDF.
+
+    Deliberately a PROPOSAL, never a write. The PO register drives
+    Open/Committed on the Cost Breakdown (D8), so a misread amount would move
+    a number the whole job is judged by — and a printed PDF gives no way to be
+    certain. Candidates come back with the line they were read from, the PM
+    confirms or corrects, and only then does anything land.
+
+    The patterns below are deliberately conservative: a row must carry
+    something that looks like a PO number AND a currency amount on the same
+    line. Rather than guess at a layout nobody has shown us, an unrecognised
+    PDF says so and asks for a copy.
+    """
+    import re as _re
+
+    data = await _read_capped(file)
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(data))
+        text = "\n".join((p.extract_text() or "") for p in reader.pages)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=(
+            f"That file couldn't be read as a PDF ({type(exc).__name__}).")) from exc
+
+    if not text.strip():
+        return {"filename": file.filename, "candidates": [],
+                "detail": "That PDF has no text layer — it is probably a scan. "
+                          "A PDF exported from Vista rather than scanned will read."}
+
+    money = _re.compile(r"\$?\s?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\d+\.\d{2})")
+    ponum = _re.compile(r"\b(P\.?O\.?\s*#?\s*)?(\d{2}-\d{3,}\d*|\d{6,})\b", _re.I)
+
+    seen: set[str] = set()
+    out: list[dict] = []
+    for raw in text.splitlines():
+        line = " ".join(raw.split())
+        if len(line) < 8:
+            continue
+        pm, mm = ponum.search(line), list(money.finditer(line))
+        if not pm or not mm:
+            continue
+        number = pm.group(2)
+        if number in seen:
+            continue
+        # The largest figure on the line is the order value far more often
+        # than the first — unit prices and quantities precede it.
+        amount = max(float(m.group(1).replace(",", "")) for m in mm)
+        if amount <= 0:
+            continue
+        middle = line[pm.end():mm[0].start()].strip(" .:-|")
+        seen.add(number)
+        out.append({
+            "po_number": number,
+            "vendor": middle[:60] or "",
+            "description": middle[60:120] or "",
+            "amount": amount,
+            "evidence": line[:110],
+        })
+
+    return {"filename": file.filename, "candidates": out[:60],
+            "detail": "" if out else
+            "Nothing on those pages matched a purchase order number with an amount. "
+            "Send Ross a copy of this PDF and the reader can be taught its layout."}
+
 
 @app.get("/api/co-clarifications")
 def co_clarifications():

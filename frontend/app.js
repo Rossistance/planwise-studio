@@ -1060,22 +1060,30 @@ let poImport = null;   // {filename, candidates[]} awaiting confirmation
 function poImportReview() {
   if (!poImport) return "";
   const rows = poImport.candidates;
+  const types = (current.data.cost_types || []).filter((r) => !r.po_only).map((r) => r.cost_type);
   return `
     <div class="panel">
       <div class="panel-head"><h3>Found in ${esc(poImport.filename)}</h3>
-        <span class="sub">${rows.length} possible purchase order${rows.length === 1 ? "" : "s"} · nothing is saved until you accept</span></div>
+        <span class="sub">${rows.length} purchase order${rows.length === 1 ? "" : "s"} · nothing is saved until you accept</span></div>
       <div class="panel-body flush">
+        ${(poImport.warnings || []).map((w) => `<div class="note warn">${esc(w)}</div>`).join("")}
         <table class="tbl">
           <thead><tr><th></th><th>PO #</th><th>Vendor</th><th>Description</th>
-            <th class="num">Amount</th><th>Read from</th></tr></thead>
+            <th class="num">Amount</th><th>Cost Type</th><th>Read from</th></tr></thead>
           <tbody>
             ${rows.map((r, i) => `<tr>
-              <td><input type="checkbox" data-poi="${i}" checked></td>
+              <td><input type="checkbox" data-poi="${i}" ${r.already_on_register ? "" : "checked"}></td>
               <td><input class="ecell mono" data-poi-f="po_number" data-poi-i="${i}" value="${esc(r.po_number || "")}"></td>
               <td><input class="ecell" data-poi-f="vendor" data-poi-i="${i}" value="${esc(r.vendor || "")}"></td>
               <td><input class="ecell" data-poi-f="description" data-poi-i="${i}" value="${esc(r.description || "")}"></td>
               <td><input class="ecell num" data-poi-f="adjusted_amount" data-poi-i="${i}" value="${esc(r.amount ?? "")}"></td>
-              <td class="small muted">${esc(r.evidence || "")}</td>
+              <td><select class="ecell" data-poi-f="cost_type" data-poi-i="${i}">
+                <option value="">—</option>
+                ${types.map((t) => `<option ${t === "Subcontractor" ? "selected" : ""}>${esc(t)}</option>`).join("")}
+              </select></td>
+              <td class="small muted">${esc(r.evidence || "")}${
+                r.already_on_register ? ` <b class="neg">already on the register</b>` : ""}${
+                r.phase ? ` · phase ${esc(r.phase)}` : ""}</td>
             </tr>`).join("")}
           </tbody>
         </table>
@@ -4011,6 +4019,7 @@ main.addEventListener("click", async (e) => {
         description: field(i, "description"),
         adjusted_amount: amount,
         original_amount: amount,
+        cost_type: field(i, "cost_type"),
       }),
     });
   }

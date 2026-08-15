@@ -35,6 +35,7 @@ import asyncio
 import base64
 import contextlib
 import ctypes
+import gc
 import json
 import logging
 import re
@@ -141,6 +142,14 @@ _manifest: dict = {"threads": [], "drafts": [], "at": 0.0}
 _manifest_lock = threading.Lock()
 MANIFEST_TTL = 30.0          # seconds; refreshed on demand when an event lands
 WATCH_CHECK = 30.0           # how often to prove the subscription is still alive
+# How often to look for Outlook's window. Far shorter than WATCH_CHECK because
+# a person is standing there waiting for Outlook to close, and enumerating
+# windows costs microseconds where asking Outlook a question does not. Half a
+# second is chosen against the user's experience rather than the machine's:
+# Outlook complains that "another program is using Outlook" the instant it is
+# asked to quit while we hold it, so the gap between their click and our
+# letting go is exactly how long that message stays on their screen.
+WATCH_WINDOW_CHECK = 0.5
 WATCH_RETRY = 15.0           # wait before retrying when Outlook is closed
 
 
@@ -199,6 +208,8 @@ def _check(token: str | None) -> None:
 # what classic Outlook 365 uses. Verified on this machine while Outlook was
 # open: FindWindowW returned 1510426.
 _OUTLOOK_WINDOW_CLASS = "rctrl_renwnd32"
+_ENUM_PROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p) \
+    if hasattr(ctypes, "WINFUNCTYPE") else None
 
 
 def outlook_is_open() -> bool:
@@ -221,17 +232,51 @@ def outlook_is_open() -> bool:
 
     Its window can, and it answers a slightly better question besides: not "is
     an OUTLOOK.EXE alive" but "is there an Outlook the user can see". A
-    windowless Outlook left behind by some other automation is deliberately not
-    counted — there is nothing there for a person to work with, and treating it
-    as available is what kept the ghost alive in the first place.
+    windowless Outlook left behind by automation is deliberately not counted —
+    there is nothing there for a person to work with, and treating it as
+    available is what kept the ghost alive in the first place.
+
+    VISIBLE, and that word is load-bearing. `FindWindowW` was the first
+    attempt and is not enough: it matches hidden windows, and enumerating a
+    live Outlook shows it owns an INVISIBLE `rctrl_renwnd32` alongside the
+    real ones. A held-open Outlook — closed by the user, kept alive by an
+    automation client — keeps exactly that kind of window, so a search that
+    ignores visibility answers "still open" for the very state this is meant
+    to detect, and the companion would never let go.
+
+    Any visible one counts, not just the Inbox explorer: an open draft is also
+    `rctrl_renwnd32`, and while a message window is on screen Outlook is
+    plainly still in use.
     """
     try:
         user32 = ctypes.windll.user32
-        user32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
-        user32.FindWindowW.restype = ctypes.c_void_p
-        return bool(user32.FindWindowW(_OUTLOOK_WINDOW_CLASS, None))
     except Exception:  # noqa: BLE001 — no windll off Windows; treat as closed
         return False
+
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.IsWindowVisible.restype = ctypes.c_bool
+    user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.EnumWindows.argtypes = [_ENUM_PROC, ctypes.c_void_p]
+
+    found: list = []
+    name = ctypes.create_unicode_buffer(64)
+
+    def visit(hwnd, _lparam):
+        if user32.IsWindowVisible(hwnd):
+            user32.GetClassNameW(hwnd, name, 64)
+            if name.value == _OUTLOOK_WINDOW_CLASS:
+                found.append(hwnd)
+                return False          # stop enumerating; one is enough
+        return True
+
+    try:
+        # Returns False when the callback stopped it early, which is a result
+        # and not an error — hence the answer comes from `found`.
+        user32.EnumWindows(_ENUM_PROC(visit), None)
+    except Exception:  # noqa: BLE001
+        return False
+    return bool(found)
 
 
 def _make_visible(app_) -> None:
@@ -889,7 +934,46 @@ def _watch_loop() -> None:
 
     pythoncom.CoInitialize()
     folders: list = []
-    checked = 0.0
+    ns = None
+    checked = window_checked = 0.0
+
+    def let_go(why: str):
+        """Release every COM reference we hold, so Outlook can actually exit.
+
+        THE SECOND HALF OF D45. Not starting Outlook was necessary and not
+        sufficient: an automation client that holds a reference also stops
+        Outlook CLOSING. The user clicks the X, Outlook cannot exit while we
+        hold the object model, so it retreats to the tray and says so —
+        "Another program is using Outlook. To disconnect programs and exit
+        Outlook, click the Outlook icon and then click Exit Now." What is left
+        behind is the same windowless Outlook as before, still syncing the OST
+        and running every add-in, and the user has no idea which program is
+        holding it.
+
+        Worse, it was self-sustaining. The liveness check below asks Outlook
+        for `Items.Count` and concludes Outlook is alive — but Outlook was only
+        alive BECAUSE WE WERE HOLDING IT. The check could never fail, so the
+        references were never dropped, and one accidental attach lasted until
+        the companion was killed.
+
+        Three references, all of them load-bearing: the two event sinks, the
+        folders, and `ns` — the namespace is a local of the loop, so it stays
+        bound long after the line that created it and pins Outlook on its own.
+        """
+        nonlocal folders, ns
+        global _sinks
+        # State first, references second. /health and the chip read these
+        # without a lock, and the collection below is not instant — announcing
+        # the detachment afterwards leaves a window in which the companion
+        # holds nothing while still claiming to be watching.
+        watch_state.update(running=False, error=why)
+        _sinks, folders, ns = [], [], None
+        # Event sinks reference the object they are attached to, so refcounting
+        # alone will not break the cycle — and an uncollected cycle here means
+        # Outlook stays up, which is the entire bug. Collecting runs
+        # EventsProxy.__del__, which is what disconnects the sink.
+        gc.collect()
+
     try:
         while not _watch_stop.is_set():
             # (Re)attach. Closing and reopening Outlook invalidates the COM
@@ -919,8 +1003,7 @@ def _watch_loop() -> None:
                                        started=datetime.now().isoformat(timespec="seconds"))
                     log.info("live watch attached to Inbox and Sent Items")
                 except Exception as exc:  # noqa: BLE001 — Outlook may just be closed
-                    _sinks, folders = [], []
-                    watch_state.update(running=False, error=f"attach: {exc}")
+                    let_go(f"attach: {exc}")
                     _watch_stop.wait(WATCH_RETRY)
                     continue
 
@@ -928,6 +1011,19 @@ def _watch_loop() -> None:
             time.sleep(0.2)
 
             now = time.time()
+            # Let go the moment the window goes, and check often, because the
+            # user is standing there waiting for Outlook to close. Reading a
+            # window handle costs nothing, so this can afford to be prompt in a
+            # way that asking Outlook a question never could — and asking
+            # Outlook is precisely what cannot detect this, since Outlook only
+            # answers at all because we are the ones keeping it alive.
+            if now - window_checked >= WATCH_WINDOW_CHECK:
+                window_checked = now
+                if not outlook_is_open():
+                    log.info("Outlook window closed; releasing it")
+                    let_go("Outlook is not open")
+                    continue
+
             if now - checked >= WATCH_CHECK:
                 checked = now
                 try:
@@ -935,11 +1031,11 @@ def _watch_loop() -> None:
                         _ = f.Items.Count      # throws once Outlook has gone
                 except Exception as exc:  # noqa: BLE001
                     log.warning("live watch lost Outlook (%s); re-attaching", exc)
-                    _sinks, folders = [], []
-                    watch_state.update(running=False, error=f"lost Outlook: {exc}")
+                    let_go(f"lost Outlook: {exc}")
     finally:
-        _sinks = []
-        watch_state["running"] = False
+        # On the way out too: a companion being shut down must not be the
+        # reason Outlook cannot close.
+        let_go("stopped")
         with contextlib.suppress(Exception):
             pythoncom.CoUninitialize()
 
@@ -971,12 +1067,17 @@ async def _poll_once() -> None:
         # must never start it (see `_outlook`). A closed Outlook is a normal
         # state — the user went home — so record it and wait, rather than
         # raising a 503 into the log every fifteen seconds.
-        if (threads or drafts) and not await asyncio.to_thread(outlook_is_open):
-            poll_state["outlook"] = "not open"
-            poll_state["last_error"] = None
-            poll_state["last_run"] = datetime.now().isoformat(timespec="seconds")
-            return
-        poll_state["outlook"] = "open"
+        if threads or drafts:
+            if not await asyncio.to_thread(outlook_is_open):
+                poll_state["outlook"] = "not open"
+                poll_state["last_error"] = None
+                poll_state["last_run"] = datetime.now().isoformat(timespec="seconds")
+                return
+            poll_state["outlook"] = "open"
+        else:
+            # Nothing was watched, so nothing was looked at. Saying "open"
+            # here would be reporting a check that never happened.
+            poll_state["outlook"] = "not checked"
 
         # SENDS FIRST, and unconditionally — not gated on there being reply
         # threads to watch.

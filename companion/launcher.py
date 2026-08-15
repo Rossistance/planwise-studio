@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import ctypes
 import logging
+import logging.handlers
 import os
 import socket
 import sys
@@ -135,9 +136,17 @@ def main() -> int:
         sys.stderr = _NullStream()   # type: ignore[assignment]
 
     PAIR_DIR.mkdir(parents=True, exist_ok=True)
+    # ROTATED, because this program never stops. A companion in Startup runs
+    # for months and writes a line per sweep; the first one found in the wild
+    # had reached 3.8MB of 25,000 lines, which is both a slowly growing file
+    # nobody asked for and — the part that actually costs something — a log
+    # you cannot read when you need it. Five 1MB files keep roughly the last
+    # fortnight, which is the window in which anyone reports a problem.
     logging.basicConfig(
-        filename=LOG_FILE, level=logging.INFO, encoding="utf-8",
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[logging.handlers.RotatingFileHandler(
+            LOG_FILE, maxBytes=1_000_000, backupCount=4, encoding="utf-8")])
 
     argv = [a.lower() for a in sys.argv[1:]]
     if "--pair" in argv:                       # re-run pairing on demand

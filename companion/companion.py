@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import ctypes
 import json
 import logging
 import re
@@ -194,17 +195,120 @@ def _check(token: str | None) -> None:
             if who else "Bad companion token."))
 
 
-def _outlook():
+# Outlook's main explorer window class, unchanged since Outlook 2003 and still
+# what classic Outlook 365 uses. Verified on this machine while Outlook was
+# open: FindWindowW returned 1510426.
+_OUTLOOK_WINDOW_CLASS = "rctrl_renwnd32"
+
+
+def outlook_is_open() -> bool:
+    """Is there an Outlook on screen for this user?
+
+    Asked before every background pass, because the answer is the difference
+    between attaching to the user's Outlook and conjuring a second one out of
+    nothing (see `_outlook`).
+
+    WHY THIS IS A WINDOW HANDLE AND NOT `GetActiveObject`.
+
+    The obvious probe is COM's own: `GetActiveObject("Outlook.Application")`
+    binds to a running instance and fails when there is none. It does not work
+    for Outlook. Measured here with Outlook open and visible, twice, on both
+    ProgIDs: `com_error(-2147221021, 'Operation unavailable')` — MK_E_UNAVAILABLE
+    — while `FindWindowW` returned a live handle for the same process. Outlook
+    does not register itself in the running-object table, so the ROT cannot
+    answer this question and a companion trusting it would decide Outlook was
+    closed while the user was reading mail in it.
+
+    Its window can, and it answers a slightly better question besides: not "is
+    an OUTLOOK.EXE alive" but "is there an Outlook the user can see". A
+    windowless Outlook left behind by some other automation is deliberately not
+    counted — there is nothing there for a person to work with, and treating it
+    as available is what kept the ghost alive in the first place.
+    """
     try:
-        import pythoncom
-        import win32com.client
-        pythoncom.CoInitialize()
+        user32 = ctypes.windll.user32
+        user32.FindWindowW.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p]
+        user32.FindWindowW.restype = ctypes.c_void_p
+        return bool(user32.FindWindowW(_OUTLOOK_WINDOW_CLASS, None))
+    except Exception:  # noqa: BLE001 — no windll off Windows; treat as closed
+        return False
+
+
+def _make_visible(app_) -> None:
+    """Never leave a headless Outlook behind.
+
+    An Outlook that COM started has no window. If we are going to start one at
+    all, the user gets to see the thing that is now using their machine.
+    """
+    try:
+        if app_.Explorers.Count == 0:
+            ns = app_.GetNamespace("MAPI")
+            app_.Explorers.Add(ns.GetDefaultFolder(6), 0).Display()  # olFolderInbox
+    except Exception as exc:  # noqa: BLE001 — cosmetic; the draft still works
+        log.warning("could not show the Outlook window (%s)", exc)
+
+
+def _outlook(start_if_needed: bool = False):
+    """Attach to the user's Outlook. Start one ONLY when a person asked.
+
+    WHY THIS IS NOT `Dispatch`.
+
+    `Dispatch("Outlook.Application")` does not mean "find Outlook". It means
+    "find Outlook, OR START IT" — and every background path in this file used
+    to call it: the 15-second sweep, the watcher's re-attach, and /health,
+    which the browser polls while PlanWise is open. So on a PC where Outlook
+    was closed, the companion started it. Within seconds. Every time. Closing
+    Outlook did not stop it, because the next sweep brought it straight back.
+
+    An Outlook started this way has no window, and it is not a stub: it loads
+    the profile, syncs the OST, runs Windows Search indexing and every add-in
+    — invisibly, with nothing on screen to explain where the disk and the CPU
+    went. Measured on this machine: the companion itself costs 1.8% of one
+    core, so the companion was never the load. The Outlook it kept resurrecting
+    was.
+
+    It is also how a slow add-in gets switched off. Outlook times each add-in's
+    load and disables the slow ones ("...was disabled because it is running
+    slowly"); an unattended automation start is exactly the contended load
+    where that timer trips. On this PC it tripped MS Project's Outlook Change
+    Notifier — an add-in PlanWise does not own, did not install, and only ever
+    harmed by starting the host it lives in.
+
+    So the rule is: ASK FIRST, then Dispatch. Dispatch is not the villain —
+    an unguarded Dispatch is. Once `outlook_is_open()` has confirmed there is
+    an Outlook to attach to, Dispatch attaches to that one and starts nothing;
+    the only way it creates a process is if we call it having established that
+    none exists, which is now a deliberate decision rather than an accident.
+    `start_if_needed` is that decision, reserved for the paths a human
+    explicitly triggered — drafting, showing the Drafts folder — and even those
+    make the window visible rather than leaving a ghost.
+    """
+    import pythoncom
+    import win32com.client
+    pythoncom.CoInitialize()
+
+    running = outlook_is_open()
+    if not running and not start_if_needed:
+        raise HTTPException(status_code=503, detail=(
+            "Outlook isn't open on this PC. Open Outlook and PlanWise will "
+            "pick up from there."))
+
+    try:
         app_ = win32com.client.Dispatch("Outlook.Application")
-        return app_, app_.GetNamespace("MAPI")
     except Exception as exc:  # noqa: BLE001 — surfaced honestly to the UI
         raise HTTPException(status_code=503, detail=(
             f"Desktop Outlook is not reachable via COM: {exc}. "
             "Open classic Outlook and try again.")) from exc
+
+    if not running:
+        _make_visible(app_)
+
+    try:
+        return app_, app_.GetNamespace("MAPI")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=(
+            f"Outlook is open but not answering: {exc}. "
+            "It may still be starting up.")) from exc
 
 
 # Reply/forward markers and bracketed tags that mail systems bolt onto a
@@ -382,7 +486,9 @@ def pair(body: dict = Body(...), origin: str | None = Header(default=None)):
 def create_draft(body: dict = Body(...)):
     """Create (never send) a draft in this user's Outlook Drafts folder."""
     _check(body.get("token"))
-    app_, _ns = _outlook()
+    # A person pressed "Draft in Outlook". Starting Outlook is what they asked
+    # for, so this is one of the two paths allowed to — visibly.
+    app_, _ns = _outlook(start_if_needed=True)
 
     mail = app_.CreateItem(0)  # olMailItem
     mail.Subject = body.get("subject") or ""
@@ -452,7 +558,9 @@ def show_drafts(body: dict = Body(...)):
     forces the view to repaint, which is the thing that was missing.
     """
     _check(body.get("token"))
-    _app, ns = _outlook()
+    # Likewise: the whole point of this call is to put Outlook in front of the
+    # user, so an Outlook that has to be started is started where they can see it.
+    _app, ns = _outlook(start_if_needed=True)
     drafts = ns.GetDefaultFolder(16)  # olFolderDrafts
     try:
         explorer = _app.ActiveExplorer()
@@ -791,6 +899,15 @@ def _watch_loop() -> None:
             # are rebuilt. Without this, one Outlook restart would quietly put
             # replies back on the half-hour sweep.
             if not _sinks:
+                # Outlook closed is a normal state, not a fault. Waiting for it
+                # is the whole fix: this line used to Dispatch, which STARTED
+                # Outlook — so a user who closed Outlook got a headless one
+                # back seconds later, for ever. Watch what the user has open;
+                # never manufacture something to watch.
+                if not outlook_is_open():
+                    watch_state.update(running=False, error="Outlook is not open")
+                    _watch_stop.wait(WATCH_RETRY)
+                    continue
                 try:
                     ns = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
                     folders = [ns.GetDefaultFolder(6), ns.GetDefaultFolder(5)]
@@ -849,6 +966,17 @@ async def _poll_once() -> None:
 
         threads = manifest.get("threads") or []
         drafts = manifest.get("drafts") or []
+
+        # Neither scan below can run without Outlook, and asking for Outlook
+        # must never start it (see `_outlook`). A closed Outlook is a normal
+        # state — the user went home — so record it and wait, rather than
+        # raising a 503 into the log every fifteen seconds.
+        if (threads or drafts) and not await asyncio.to_thread(outlook_is_open):
+            poll_state["outlook"] = "not open"
+            poll_state["last_error"] = None
+            poll_state["last_run"] = datetime.now().isoformat(timespec="seconds")
+            return
+        poll_state["outlook"] = "open"
 
         # SENDS FIRST, and unconditionally — not gated on there being reply
         # threads to watch.
@@ -910,8 +1038,13 @@ async def _poll_once() -> None:
         poll_state["matched"] = seen
         poll_state["last_error"] = None
         poll_state["last_run"] = datetime.now().isoformat(timespec="seconds")
-        log.info("poll: %d threads, %d messages scanned, %d on-thread, %d newly filed",
-                 len(threads), result["scanned"], seen, captured)
+        # Only when something happened. An idle sweep every 15 seconds is 5,700
+        # identical lines a day, which buries the one line that matters on the
+        # day someone asks why a reply was missed. The counters are always in
+        # /health for a live look; the log is for what CHANGED.
+        log.log(logging.INFO if captured else logging.DEBUG,
+                "poll: %d threads, %d messages scanned, %d on-thread, %d newly filed",
+                len(threads), result["scanned"], seen, captured)
 
 
 async def _poll_loop() -> None:

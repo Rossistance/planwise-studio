@@ -219,6 +219,10 @@ def test_the_sweep_checks_sent_items_even_with_no_reply_threads(client, planwise
 
     monkeypatch.setattr(c, "_scan_sent", fake_scan_sent)
     monkeypatch.setattr(c, "_scan_inbox", fake_scan_inbox)
+    # Outlook open is now a precondition of scanning anything, because asking
+    # for Outlook must never start it (see test_companion_outlook.py). The
+    # machine running the tests usually has Outlook closed.
+    monkeypatch.setattr(c, "outlook_is_open", lambda: True)
 
     posted = []
 
@@ -239,6 +243,44 @@ def test_the_sweep_checks_sent_items_even_with_no_reply_threads(client, planwise
     assert scanned.get("queries"), "Sent Items was never scanned"
     assert any(u.endswith("/api/records/rec-1/sent") for u, _ in posted), \
         f"the send was never reported to the server; posted={posted}"
+
+
+def test_the_sweep_waits_quietly_when_outlook_is_closed(client, planwise, monkeypatch):
+    """A closed Outlook is a state, not a failure.
+
+    It must produce neither a scan (there is nothing to scan, and reaching for
+    Outlook would START one) nor an error every fifteen seconds — an hour at
+    the pub would otherwise leave 240 logged failures and a red chip waiting on
+    Monday.
+    """
+    import asyncio
+
+    pair(client)
+    touched = {}
+
+    monkeypatch.setattr(c, "outlook_is_open", lambda: False)
+    monkeypatch.setattr(c, "_scan_sent",
+                        lambda q: touched.setdefault("sent", True) or [])
+    monkeypatch.setattr(c, "_scan_inbox",
+                        lambda q: touched.setdefault("inbox", True) or {"replies": [], "scanned": 0})
+
+    class FakeClient:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *a): return False
+        async def get(self, url, params=None):
+            return FakeAsyncResponse(200, {
+                "enabled": True, "interval_seconds": 15,
+                "threads": [{"record_id": "rec-1", "subject": "RFI 001 — X"}],
+                "drafts": [{"record_id": "rec-2", "subject": "RFI 002 — X"}]})
+        async def post(self, url, json=None, headers=None):
+            raise AssertionError("nothing should be reported with Outlook closed")
+
+    monkeypatch.setattr(c.httpx, "AsyncClient", lambda **kw: FakeClient())
+    asyncio.run(c._poll_once())
+
+    assert not touched, f"Outlook was reached for while closed: {touched}"
+    assert c.poll_state["outlook"] == "not open"
+    assert c.poll_state["last_error"] is None, "a closed Outlook is not an error"
 
 
 class FakeAsyncResponse:

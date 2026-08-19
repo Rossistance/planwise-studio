@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark"><head>
+<meta charset="UTF-8">
+<!-- viewport-fit=cover lets the layout reach under the notch and home
+     indicator; the CSS pays that back with env(safe-area-inset-*) padding.
+     No maximum-scale: pinch-zoom on a drawing is a feature, not a bug. -->
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>/job/:jobNumber/lookahead (dark)</title>
+
+<!-- The favicon is what the DESKTOP APP WINDOW uses for its taskbar icon, not
+     just what a browser tab shows: `msedge --app=` takes the window icon from
+     the page, so without this the installed PlanWise appeared as a generic
+     Edge window. The manifest icons below don't cover it — those are for
+     installing, not for chrome. A multi-size .ico so Windows can pick 16px for
+     the taskbar and 256px for alt-tab without scaling artefacts. -->
+<link rel="icon" href="data:image/x-icon;base64,AAABAAcAEBAAAAEAIABrAAAAdgAAABgYAAABACAAdAAAAOEAAAAgIAAAAQAgAIgAAABVAQAAMDAAAAEAIACkAAAA3QEAAEBAAAABACAAxwAAAIECAACAgAAAAQAgAI4BAABIAwAAAAAAAAEAIADwAwAA1gQAAIlQTkcNChoKAAAADUlIRFIAAAAQAAAAEAgGAAAAH/P/YQAAADJJREFUeNpjOO7E9Z8SzAAi/vz+QTamrgFSsgpE44FxwcCEAX1jgeoG4EuBI8UAusQCAN6XQjpH2bK2AAAAAElFTkSuQmCCiVBORw0KGgoAAAANSUhEUgAAABgAAAAYCAYAAADgdz34AAAAO0lEQVR42mM47sT1n5aYgW4W/Pn9g+p4GFsgJatANh4NIoLBMhpEoxltgC0gpvQctWCIWzDC8wGtWhUAJK4xCgWX/CIAAAAASUVORK5CYIKJUE5HDQoaCgAAAA1JSERSAAAAIAAAACAIBgAAAHN6evQAAABPSURBVHjaYzjuxPV/IDHDoHHAn98/6I5HHTC4HSAlq0B1PBoFIysNDH0HjKYBagb10HTAaBoYdQAxmknFow4YdcCoA0YLolEH4HXAQPWOAb9n/eUCIdwgAAAAAElFTkSuQmCCiVBORw0KGgoAAAANSUhEUgAAADAAAAAwCAYAAABXAvmHAAAAa0lEQVR42u3awQnAIBAEQN+WIARSS5q3JSGB2EJA4SLOYwsYuJXjMNUrvysnAfwJ8NxtmQAAAOwEKMcZFgAdAABoYUUF0AEAgPESAxghAACA/QAzT4cAAAAAnlEjBKDEljkAAIBPAJ89AgAdEqVFSMpZnY0AAAAASUVORK5CYIKJUE5HDQoaCgAAAA1JSERSAAAAQAAAAEAIBgAAAKppcd4AAACOSURBVHja7dsxCsAgEARA6zxBCPiWfN4vBRLQOl1IEeRuim0sB7210NKPbWROAQAAwGPhvs7wAQAAAAAAAAB8A6h7Wz4AHAEAAAAAABCzBgEAMAMAAAAAIE4LAABgBgAAAAAAAAAAEgD89e4HAAAAAAAAAOAiZAcAAAAAgBYAAAAAAAAAALwF8HUWQC6ACeJQ3lLxF5arAAAAAElFTkSuQmCCiVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAABVUlEQVR42u3ZsQnAIBBAUWtHCAScJctnJSGB2NoGbM57xR/A44Holfuqn/JWDAEAgwBAAAgAASAABMDU+3QFDwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABgMYDjbFoUAAAAAAAAAAAAgFeAABAAAkAACAABIAAEgAAQALIL2OMPHwAAAAAAAAAAAAAAADwDBYAAEAACQAAIAAEgAASAfAXH/aoFAAAAAAAAAAAAAAAAz0ABIAAEgAAQAAJAAAgAASAABIAAEAACQAAIgL+HjhgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAA5ApwBQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADYBdgFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAECYIAAKC8A7R0AABgCAAJAAAgAZWsA9N9xufrNcaAAAAAASUVORK5CYIKJUE5HDQoaCgAAAA1JSERSAAABAAAAAQAIBgAAAFxyqGYAAAO3SURBVHja7dyxCcAgEEBR64wQEDKLy2clQcGskEbimVe8BZT7gsWluxwD+KfkEEAAAAEABAAQAEAAAAEABAAQAEAAAAEABAAQAEAAgJ0D0FsFPiYAIAACAAIgACAAAgACIAAgAAIAAiAAIAACAAIgACAAAgACIAAgAAIAAiAAIAACAAIgACAAAgACIAAgAAIAAgAIACAAgAAAAgAIACAAgAAAAgAIACAAgAC8c+YLliMAAoAACIAAIAACIAAIgAAIAAIgAAKAAAiAACAAAiAACIAACAACIAACgAAIgAAgAAIACAAgAIAAAAIACAAgAIAAgAAIAAiAAIAACAAIgACAAAgACIAAgAAIAAiAAIAACAAIgACAAAgACIAAgAAIAAiArcDYwisAAoAACIAAIAACIAAIgAAIAAIgAAKAAAiAACAAAiAACIAACAACIAACgAAIgAAgAAIgAAiAAAACAAgAIACAAAACAAgAIACAAAACAAgAIAAgAAIAAiAAIAACAAIgACAAAgACIAAgAAIAAiAAIACWglqsiQAIgAAgAAIgAAiAAAgAAiAAAoAACIAAIAACIAAIgAAIAAIgAAKAAAiAACAAAiAACIAACAACAAgAIACAAAACAAgAIACAAAACAAgAIACAAAACAAgAIACAAIAACAAIgACAAAgACIAAgAAIAAiAAIAACAAIgACAAAgACIAAgAAIAAiAAIAACAAIgACAAAgACIAAgAAIQMzLZi4BQAAEQAAQAAEQAARAAAQAARAAAUAABEAAEAABEAAEQAAEAAEQAAFAAARAABAAARAABEAABAABEAABQAAEQAAQAAEQAAEwaAIgAAKAAAiAACAAAiAACIAACAACIAACgAAIgAAgAAIgAAiAAAgAAiAAAoAACIAAIAACIAAIgAAIAAIgAAKAAAiAACAAAiAACIAACAACIACw56MgACAAAgACIAAgAALgExCfgAIgAAiAAAgAAiAAAoAACIAAIAACIAAIgIEUAAQAAUAAEAABEAAEQAAEAAEQAAFAAARAABAAARAABEAABAABEAABQAAEQAAQAAEQAARAAAQAARAAAUAABEAAEAABEAAEQAAEABAAQAAAAQABEAAQAAEAARAAEAABAAEQABAAAQABEAAQAAEAARAAEAABAAEQABAAAQABEAAQAAEAARAAEAABAAEQABAAQAAAAQAEABAAQAAAAQAEABAAIHoAgNgEAAQAEABAAAABAAQAEABAAAABAAQAEABAAAABAAQAWN0DGC5dmac1UZgAAAAASUVORK5CYII=" sizes="any">
+<link rel="icon" type="image/png" sizes="192x192" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMAAAADACAIAAADdvvtQAAAB7UlEQVR42u3cwQ2AIAxAUc6MQELiLC7PSiZycAcPVuhL/gTNOxAslnFW6XXFCASQABJAAkgCSAAJIAEkAaRgQPO+lDOABJAAEkACCCABJIAEkAACSAAJIAEkgAASQAJIAAkggASQABJAAsgcAQoG1Pqh7wNIAAEEEEAAAQQQQAJIAAEEEEAAuYmWTxkCSAABJIAEkAASQAAJIAEkgAQQQAABJIAEkACyD/Tz9R2AAAIIIIAAAggggAACCCCAAAIIIIAAchMtgASQAAJIAAkgASSAABJAAkgACSCABJAAEkACyD4QQAABBBBAAAEEEEAAAQQQQAABBBBAAAHkJloACSABJIAAEkACSAAJIIAEkAASQAJIAAEkgASQABJAAAkgASSABBBAAkgACaA9hrJHAAEEEEAAAQQQQAABBBBAAAEEEEAAAQQQQAABBBBAAAEEEEAAAQQQQAABBBBAAAEEEEAAAQQQQAABBBBAAAEEEEDysBAgASSAnIGcgQACCCCAAAIIIIAAAggggAACCCCAAAIIIIAAAggggAACCCCAAAIIIIAAAggggGQjUQABJIAEkAASQAAJIAEkgAQQQAJIAAkgAQQQQAAJIAEkgAQQQAJIACkJIAkgASSABJAEkAASQAJIABmBABJAWvM/aA+fjfyl3fX0ZQAAAABJRU5ErkJggg==">
+
+
+
+<!-- Installable app (Phase 5e). theme-color paints the iOS status bar and the
+     Android task-switcher header; the two values track the light and dark
+     themes so a home-screen PlanWise doesn't show a stripe of the wrong one. -->
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#C7420A" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#191C1F" media="(prefers-color-scheme: dark)">
+<meta name="mobile-web-app-capable" content="yes">
+<!-- iOS reads its own vendor-prefixed pair; without these, Add to Home Screen
+     produces a Safari shortcut rather than a standalone app window. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PlanWise">
+<link rel="apple-touch-icon" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAAC0CAIAAACyr5FlAAABuElEQVR42u3bwQnAIAxAUc8doSB0li7flQQ9uECvDaR58CcID4So7bkP6bVmBIJDcAgOwSE4BIfgEBwqjmPNob8Gh+AQHIJDcAgOwSE4BAcccMABBxyCQ3AIDsEhOASH4BAchggHHHAE4zj7pe+CQ3AIDsEBBxxwwAEHHHDAYQkmOASH4BAcgkNwCA7BITjggAMOOOAQHIJDcMjXBC8w4BAccMABBxxwwAEHHHDAAQcclmCCQ3AIDsEhOASH4IADDjgEh+AQHIJDcAgO9+lwwAEHHHDAAQcccMABBxxwwAGHJZjgEByCQ3AIDjjggAMOOASH4BAcgkNwCA7BITgEBxxwwCE4BIfgEByCQ3DkGEHe4IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw75tyI4HCuOFTjggAMOOOCAAw444IADDjjggAMOOOCAAw444IADDjjggAMOOOCAAw7BITgEh+AQHIJDcMABBxxwwCE4BIfgEByCQ3AIDsEBBxxwwAGH4FAUDlUODsEhOASH4BAcgkNwCA7BobptvrRmpEG6TwsAAAAASUVORK5CYII=">
+
+<style id="extracted-cssom-bundle">/* --- EXTRACTED CSSOM BUNDLE --- */
+:root { --bg: #F2F1EC; --panel: #FCFBF8; --panel-2: #F7F6F1; --ink: #1A1D20; --muted: #5C6470; --faint: #8A8F94; --line: #DEDCD3; --line-strong: #B9B6AA; --accent: #C7420A; --accent-hover: #A83605; --accent-ink: #FFFFFF; --accent-soft: #F9E9DE; --blueprint: #2F74B8; --blueprint-soft: #E6EEF6; --ok: #1E7A46; --ok-soft: #E3F0E7; --warn: #8F5F00; --warn-soft: #F6EDD8; --err: #C23A2E; --err-soft: #F8E7E4; --neutral: #6B7178; --neutral-soft: #ECEBE6; --font-display: Bahnschrift, 'Segoe UI Semibold', 'Segoe UI', system-ui, sans-serif; --font-body: 'Segoe UI', system-ui, -apple-system, sans-serif; --font-mono: 'Cascadia Mono', Consolas, 'SF Mono', ui-monospace, monospace; --radius: 4px; --shadow-pop: 0 10px 40px rgba(20, 22, 24, .18); --focus: 0 0 0 2px var(--panel), 0 0 0 4px var(--accent); --topbar-h: 52px; }
+:root[data-theme="dark"] { --bg: #191C1F; --panel: #22262A; --panel-2: #1E2226; --ink: #E9E8E3; --muted: #9BA1A8; --faint: #7A8188; --line: #33383D; --line-strong: #4A5057; --accent: #F97435; --accent-hover: #FF8B55; --accent-ink: #1A1D20; --accent-soft: #37281F; --blueprint: #63A9E0; --blueprint-soft: #24313D; --ok: #3FA96D; --ok-soft: #1F3129; --warn: #D9A13B; --warn-soft: #342B1B; --err: #E06456; --err-soft: #3A2523; --neutral: #9AA1A8; --neutral-soft: #2C3136; --shadow-pop: 0 12px 44px rgba(0, 0, 0, .5); }
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0px; font: 14.5px/1.55 var(--font-body); color: var(--ink); background: var(--bg); -webkit-font-smoothing: antialiased; }
+.hidden { display: none !important; }
+a { color: var(--blueprint); text-decoration: none; }
+a:hover { text-decoration: underline; }
+h1, h2, h3, h4 { font-family: var(--font-display); font-weight: 600; }
+::selection { background: var(--accent); color: var(--accent-ink); }
+button { font: inherit; cursor: pointer; color: inherit; }
+:is(button, a, input, select, textarea, [tabindex]):focus-visible { outline: none; box-shadow: var(--focus); border-radius: var(--radius); }
+.mono { font-family: var(--font-mono); font-size: 12.5px; }
+.muted { color: var(--muted); }
+.small { font-size: 13px; }
+.num { font-variant-numeric: tabular-nums; }
+.pos { color: var(--ok); }
+.neg { color: var(--err); }
+.none { color: var(--faint); font-style: italic; }
+.eyebrow { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
+.btn { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line-strong); background: var(--panel); border-radius: var(--radius); padding: 7px 14px; font-family: var(--font-display); font-size: 13.5px; letter-spacing: 0.02em; color: var(--ink); transition: background 0.14s, border-color 0.14s, color 0.14s; text-decoration: none; }
+.btn:hover { background: var(--panel-2); border-color: var(--faint); text-decoration: none; }
+.btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.danger { color: var(--err); border-color: var(--err); background: transparent; }
+.btn.danger:hover { background: var(--err-soft); }
+.btn.sm { padding: 4px 10px; font-size: 12.5px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.link { background: none; border-width: medium; border-style: none; border-color: currentcolor; border-image: none; padding: 0px; color: var(--blueprint); font: inherit; cursor: pointer; }
+.link:hover { text-decoration: underline; }
+.link.danger { color: var(--err); }
+.iconbtn { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: 1px solid transparent; background: none; border-radius: var(--radius); color: var(--muted); transition: background 0.14s, color 0.14s; }
+.iconbtn:hover { background: var(--panel-2); color: var(--ink); }
+.topbar { height: var(--topbar-h); display: flex; align-items: center; gap: 16px; padding: 0px 18px; background: var(--panel); border-bottom: 1px solid var(--line-strong); position: sticky; top: 0px; z-index: 10; }
+.brand { display: flex; align-items: baseline; gap: 10px; min-width: 0px; flex: 0 0 auto; }
+.brand .mark { font-family: var(--font-display); font-size: 18px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink); white-space: nowrap; }
+.brand .mark b { color: var(--accent); }
+.brand .tagline { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); background: var(--panel-2); max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: 0 0 auto; }
+.chip.ok .dot { background: var(--ok); }
+.chip.warn { color: var(--warn); border-color: var(--warn); }
+.chip.warn .dot { background: var(--warn); }
+.chip.err { color: var(--err); border-color: var(--err); }
+.chip.err .dot { background: var(--err); }
+.chip.clickable { cursor: pointer; }
+.chip.clickable:hover { border-color: var(--faint); color: var(--ink); }
+.job-picker { position: relative; flex: 1 1 0%; max-width: 480px; }
+.job-picker input { width: 100%; padding: 7px 11px 7px 32px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); color: var(--ink); font: 13.5px var(--font-body); }
+.job-picker .icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
+.job-picker input::placeholder { color: var(--faint); }
+.results { position: absolute; top: calc(100% + 5px); left: 0px; right: 0px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow-pop); list-style: none; margin: 0px; padding: 5px; max-height: 340px; overflow-y: auto; z-index: 30; }
+.results li { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: baseline; padding: 8px 10px; border-radius: var(--radius); cursor: pointer; }
+.results li:hover { background: var(--panel-2); }
+.results .rnum { font-family: var(--font-mono); font-size: 12px; color: var(--accent); }
+.results .rname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; }
+.results .rstat { font-family: var(--font-mono); font-size: 10px; color: var(--faint); text-transform: uppercase; }
+.content { max-width: 1220px; margin: 0px auto; padding: 20px 28px 60px; }
+.titleblock { display: flex; align-items: stretch; flex-wrap: wrap; border: 1px solid var(--line-strong); background: var(--panel); border-radius: var(--radius); overflow: hidden; margin-bottom: 16px; }
+.titleblock .tb-cell { padding: 12px 16px; border-right: 1px solid var(--line); display: flex; flex-direction: column; justify-content: center; gap: 2px; flex: 0 0 auto; }
+.titleblock .tb-cell:last-child { border-right-width: medium; border-right-style: none; border-right-color: currentcolor; }
+.titleblock .tb-main { flex: 1 1 auto; min-width: 180px; }
+.titleblock .tb-main h1 { margin: 0px; font-size: 21px; letter-spacing: 0.01em; line-height: 1.25; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.titleblock .tb-val { font-family: var(--font-display); font-size: 14.5px; font-weight: 600; white-space: nowrap; }
+.titleblock .tb-val.mono { font-family: var(--font-mono); font-size: 13px; font-weight: 400; }
+.stamp { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-display); font-size: 11px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; border: 1.5px solid; border-radius: 3px; padding: 3px 8px; white-space: nowrap; }
+.stamp.ok { color: var(--ok); }
+.stamp.warn { color: var(--warn); }
+.stamp.err { color: var(--err); }
+.stamp.info { color: var(--blueprint); }
+.stamp.neutral { color: var(--neutral); }
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line-strong); margin-bottom: 20px; overflow-x: auto; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tabs button { background: none; border-width: medium medium 2px; border-style: none none solid; border-color: currentcolor currentcolor transparent; border-image: none; padding: 9px 14px 10px; font-family: var(--font-display); font-size: 13.5px; letter-spacing: 0.04em; color: var(--muted); margin-bottom: -1px; white-space: nowrap; display: inline-flex; align-items: center; gap: 7px; transition: color 0.14s; }
+.tabs button:hover { color: var(--ink); }
+.tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tabs button .count { font-family: var(--font-mono); font-size: 10.5px; color: var(--faint); border: 1px solid var(--line); border-radius: 999px; padding: 0px 6px; }
+.tabs button.active .count { color: var(--accent); border-color: var(--accent); }
+.index-strip { display: flex; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel); overflow: hidden; margin-bottom: 16px; flex-wrap: wrap; }
+.index-strip .cell { flex: 1 1 130px; padding: 13px 18px 11px; border-right: 1px solid var(--line); min-width: 130px; }
+.index-strip .cell:last-child { border-right-width: medium; border-right-style: none; border-right-color: currentcolor; }
+.index-strip .cell .n { font-family: var(--font-display); font-size: 22px; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.index-strip .cell .n.none { font-size: 14px; font-weight: 400; }
+.index-strip .cell .l { margin-top: 2px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 16px; }
+.panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.panel-head h3 { margin: 0px; font-size: 14px; letter-spacing: 0.04em; }
+.panel-head .sub { font-size: 12.5px; color: var(--muted); font-weight: 400; }
+.panel-body { padding: 16px 18px; }
+.panel-body.flush { padding: 0px; }
+.badge { display: inline-flex; align-items: center; gap: 5px; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; padding: 2px 8px; border-radius: 3px; background: var(--neutral-soft); color: var(--neutral); white-space: nowrap; }
+.badge.ok { background: var(--ok-soft); color: var(--ok); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.badge.err { background: var(--err-soft); color: var(--err); }
+.badge.info { background: var(--blueprint-soft); color: var(--blueprint); }
+table.tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.tbl th { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--faint); font-weight: 600; text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line-strong); white-space: nowrap; }
+table.tbl th.num, table.tbl td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.tbl th.sortable { cursor: pointer; user-select: none; position: relative; padding-right: 22px; }
+table.tbl th.sortable:hover { color: var(--ink); }
+table.tbl th.sortable::after { content: "↕"; position: absolute; right: 7px; top: 50%; transform: translateY(-50%); font-size: 11px; line-height: 1; opacity: 0; pointer-events: none; }
+table.tbl th.sortable:hover::after { opacity: 0.4; }
+table.tbl th.sort-asc, table.tbl th.sort-desc { color: var(--accent); }
+table.tbl th.sort-asc::after { content: "↑"; opacity: 1; }
+table.tbl th.sort-desc::after { content: "↓"; opacity: 1; }
+table.tbl td { padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+table.tbl tr:last-child td { border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; }
+table.tbl tfoot td { font-weight: 700; font-family: var(--font-display); border-top: 1.5px solid var(--line-strong); background: var(--panel-2); }
+table.tbl tr.clickable { cursor: pointer; }
+table.tbl tr.clickable:hover td { background: var(--panel-2); }
+.ecell { width: 100%; min-width: 70px; border: 1px solid transparent; background: none; border-radius: 3px; padding: 3px 6px; font: 13px var(--font-body); color: var(--ink); }
+.ecell.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ecell:hover { border-color: var(--line); }
+.ecell:focus { border-color: var(--accent); background: var(--panel); outline: none; box-shadow: none; }
+input, textarea, select { font: 14px var(--font-body); color: var(--ink); background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 8px 11px; }
+input::placeholder, textarea::placeholder { color: var(--faint); }
+select { cursor: pointer; }
+.field { min-width: 0px; }
+.field > label { display: block; font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.field input, .field select { width: 100%; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 14px 18px; }
+.inline-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--panel-2); }
+.inline-form.top { border-top-width: medium; border-top-style: none; border-top-color: currentcolor; border-bottom: 1px solid var(--line-strong); }
+.inline-form input, .inline-form select { padding: 6px 10px; font-size: 13px; }
+.inline-form .grow { flex: 1 1 0%; min-width: 150px; }
+.ro { padding: 8px 11px; border: 1px dashed var(--line); border-radius: var(--radius); background: var(--panel-2); font-size: 14px; min-height: 37px; display: flex; align-items: center; }
+.src-tag { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); margin-left: 6px; }
+.note { font-size: 12.5px; color: var(--muted); background: var(--panel-2); border-top-color: ; border-top-style: ; border-top-width: ; border-right-color: ; border-right-style: ; border-right-width: ; border-bottom-color: ; border-bottom-style: ; border-bottom-width: ; border-image-source: ; border-image-slice: ; border-image-width: ; border-image-outset: ; border-image-repeat: ; border-left: 3px solid var(--accent); border-radius: var(--radius); padding: 10px 14px; margin-top: 12px; }
+.note b { color: var(--ink); }
+.error { background: var(--err-soft); border: 1px solid var(--err); color: var(--err); border-radius: var(--radius); padding: 12px 16px; }
+.placeholder { color: var(--faint); padding: 48px 0px; text-align: center; }
+.tag { font-family: var(--font-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.06em; background: var(--blueprint-soft); color: var(--blueprint); border-radius: 3px; padding: 1px 5px; margin-left: 5px; vertical-align: middle; }
+.overlay { position: fixed; inset: 0px; background: rgba(20, 22, 24, 0.45); display: flex; justify-content: center; z-index: 100; overflow-y: auto; padding: 20px; }
+.dialog { background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); box-shadow: var(--shadow-pop); padding: 22px 24px; width: 380px; max-width: calc(-40px + 100vw); margin: auto; max-height: calc(-40px + 100vh); display: flex; flex-direction: column; }
+.dialog > h2, .dialog > .sub, .dialog-actions { flex: 0 0 auto; }
+#settingsBody { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0px; }
+.dialog-body { flex: 1 1 auto; min-height: 0px; overflow-y: auto; margin: 0px -24px; padding: 2px 24px; }
+.dialog-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; margin: 14px -24px -22px; padding: 12px 24px; border-top: 1px solid var(--line-strong); background: var(--panel-2); border-radius: 0 0 var(--radius) var(--radius); }
+.dialog h2 { margin: 0px 0px 4px; font-size: 17px; }
+.dialog .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+.dialog .userlist { list-style: none; margin: 0px 0px 12px; padding: 0px; }
+.dialog .userlist li { margin-bottom: 5px; }
+.dialog .userlist button { width: 100%; text-align: left; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); font-family: var(--font-display); font-size: 14px; }
+.dialog .userlist button:hover { border-color: var(--accent); background: var(--accent-soft); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 460px) {
+  .row2 { grid-template-columns: 1fr; gap: 0px; }
+}
+.authswap { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; color: var(--muted); text-align: center; }
+.authswap .link { font-size: 13px; }
+.waitbox { display: flex; gap: 14px; align-items: flex-start; margin: 6px 0px 4px; }
+.waitstatus { font-size: 14px; margin-bottom: 4px; }
+.spinner { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; border-top-style: ; border-top-width: ; border-right-color: ; border-right-style: ; border-right-width: ; border-bottom-color: ; border-bottom-style: ; border-bottom-width: ; border-left-color: ; border-left-style: ; border-left-width: ; border-image-source: ; border-image-slice: ; border-image-width: ; border-image-outset: ; border-image-repeat: ; border-top-color: var(--accent); animation: 900ms linear 0s infinite normal none running spin; }
+.spinner.done { border-color: var(--good, #2e7d32); animation: auto ease 0s 1 normal none running none; }
+@keyframes spin { 
+  100% { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: auto ease 0s 1 normal none running none; }
+}
+.urow { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 8px 0px; border-bottom: 1px solid var(--line); }
+.urow:last-child { border-bottom: 0px; }
+.urow .uwho { min-width: 0px; }
+.urow .uname { font-size: 13.5px; }
+.urow .umail { font-family: var(--font-mono); font-size: 11px; color: var(--muted); overflow-wrap: anywhere; }
+.urow .uacts { display: flex; gap: 6px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+.urow .uacts .link { font-size: 12px; }
+.upending { background: var(--accent-soft); margin: 0px -24px; padding: 8px 24px; }
+@media (max-width: 460px) {
+  .urow { flex-direction: column; align-items: stretch; }
+  .urow .uacts { justify-content: flex-start; }
+}
+.dw-head { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
+.dw-toolbar { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; padding: 9px 12px; margin-bottom: 10px; background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius); }
+.dw-toolbar .btn.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.dw-sep { width: 1px; height: 20px; background: var(--line-strong); margin: 0px 4px; }
+.dw-swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; padding: 0px; cursor: pointer; }
+.dw-swatch.active { border-color: var(--ink); box-shadow: 0 0 0 2px var(--panel) inset; }
+.dw-holder { position: relative; overflow: auto; max-height: calc(-300px + 100vh); border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-2); min-height: 320px; }
+.dw-holder canvas { display: block; }
+#dwPdf { background: rgb(255, 255, 255); }
+#dwInk { position: absolute; left: 0px; top: 0px; touch-action: none; cursor: crosshair; }
+.dw-textinput { position: absolute; z-index: 5; min-width: 160px; font: 600 14px Bahnschrift, "Segoe UI", sans-serif; background: rgba(255, 255, 255, 0.92); border: 1px dashed; padding: 3px 6px; border-radius: 3px; }
+:root { --gx-row: 24px; }
+.gx-toolbar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; border-bottom: 1px solid var(--line-strong); background: var(--panel-2); }
+.gx-zoom { display: flex; gap: 4px; }
+.gx { display: flex; align-items: stretch; height: 62vh; min-height: 320px; }
+.gx-grid { flex: 0 0 auto; width: 54%; min-width: 420px; min-height: 0px; display: flex; flex-direction: column; border-right: 2px solid var(--line-strong); }
+.gx-chart { flex: 1 1 auto; min-height: 0px; overflow: auto; position: relative; }
+.gx-body { overflow: hidden auto; flex: 1 1 auto; min-height: 0px; }
+.gx-head, .gx-row { display: flex; align-items: stretch; height: var(--gx-row); }
+.gx-head { height: 34px; background: var(--panel-2); border-bottom: 1px solid var(--line-strong); position: sticky; top: 0px; z-index: 2; }
+.gx-th { display: flex; align-items: center; padding: 0px 6px; font-family: var(--font-mono); font-size: 9.5px; letter-spacing: 0.07em; text-transform: uppercase; color: var(--muted); border-right: 1px solid var(--line); }
+.gx-td { display: flex; align-items: center; padding: 0px 6px; font-size: 12.5px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); overflow: hidden; white-space: nowrap; }
+.gx-th.num, .gx-td.num { justify-content: flex-end; font-family: var(--font-mono); }
+.gx-c-id { flex: 0 0 var(--gxw-id, 46px); color: var(--faint); font-family: var(--font-mono); font-size: 11px; }
+.gx-c-name { flex: 1 1 var(--gxw-name, 260px); min-width: 0px; }
+.gx-c-dur { flex: 0 0 var(--gxw-dur, 54px); }
+.gx-c-date { flex: 0 0 104px; }
+.gx-c-start { flex: 0 0 var(--gxw-start, 104px); }
+.gx-c-finish { flex: 0 0 var(--gxw-finish, 104px); }
+.gx-c-pred { flex: 0 0 var(--gxw-pred, 116px); }
+.gx-c-pct { flex: 0 0 var(--gxw-pct, 46px); }
+.gx-c-float { flex: 0 0 var(--gxw-float, 52px); border-right: 0px; }
+.gx-th { position: relative; }
+.gx-grip { position: absolute; top: 0px; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 2; }
+.gx-grip:hover { background: var(--accent); opacity: 0.55; }
+body.col-resizing { cursor: col-resize; user-select: none; }
+.gx-row { position: relative; }
+.gx-row:hover { background: var(--accent-soft); }
+.gx-row.is-summary { background: var(--panel-2); font-weight: 600; }
+.gx-row.is-crit .gx-c-float { color: var(--err); }
+.gx-row .ecell { border: 0px; background: none; width: 100%; font: inherit; color: inherit; padding: 0px; height: 100%; min-height: 0px; }
+.gx-row .ecell:focus { background: var(--panel); outline: 1px solid var(--accent); }
+.gx-twist { flex: 0 0 14px; width: 14px; border: 0px; background: none; cursor: pointer; color: var(--muted); font-size: 10px; padding: 0px; line-height: 1; }
+.gx-del { position: absolute; right: 2px; top: 3px; opacity: 0; font-size: 14px; line-height: 1; padding: 0px 4px; }
+.gx-row:hover .gx-del { opacity: 1; }
+.gx-scale { position: sticky; top: 0px; z-index: 2; background: var(--panel-2); border-bottom: 1px solid var(--line-strong); height: 34px; }
+.gx-tier { position: relative; height: 17px; }
+.gx-tier.lower { border-top: 1px solid var(--line); }
+.gx-tick { position: absolute; top: 0px; height: 100%; box-sizing: border-box; border-left: 1px solid var(--line); padding-left: 4px; overflow: hidden; font-family: var(--font-mono); font-size: 9.5px; line-height: 17px; color: var(--muted); white-space: nowrap; }
+.gx-tick.sm { color: var(--faint); font-size: 8.5px; }
+.gx-canvas { position: relative; }
+.gx-weekend { position: absolute; top: 0px; background: var(--panel-2); opacity: 0.7; }
+.gx-today { position: absolute; top: 0px; width: 2px; background: var(--accent); opacity: 0.5; }
+.gx-links { position: absolute; inset: 0px; pointer-events: none; }
+.gx-link { stroke: var(--muted); stroke-width: 1; }
+.gx-arrow { fill: var(--muted); }
+.gx-bar { position: absolute; height: 12px; border-radius: 2px; overflow: hidden; background: var(--blueprint); opacity: 0.9; min-width: 3px; }
+.gx-bar > i { display: block; height: 100%; background: rgba(0, 0, 0, 0.38); }
+.gx-bar.crit { background: var(--err); opacity: 1; }
+.gx-sum { position: absolute; height: 8px; background: var(--ink); opacity: 0.65; clip-path: polygon(0px 0px, 100% 0px, 100% 100%, calc(100% - 5px) 45%, 5px 45%, 0px 100%); }
+.gx-ms { position: absolute; width: 11px; height: 11px; margin-left: -5px; background: var(--accent); transform: rotate(45deg); }
+.gx-warn { margin: 0px; padding-left: 18px; font-size: 12.5px; color: var(--muted); }
+.gx-warn li { margin-bottom: 3px; }
+.gx-links-review { max-height: 240px; overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.gx-linkrow { display: flex; align-items: center; gap: 7px; padding: 5px 9px; border-bottom: 1px solid var(--line); font-size: 12.5px; cursor: pointer; }
+.gx-linkrow:last-child { border-bottom: 0px; }
+.gx-linkrow:hover { background: var(--accent-soft); }
+.gx-linkrow .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 190px; }
+.gx-preview { max-height: 340px; overflow: auto; margin-top: 8px; }
+@media (max-width: 900px) {
+  .gx { flex-direction: column; height: auto; max-height: none; }
+  .gx-grid { width: 100%; min-width: 0px; border-right: 0px; border-bottom: 2px solid var(--line-strong); }
+  .gx-body { max-height: 40vh; }
+  .gx-chart { max-height: 45vh; }
+  .gx-c-pred, .gx-c-float { display: none; }
+}
+.crit-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--err); margin-right: 5px; vertical-align: middle; }
+.compare { border: 1px solid var(--line-strong); border-radius: var(--radius); overflow: hidden; margin-top: 4px; }
+.compare-head { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); border-bottom: 1px solid var(--line-strong); }
+.compare-head .eyebrow { background: var(--panel-2); padding: 7px 10px; }
+.compare-panes { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line); }
+.compare-pane { background: rgb(255, 255, 255); padding: 8px; overflow: auto; max-height: 460px; display: flex; justify-content: center; }
+.compare-pane canvas { display: block; max-width: 100%; }
+.compare-pane img { display: block; max-width: 100%; max-height: 444px; object-fit: contain; align-self: flex-start; }
+.compare-nav { display: flex; align-items: center; gap: 10px; justify-content: center; padding: 8px; background: var(--panel-2); border-top: 1px solid var(--line); }
+tr.row-active > td { background: var(--accent-soft) !important; }
+.la-scroll { overflow-x: auto; }
+table.tbl.la-grid { width: 100%; }
+table.tbl.la-grid th, table.tbl.la-grid td { padding: 5px; vertical-align: top; }
+table.tbl.la-grid .la-task { min-width: 140px; }
+table.tbl.la-grid .la-text { min-width: 88px; }
+table.tbl.la-grid th { white-space: normal; overflow-wrap: anywhere; }
+table.tbl.la-grid th.la-day { white-space: nowrap; }
+table.tbl.la-grid textarea.la-wrap { min-width: 0px; }
+table.tbl.la-grid .la-x { width: 22px; padding: 5px 2px; }
+table.tbl.la-grid .la-area-cell { padding-left: 5px; }
+.la-area-wrap { width: 104px; }
+.la-area-wrap select { width: 100%; max-width: 100%; text-overflow: ellipsis; }
+textarea.ecell.la-wrap { width: 100%; resize: none; overflow: hidden; min-height: 22px; white-space: pre-wrap; word-break: break-word; font: inherit; }
+table.tbl.la-grid th.la-text.internal { color: var(--accent); }
+table.tbl.la-grid th.la-text.internal::after { content: "internal"; display: block; font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.7; font-weight: 600; }
+.la-area { font-size: 11px; padding: 2px 4px; width: 100%; max-width: 100%; }
+.la-swatch { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid var(--line-strong); vertical-align: -2px; flex: 0 0 auto; }
+label.chk { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+.la-setup { display: grid; grid-template-columns: minmax(200px, 1fr) 190px 340px; gap: 14px; align-items: start; }
+@media (max-width: 1100px) {
+  .la-setup { grid-template-columns: 1fr; }
+}
+.minicard { border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--panel-2); align-self: start; }
+.minicard-head { width: 100%; min-height: 38px; padding: 7px 10px; font-size: 11px; background: none; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-2); font-weight: 700; display: flex; justify-content: space-between; align-items: center; gap: 8px; border-width: medium; border-style: none; border-color: currentcolor; border-image: none; cursor: pointer; font-family: inherit; text-align: left; }
+.la-setup .field > .minicard { margin: 0px; }
+label .hint { text-transform: none; letter-spacing: 0px; font-weight: 400; opacity: 0.7; }
+.minicard-head:hover { color: var(--ink); }
+.minicard.open .minicard-head { border-bottom: 1px solid var(--line); }
+.minicard-head .caret { display: inline-block; width: 10px; color: var(--faint); }
+.minicard-head .sub { text-transform: none; letter-spacing: 0px; font-weight: 400; display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; }
+.la-swatch.sm { width: 9px; height: 9px; border-radius: 2px; vertical-align: 0px; }
+.minicard-body { padding: 8px 10px; }
+.minicard-body .none { padding: 2px 0px 6px; }
+.la-area-row { display: flex; align-items: center; gap: 6px; padding: 2px 0px; }
+.la-area-row .ecell { flex: 1 1 0%; min-width: 0px; font-size: 12px; }
+.la-area-row.retired .ecell, .la-area-row.retired .la-swatch { opacity: 0.45; }
+.la-area-add { display: flex; gap: 6px; margin-top: 6px; }
+.la-area-add input { flex: 1 1 0%; min-width: 0px; }
+.la-preview { background: var(--panel-2); text-align: center; overflow-x: auto; }
+.la-preview canvas { max-width: 100%; border: 1px solid var(--line-strong); background: rgb(255, 255, 255); }
+table.tbl.la-grid th.la-day, table.tbl.la-grid td.la-day { width: 26px; min-width: 26px; max-width: 26px; text-align: center; padding: 5px 1px; border-left: 1px solid var(--line); }
+table.tbl.la-grid .la-day.wk-start { border-left: 1px solid var(--line-strong); }
+table.tbl.la-grid.wk3 th.la-day, table.tbl.la-grid.wk3 td.la-day { width: 21px; min-width: 21px; max-width: 21px; padding: 5px 0px; }
+table.tbl.la-grid.wk3 th.la-day .dow { font-size: 9px; letter-spacing: 0.02em; }
+table.tbl.la-grid.wk3 th.la-day .dom { font-size: 11px; }
+table.tbl.la-grid.wk3 .la-check { width: 15px; height: 15px; }
+table.tbl.la-grid.wk3 .la-check::after { font-size: 11px; }
+table.tbl.la-grid.wk3 .la-task { min-width: 130px; }
+table.tbl.la-grid.wk3 .la-text { min-width: 80px; }
+.seg { display: inline-flex; gap: 0px; }
+.seg .btn { border-radius: 0px; margin: 0px; }
+.seg .btn:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.seg .btn:last-child { border-radius: 0 var(--radius) var(--radius) 0; margin-left: -1px; }
+table.tbl.la-grid th.la-day .dow, table.tbl.la-grid th.la-day .dom { display: block; line-height: 1.25; }
+table.tbl.la-grid th.la-day .dom { font-size: 12px; color: var(--ink); font-weight: 700; }
+table.tbl.la-grid th.la-day.weekend { color: var(--accent); }
+table.tbl.la-grid th.la-day.weekend .dom { color: var(--accent); }
+table.tbl.la-grid td.la-day.weekend { background: var(--accent-soft); }
+.la-check { appearance: none; margin: 0px; width: 18px; height: 18px; border-radius: 3px; cursor: pointer; border: 1px solid var(--line-strong); background: var(--panel); display: inline-grid; place-content: center; transition: background 0.1s, border-color 0.1s; }
+.la-check:hover { border-color: var(--row-color, var(--accent)); }
+.la-check::after { content: "✓"; font-size: 13px; line-height: 1; color: var(--row-ink, var(--accent-ink)); transform: scale(0); transition: transform 0.1s; }
+.la-check:checked { background: var(--row-color, var(--accent)); border-color: var(--row-color, var(--accent)); }
+.la-check:checked::after { transform: scale(1); }
+.topbar { padding-left: max(18px, env(safe-area-inset-left)); padding-right: max(18px, env(safe-area-inset-right)); }
+.content { padding-left: max(28px, env(safe-area-inset-left)); padding-right: max(28px, env(safe-area-inset-right)); padding-bottom: max(60px, env(safe-area-inset-bottom)); }
+@media (max-width: 720px) {
+  input, select, textarea, .inline-form input, .inline-form select, .ecell { font-size: 16px; }
+  .btn, .iconbtn, .chip, .tabs button { min-height: 44px; }
+  .link.danger, table.tbl .link { min-width: 32px; min-height: 32px; }
+  .content { padding-top: 12px; }
+  .topbar { height: auto; flex-wrap: wrap; gap: 8px; padding-top: 8px; padding-bottom: 8px; }
+  .brand .tagline { display: none; }
+  .job-picker { order: 10; flex: 1 1 100%; }
+  .topbar > span[style*="flex:1"] { display: none; }
+  #freshness { margin-left: auto; }
+  .titleblock { display: block; }
+  .titleblock .tb-cell { border-right-width: medium; border-right-style: none; border-right-color: currentcolor; border-bottom: 1px solid var(--line); flex-direction: row; align-items: baseline; gap: 10px; justify-content: space-between; }
+  .titleblock .tb-cell:last-child { border-bottom-width: medium; border-bottom-style: none; border-bottom-color: currentcolor; }
+  .titleblock .tb-main h1 { font-size: 18px; white-space: normal; }
+  .index-strip .cell { flex: 1 1 50%; min-width: 50%; }
+  .panel-head { flex-wrap: wrap; gap: 4px; }
+  .panel-body { padding: 12px 14px; }
+  .form-grid { grid-template-columns: 1fr; gap: 12px; }
+  .inline-form { padding: 12px 14px; }
+  .inline-form .grow, .inline-form input, .inline-form select { flex: 1 1 100%; min-width: 0px; }
+  table.tbl thead { display: none; }
+  table.tbl, table.tbl tbody, table.tbl tr, table.tbl td { display: block; width: auto; }
+  table.tbl tr { border: 1px solid var(--line-strong); border-radius: var(--radius); margin: 0px 0px 10px; padding: 4px 0px; background: var(--panel); }
+  table.tbl tr:last-child { margin-bottom: 0px; }
+  table.tbl td { border-width: medium; border-style: none; border-color: currentcolor; border-image: none; padding: 6px 12px; text-align: left; display: flex; align-items: baseline; justify-content: space-between; gap: 14px; }
+  table.tbl td.num { text-align: left; }
+  table.tbl td[data-label]::before { content: attr(data-label); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); flex: 0 0 auto; max-width: 45%; text-align: left; }
+  table.tbl td:empty { display: none; }
+  table.tbl td > input, table.tbl td > select, table.tbl td > textarea { max-width: 60%; }
+  table.tbl tfoot td { font-weight: 700; }
+  table.tbl tr.clickable td:first-child { font-weight: 600; }
+  table.tbl.la-grid { min-width: 0px; }
+  .la-scroll { overflow-x: visible; }
+  table.tbl.la-grid tbody tr { display: flex; flex-wrap: wrap; padding: 8px 0px 4px; }
+  table.tbl.la-grid td.la-task { border-left-width: 5px; border-left-style: solid; display: block; flex: 1 1 100%; }
+  table.tbl.la-grid td.la-text, table.tbl.la-grid td.la-x { flex: 1 1 100%; }
+  table.tbl.la-grid td.la-task::before, table.tbl.la-grid td.la-area-cell::before { content: none; }
+  table.tbl.la-grid td.la-area-cell { display: block; flex: 1 1 100%; }
+  table.tbl.la-grid .la-area-wrap { width: 100%; }
+  table.tbl.la-grid td.la-day { display: flex; flex-direction: column; align-items: center; gap: 3px; flex: 0 0 calc(14.2857%); width: auto; min-width: 0px; max-width: none; padding: 5px 0px; border-left-width: medium; border-left-style: none; border-left-color: currentcolor; vertical-align: top; }
+  table.tbl.la-grid td.la-day::before { font-size: 9px; letter-spacing: 0px; max-width: none; text-align: center; white-space: nowrap; }
+  table.tbl.la-grid td.la-day.weekend { background: var(--accent-soft); }
+  table.tbl.la-grid.wk3 td.la-day { flex: 0 0 calc(14.2857%); width: auto; min-width: 0px; max-width: none; }
+  table.tbl.la-grid.wk3 th.la-day .dow, table.tbl.la-grid.wk3 th.la-day .dom { font-size: inherit; }
+  table.tbl.la-grid .la-check, table.tbl.la-grid.wk3 .la-check { width: 28px; height: 28px; }
+  table.tbl.la-grid .la-check::after, table.tbl.la-grid.wk3 .la-check::after { font-size: 16px; }
+  table.tbl.la-grid td.la-text { display: flex; }
+  table.tbl.la-grid td.la-x { text-align: right; justify-content: flex-end; }
+  .gantt-wrap, .la-preview { overflow-x: auto; }
+  .overlay { padding: 10px; }
+  .dialog { width: 100% !important; max-height: calc(-20px + 100vh); }
+  .la-setup { grid-template-columns: 1fr; }
+}
+@media (max-width: 480px) {
+  .content { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .index-strip .cell { flex: 1 1 100%; min-width: 100%; }
+  .tabs { margin-bottom: 14px; }
+  .tabs button { padding: 9px 11px 10px; font-size: 13px; }
+  table.tbl td { padding: 6px 10px; }
+}
+@media (pointer: coarse) {
+  .la-check { width: 24px; height: 24px; }
+  table.tbl th { padding-top: 12px; padding-bottom: 12px; }
+}
+.netbar { position: sticky; top: var(--topbar-h); z-index: 9; padding: 8px max(28px, env(safe-area-inset-left)); font-size: 13px; line-height: 1.4; background: var(--panel-2); color: var(--muted); border-bottom: 1px solid var(--line-strong); }
+.netbar b { color: var(--ink); font-weight: 600; }
+.netbar.warn { background: var(--warn-soft); color: var(--warn); border-bottom-color: var(--warn); }
+.netbar.warn b { color: var(--warn); }
+.netbar.err { background: var(--err-soft); color: var(--err); border-bottom-color: var(--err); }
+.netbar.err b { color: var(--err); }
+.netbar .link { color: inherit; text-decoration: underline; font-size: inherit; }
+.netbar.info { background: var(--blueprint-soft); color: var(--blueprint); border-bottom-color: var(--blueprint); }
+.netbar.info b { color: var(--blueprint); }
+@media (max-width: 720px) {
+  .netbar { position: static; padding-left: max(12px, env(safe-area-inset-left)); }
+}
+.clarif-list { display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow-y: auto; }
+.clarif { display: flex; gap: 9px; align-items: flex-start; padding: 6px 8px; border-radius: var(--radius); font-size: 13px; line-height: 1.45; cursor: pointer; }
+.clarif:hover { background: var(--panel-2); }
+.clarif input { margin-top: 2px; flex: 0 0 auto; }
+.clarif span { flex: 1 1 auto; }
+.clarif .link { flex: 0 0 auto; opacity: 0; }
+.clarif:hover .link { opacity: 1; }
+.sub-panel { border: 1px solid var(--line); }
+.co-compose { display: grid; grid-template-columns: minmax(0px, 1fr) minmax(0px, 1.05fr); gap: 12px; padding: 0px 12px 12px; }
+@media (max-width: 1100px) {
+  .co-compose { grid-template-columns: 1fr; }
+}
+.co-editor { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel-2); padding: 12px; display: flex; flex-direction: column; }
+.co-editor textarea { width: 100%; resize: vertical; min-height: 120px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink); padding: 8px 10px; font: 14px/1.5 var(--font-body); }
+.co-items { display: flex; flex-direction: column; gap: 5px; }
+.co-item { display: grid; grid-template-columns: 1fr 110px 22px; gap: 6px; align-items: center; }
+.co-item input { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink); padding: 5px 8px; font: 13px var(--font-body); min-width: 0px; }
+.co-item-foot { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+
+</style></head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="mark">Plan<b>Wise</b></span>
+    <span class="tagline">Project Controls</span>
+  </div>
+  <div class="job-picker">
+    <svg class="icon" viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+    <input id="jobSearch" type="search" placeholder="Job number or name…" autocomplete="off" spellcheck="false">
+    <ul id="jobResults" class="results hidden"></ul>
+  </div>
+  <span style="flex:1"></span>
+  <div id="freshness" class="chip ok" title="Extract as of 2026-08-17T06:30:00-04:00 (schema v2)
+C:\Users\Ross\AppData\Local\Temp\claude\D--New-Product---PlanWise-8-8-2026\4b513294-c55a-4f57-8bb6-8c77c88a144f\scratchpad\demo-vista.xlsx"><span class="dot"></span>VISTA · 1.2h · 4 jobs</div>
+  <button id="userChip" class="chip clickable" title="Signed-in user" data-admin="1">Demo Admin</button>
+  <button id="settingsBtn" class="iconbtn" title="Settings — AI, spend cap, companion">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"></circle><path d="M19.4 13.5a7.6 7.6 0 0 0 0-3l2-1.5-2-3.5-2.4 1a7.6 7.6 0 0 0-2.6-1.5L14 2h-4l-.4 2.5A7.6 7.6 0 0 0 7 6L4.6 5l-2 3.5 2 1.5a7.6 7.6 0 0 0 0 3l-2 1.5 2 3.5 2.4-1a7.6 7.6 0 0 0 2.6 1.5L10 22h4l.4-2.5a7.6 7.6 0 0 0 2.6-1.5l2.4 1 2-3.5z"></path></svg>
+  </button>
+  <button id="themeBtn" class="iconbtn" title="Toggle light / dark">
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+  </button>
+</header>
+
+<div id="settingsDlg" class="overlay hidden">
+  <div class="dialog" style="width:480px">
+    <h2>Settings</h2>
+    <div class="sub">Shared by the whole team — keys are stored on the server, never shown in full.</div>
+    <div id="settingsBody">Loading…</div>
+  </div>
+</div>
+
+<!-- Offline / pending-sync banner (Phase 5f). Hidden until it has something
+     true to say; never claims data is current when it isn't. -->
+<div id="netbar" class="netbar hidden" role="status" aria-live="polite"></div>
+
+<!-- Outbox prompt (Phase 5g): what was prepared in the field and still needs
+     drafting into desktop Outlook. Appears only at a machine that has one. -->
+<div id="outbox" class="netbar info hidden" role="status" aria-live="polite"></div>
+
+<main class="content" id="main">
+  <div class="titleblock">
+    <div class="tb-cell tb-main">
+      <div class="eyebrow">Project</div>
+      <h1>Northwind Substation Upgrade</h1>
+    </div>
+    <div class="tb-cell"><div class="eyebrow">Job No.</div><div class="tb-val mono">26-101</div></div>
+    <div class="tb-cell"><div class="eyebrow">Contract</div><div class="tb-val num">$4,250,000.00</div></div>
+    <div class="tb-cell"><div class="eyebrow">Type</div><div class="tb-val">Lump Sum</div></div>
+    <div class="tb-cell"><div class="eyebrow">Status</div><div><span class="stamp ok">On Track</span></div></div>
+  </div><nav class="tabs">
+    <button class="" data-page="dashboard">
+      Dashboard
+    </button>
+    <button class="" data-page="overview">
+      Overview
+    </button>
+    <button class="" data-page="costs">
+      Cost Breakdown
+    </button>
+    <button class="" data-page="changeorders">
+      Change Orders<span class="count">5</span>
+    </button>
+    <button class="" data-page="pos">
+      Invoices / POs<span class="count">5</span>
+    </button>
+    <button class="" data-page="schedule">
+      Schedule
+    </button>
+    <button class="active" data-page="lookahead">
+      Look Ahead
+    </button>
+    <button class="" data-page="drawings">
+      Drawings
+    </button>
+    <button class="" data-page="rfis">
+      RFIs
+    </button>
+    <button class="" data-page="submittals">
+      Submittals
+    </button></nav>
+    <div class="panel">
+      <div class="panel-head"><h3>Two-Week Look Ahead</h3>
+        <span class="sub">2026-08-16 → 2026-08-29 · 4 activities</span></div>
+      <div class="inline-form top" style="border-top:none;border-bottom:1px solid var(--line-strong)">
+        <span class="seg" title="Three weeks keeps a rolling plan on screen; dropping back to two hides week three, it doesn't delete it">
+          <button class="btn sm active" data-la-weeks="2" data-period="28c5198e6800">2 wk</button><button class="btn sm " data-la-weeks="3" data-period="28c5198e6800">3 wk</button>
+        </span>
+        <button class="btn sm" data-la-seed="28c5198e6800" title="Pull schedule tasks that overlap this window">Seed from Schedule</button>
+        <button class="btn sm " data-la-preview="customer" title="The customer PDF — no tools or materials">Preview Customer PDF</button>
+        <button class="btn sm " data-la-preview="team" title="The internal PDF — everything, including tools and materials">Preview Internal PDF</button>
+        <button class="btn primary sm" data-la-share="28c5198e6800" data-audience="customer" title="Drafts the customer version into YOUR Outlook — tools and materials removed">Share to Customer</button>
+        <button class="btn sm" data-la-share="28c5198e6800" data-audience="team" title="Drafts the full internal version with a blank To line for you to address">Share with My Team</button>
+        
+        <span id="laMsg" class="small muted"></span>
+      </div>
+      <div class="panel-body">
+        <div class="la-setup">
+          <div class="field"><label>Prepared By</label>
+            <input data-la-period="28c5198e6800" data-field="prepared_by" value="M. Chen" placeholder="—"></div>
+          <div class="field"><label>Start Date</label>
+            <input type="date" id="laStart" value="2026-08-16"></div>
+          
+    <div class="field">
+      <label>Work Areas <span class="hint">optional</span></label>
+      <div class="minicard ">
+      <button class="minicard-head" data-la-areas-toggle="">
+        <span><span class="caret">▸</span> 3 in use</span>
+        <span class="sub"><span class="la-swatch sm" style="background:#2F74B8" title="Switchyard"></span><span class="la-swatch sm" style="background:#1E7A46" title="Control Building"></span><span class="la-swatch sm" style="background:#B8860B" title="Cable Trench"></span></span>
+      </button>
+      
+      </div>
+    </div>
+        </div>
+      </div>
+      <div class="panel-body flush">
+        <form class="inline-form" data-la-form="28c5198e6800">
+          <input name="description" class="grow" placeholder="Task name &amp; description" required="">
+          <input name="requirements" placeholder="Requirements for customer" style="width:200px">
+          <input name="notes" placeholder="Operation notes" style="width:180px">
+          <button class="btn primary sm" type="submit">+ Task</button>
+        </form>
+        <div class="la-scroll">
+        <table class="tbl la-grid ">
+          <thead><tr>
+            <th class="la-task">Task Name &amp; Description</th>
+            <th class="la-area-cell">Work Area</th>
+    <th class="la-day weekend wk-start" title="2026-08-16" data-label="Sun 16">
+      <span class="dow">Sun</span><span class="dom">16</span>
+    </th>
+    <th class="la-day  " title="2026-08-17" data-label="Mon 17">
+      <span class="dow">Mon</span><span class="dom">17</span>
+    </th>
+    <th class="la-day  " title="2026-08-18" data-label="Tue 18">
+      <span class="dow">Tue</span><span class="dom">18</span>
+    </th>
+    <th class="la-day  " title="2026-08-19" data-label="Wed 19">
+      <span class="dow">Wed</span><span class="dom">19</span>
+    </th>
+    <th class="la-day  " title="2026-08-20" data-label="Thu 20">
+      <span class="dow">Thu</span><span class="dom">20</span>
+    </th>
+    <th class="la-day  " title="2026-08-21" data-label="Fri 21">
+      <span class="dow">Fri</span><span class="dom">21</span>
+    </th>
+    <th class="la-day weekend " title="2026-08-22" data-label="Sat 22">
+      <span class="dow">Sat</span><span class="dom">22</span>
+    </th>
+    <th class="la-day weekend wk-start" title="2026-08-23" data-label="Sun 23">
+      <span class="dow">Sun</span><span class="dom">23</span>
+    </th>
+    <th class="la-day  " title="2026-08-24" data-label="Mon 24">
+      <span class="dow">Mon</span><span class="dom">24</span>
+    </th>
+    <th class="la-day  " title="2026-08-25" data-label="Tue 25">
+      <span class="dow">Tue</span><span class="dom">25</span>
+    </th>
+    <th class="la-day  " title="2026-08-26" data-label="Wed 26">
+      <span class="dow">Wed</span><span class="dom">26</span>
+    </th>
+    <th class="la-day  " title="2026-08-27" data-label="Thu 27">
+      <span class="dow">Thu</span><span class="dom">27</span>
+    </th>
+    <th class="la-day  " title="2026-08-28" data-label="Fri 28">
+      <span class="dow">Fri</span><span class="dom">28</span>
+    </th>
+    <th class="la-day weekend " title="2026-08-29" data-label="Sat 29">
+      <span class="dow">Sat</span><span class="dom">29</span>
+    </th>
+            <th class="la-text">Requirements for Customer</th>
+            <th class="la-text">Operation Notes</th>
+            <th class="la-text internal">Tools Needed</th>
+            <th class="la-text internal">Material Needed</th>
+            <th class="la-x"></th>
+          </tr></thead>
+          <tbody>
+            <tr style="--row-color:#2F74B8;--row-ink:#fff">
+              <td class="la-task" style="border-left:4px solid #2F74B8" data-label="Task Name &amp; Description">
+                
+                <textarea class="ecell la-wrap" rows="1" data-la="05f28959a9ff" data-field="description" placeholder="Task name &amp; description" style="height: 46px;">Control building interior rough-in</textarea></td>
+              <td class="la-area-cell" style="border-left:3px solid #2F74B8" data-label="Work Area">
+      <div class="la-area-wrap"><select class="ecell la-area" data-la="05f28959a9ff" data-field="work_area_id" title="Switchyard">
+        <option value="">— no area —</option>
+        <option value="b52242438454" selected="">Switchyard</option><option value="228444dd20fa">Control Building</option><option value="0d85ce6ac41d">Cable Trench</option>
+      </select></div></td>
+              
+                <td class="la-day weekend wk-start" data-label="Sun 16">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="0" checked="" title="Sun 16"></td>
+                <td class="la-day  " data-label="Mon 17">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="1" title="Mon 17"></td>
+                <td class="la-day  " data-label="Tue 18">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="2" checked="" title="Tue 18"></td>
+                <td class="la-day  " data-label="Wed 19">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="3" title="Wed 19"></td>
+                <td class="la-day  " data-label="Thu 20">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="4" checked="" title="Thu 20"></td>
+                <td class="la-day  " data-label="Fri 21">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="5" title="Fri 21"></td>
+                <td class="la-day weekend " data-label="Sat 22">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="6" checked="" title="Sat 22"></td>
+                <td class="la-day weekend wk-start" data-label="Sun 23">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="7" title="Sun 23"></td>
+                <td class="la-day  " data-label="Mon 24">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="8" checked="" title="Mon 24"></td>
+                <td class="la-day  " data-label="Tue 25">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="9" title="Tue 25"></td>
+                <td class="la-day  " data-label="Wed 26">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="10" title="Wed 26"></td>
+                <td class="la-day  " data-label="Thu 27">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="11" title="Thu 27"></td>
+                <td class="la-day  " data-label="Fri 28">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="12" title="Fri 28"></td>
+                <td class="la-day weekend " data-label="Sat 29">
+                  <input type="checkbox" class="la-check" data-day-item="05f28959a9ff" data-day-index="13" title="Sat 29"></td>
+              <td class="la-text " data-label="Requirements for Customer">
+    <textarea class="ecell la-wrap" rows="1" data-la="05f28959a9ff" data-field="requirements" placeholder="Access, outage, escort…" style="height: 46px;">Slab cured, walls closed</textarea></td>
+              <td class="la-text " data-label="Operation Notes">
+    <textarea class="ecell la-wrap" rows="1" data-la="05f28959a9ff" data-field="notes" placeholder="Operation notes…" style="height: 46px;"></textarea></td>
+              <td class="la-text internal" data-label="Tools Needed">
+    <textarea class="ecell la-wrap" rows="1" data-la="05f28959a9ff" data-field="tools" placeholder="Internal only…" style="height: 46px;">Bender, hammer drill</textarea></td>
+              <td class="la-text internal" data-label="Material Needed">
+    <textarea class="ecell la-wrap" rows="1" data-la="05f28959a9ff" data-field="materials" placeholder="Internal only…" style="height: 46px;">EMT, boxes, wire</textarea></td>
+              <td class="la-x"><button class="link danger" data-del-la="05f28959a9ff" title="Remove">×</button></td>
+            </tr><tr style="--row-color:#B8860B;--row-ink:#fff">
+              <td class="la-task" style="border-left:4px solid #B8860B" data-label="Task Name &amp; Description">
+                
+                <textarea class="ecell la-wrap" rows="1" data-la="0cca81210b1f" data-field="description" placeholder="Task name &amp; description" style="height: 46px;">Backfill and compact cable trench</textarea></td>
+              <td class="la-area-cell" style="border-left:3px solid #B8860B" data-label="Work Area">
+      <div class="la-area-wrap"><select class="ecell la-area" data-la="0cca81210b1f" data-field="work_area_id" title="Cable Trench">
+        <option value="">— no area —</option>
+        <option value="b52242438454">Switchyard</option><option value="228444dd20fa">Control Building</option><option value="0d85ce6ac41d" selected="">Cable Trench</option>
+      </select></div></td>
+              
+                <td class="la-day weekend wk-start" data-label="Sun 16">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="0" title="Sun 16"></td>
+                <td class="la-day  " data-label="Mon 17">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="1" title="Mon 17"></td>
+                <td class="la-day  " data-label="Tue 18">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="2" checked="" title="Tue 18"></td>
+                <td class="la-day  " data-label="Wed 19">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="3" title="Wed 19"></td>
+                <td class="la-day  " data-label="Thu 20">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="4" checked="" title="Thu 20"></td>
+                <td class="la-day  " data-label="Fri 21">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="5" title="Fri 21"></td>
+                <td class="la-day weekend " data-label="Sat 22">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="6" title="Sat 22"></td>
+                <td class="la-day weekend wk-start" data-label="Sun 23">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="7" title="Sun 23"></td>
+                <td class="la-day  " data-label="Mon 24">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="8" title="Mon 24"></td>
+                <td class="la-day  " data-label="Tue 25">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="9" title="Tue 25"></td>
+                <td class="la-day  " data-label="Wed 26">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="10" title="Wed 26"></td>
+                <td class="la-day  " data-label="Thu 27">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="11" title="Thu 27"></td>
+                <td class="la-day  " data-label="Fri 28">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="12" title="Fri 28"></td>
+                <td class="la-day weekend " data-label="Sat 29">
+                  <input type="checkbox" class="la-check" data-day-item="0cca81210b1f" data-day-index="13" title="Sat 29"></td>
+              <td class="la-text " data-label="Requirements for Customer">
+    <textarea class="ecell la-wrap" rows="1" data-la="0cca81210b1f" data-field="requirements" placeholder="Access, outage, escort…" style="height: 46px;">Inspection sign-off before backfill</textarea></td>
+              <td class="la-text " data-label="Operation Notes">
+    <textarea class="ecell la-wrap" rows="1" data-la="0cca81210b1f" data-field="notes" placeholder="Operation notes…" style="height: 46px;"></textarea></td>
+              <td class="la-text internal" data-label="Tools Needed">
+    <textarea class="ecell la-wrap" rows="1" data-la="0cca81210b1f" data-field="tools" placeholder="Internal only…" style="height: 26px;">Plate compactor</textarea></td>
+              <td class="la-text internal" data-label="Material Needed">
+    <textarea class="ecell la-wrap" rows="1" data-la="0cca81210b1f" data-field="materials" placeholder="Internal only…" style="height: 46px;">Select fill (120 cy)</textarea></td>
+              <td class="la-x"><button class="link danger" data-del-la="0cca81210b1f" title="Remove">×</button></td>
+            </tr><tr style="--row-color:#1E7A46;--row-ink:#fff">
+              <td class="la-task" style="border-left:4px solid #1E7A46" data-label="Task Name &amp; Description">
+                
+                <textarea class="ecell la-wrap" rows="1" data-la="b7a6b0d921e2" data-field="description" placeholder="Task name &amp; description" style="height: 46px;">Terminate relay panels R-1 / R-2</textarea></td>
+              <td class="la-area-cell" style="border-left:3px solid #1E7A46" data-label="Work Area">
+      <div class="la-area-wrap"><select class="ecell la-area" data-la="b7a6b0d921e2" data-field="work_area_id" title="Control Building">
+        <option value="">— no area —</option>
+        <option value="b52242438454">Switchyard</option><option value="228444dd20fa" selected="">Control Building</option><option value="0d85ce6ac41d">Cable Trench</option>
+      </select></div></td>
+              
+                <td class="la-day weekend wk-start" data-label="Sun 16">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="0" title="Sun 16"></td>
+                <td class="la-day  " data-label="Mon 17">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="1" title="Mon 17"></td>
+                <td class="la-day  " data-label="Tue 18">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="2" title="Tue 18"></td>
+                <td class="la-day  " data-label="Wed 19">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="3" title="Wed 19"></td>
+                <td class="la-day  " data-label="Thu 20">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="4" checked="" title="Thu 20"></td>
+                <td class="la-day  " data-label="Fri 21">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="5" title="Fri 21"></td>
+                <td class="la-day weekend " data-label="Sat 22">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="6" checked="" title="Sat 22"></td>
+                <td class="la-day weekend wk-start" data-label="Sun 23">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="7" title="Sun 23"></td>
+                <td class="la-day  " data-label="Mon 24">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="8" checked="" title="Mon 24"></td>
+                <td class="la-day  " data-label="Tue 25">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="9" title="Tue 25"></td>
+                <td class="la-day  " data-label="Wed 26">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="10" title="Wed 26"></td>
+                <td class="la-day  " data-label="Thu 27">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="11" title="Thu 27"></td>
+                <td class="la-day  " data-label="Fri 28">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="12" title="Fri 28"></td>
+                <td class="la-day weekend " data-label="Sat 29">
+                  <input type="checkbox" class="la-check" data-day-item="b7a6b0d921e2" data-day-index="13" title="Sat 29"></td>
+              <td class="la-text " data-label="Requirements for Customer">
+    <textarea class="ecell la-wrap" rows="1" data-la="b7a6b0d921e2" data-field="requirements" placeholder="Access, outage, escort…" style="height: 26px;">Relay settings issued</textarea></td>
+              <td class="la-text " data-label="Operation Notes">
+    <textarea class="ecell la-wrap" rows="1" data-la="b7a6b0d921e2" data-field="notes" placeholder="Operation notes…" style="height: 46px;"></textarea></td>
+              <td class="la-text internal" data-label="Tools Needed">
+    <textarea class="ecell la-wrap" rows="1" data-la="b7a6b0d921e2" data-field="tools" placeholder="Internal only…" style="height: 46px;">Torque set, meggers</textarea></td>
+              <td class="la-text internal" data-label="Material Needed">
+    <textarea class="ecell la-wrap" rows="1" data-la="b7a6b0d921e2" data-field="materials" placeholder="Internal only…" style="height: 46px;">Control cable, lugs</textarea></td>
+              <td class="la-x"><button class="link danger" data-del-la="b7a6b0d921e2" title="Remove">×</button></td>
+            </tr><tr style="--row-color:#2F74B8;--row-ink:#fff">
+              <td class="la-task" style="border-left:4px solid #2F74B8" data-label="Task Name &amp; Description">
+                
+                <textarea class="ecell la-wrap" rows="1" data-la="27868b476101" data-field="description" placeholder="Task name &amp; description" style="height: 46px;">Pull 15kV feeder cable, bays 1-3</textarea></td>
+              <td class="la-area-cell" style="border-left:3px solid #2F74B8" data-label="Work Area">
+      <div class="la-area-wrap"><select class="ecell la-area" data-la="27868b476101" data-field="work_area_id" title="Switchyard">
+        <option value="">— no area —</option>
+        <option value="b52242438454" selected="">Switchyard</option><option value="228444dd20fa">Control Building</option><option value="0d85ce6ac41d">Cable Trench</option>
+      </select></div></td>
+              
+                <td class="la-day weekend wk-start" data-label="Sun 16">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="0" checked="" title="Sun 16"></td>
+                <td class="la-day  " data-label="Mon 17">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="1" title="Mon 17"></td>
+                <td class="la-day  " data-label="Tue 18">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="2" checked="" title="Tue 18"></td>
+                <td class="la-day  " data-label="Wed 19">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="3" title="Wed 19"></td>
+                <td class="la-day  " data-label="Thu 20">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="4" checked="" title="Thu 20"></td>
+                <td class="la-day  " data-label="Fri 21">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="5" title="Fri 21"></td>
+                <td class="la-day weekend " data-label="Sat 22">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="6" title="Sat 22"></td>
+                <td class="la-day weekend wk-start" data-label="Sun 23">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="7" title="Sun 23"></td>
+                <td class="la-day  " data-label="Mon 24">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="8" title="Mon 24"></td>
+                <td class="la-day  " data-label="Tue 25">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="9" title="Tue 25"></td>
+                <td class="la-day  " data-label="Wed 26">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="10" title="Wed 26"></td>
+                <td class="la-day  " data-label="Thu 27">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="11" title="Thu 27"></td>
+                <td class="la-day  " data-label="Fri 28">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="12" title="Fri 28"></td>
+                <td class="la-day weekend " data-label="Sat 29">
+                  <input type="checkbox" class="la-check" data-day-item="27868b476101" data-day-index="13" title="Sat 29"></td>
+              <td class="la-text " data-label="Requirements for Customer">
+    <textarea class="ecell la-wrap" rows="1" data-la="27868b476101" data-field="requirements" placeholder="Access, outage, escort…" style="height: 46px;">Owner outage window confirmed</textarea></td>
+              <td class="la-text " data-label="Operation Notes">
+    <textarea class="ecell la-wrap" rows="1" data-la="27868b476101" data-field="notes" placeholder="Operation notes…" style="height: 46px;"></textarea></td>
+              <td class="la-text internal" data-label="Tools Needed">
+    <textarea class="ecell la-wrap" rows="1" data-la="27868b476101" data-field="tools" placeholder="Internal only…" style="height: 46px;">Cable puller, tuggers</textarea></td>
+              <td class="la-text internal" data-label="Material Needed">
+    <textarea class="ecell la-wrap" rows="1" data-la="27868b476101" data-field="materials" placeholder="Internal only…" style="height: 46px;">15kV EPR cable (4200 ft)</textarea></td>
+              <td class="la-x"><button class="link danger" data-del-la="27868b476101" title="Remove">×</button></td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+      </div>
+    </div>
+
+    
+
+    <div class="note">Tick the days each task is worked. Lines pulled in by
+    <b>Seed from Schedule</b> are marked <span class="tag">FROM SCHEDULE</span> and stay
+    fully editable — re-seeding adds only newly-overlapping schedule tasks and never
+    overwrites what you've changed or typed.
+    <b>Tools Needed</b> and <b>Material Needed</b> are internal: they appear on
+    <b>Share with My Team</b> only and are never built into the customer version.
+    Either share drafts into <b>your</b> Outlook; you review and send.</div></main>
+
+<div id="identity" class="overlay hidden">
+  <div class="dialog" id="identityBody"></div>
+</div>
+
+
+
+
+
+
+
+</body></html>

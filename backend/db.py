@@ -528,6 +528,10 @@ MIGRATIONS = [
     # PO exists — the commitment and the paperwork have no way to find each
     # other.
     ("purchase_orders", "source_co_id", "TEXT"),
+    # 2.0 composer: what entitles the firm to the change (field direction,
+    # RFI answer, revised drawing, owner request). The letter prints it in
+    # the head table; the register never needed it, the letter always did.
+    ("change_orders", "raised_from", "TEXT"),
     # 2.0: the reversal mechanism behind "anything you send can be undone" and
     # the Activity page's reverse flow. A mutation that knows its own inverse
     # stores it as `revert` JSON ({op, ...}) when it logs; reversing applies

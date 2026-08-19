@@ -15,6 +15,7 @@ function pageBody(page, v) {
       <p style="margin:0;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">This page is being rebuilt for 2.0 and lands in a later build phase. The 1.x page still works at <a href="/#/job/${esc(v.jobNumber)}">the current PlanWise</a>.</p>
     </section>`;
   }
+  if (page === "pos" && typeof pagePos === "function") return pagePos(v);
   return "";   // register pages render through uiRegister
 }
 
@@ -341,4 +342,179 @@ function buildPageVals(app) {
     out.noContacts = contacts.length === 0;
   }
   return out;
+}
+
+// ——— Schedule (prototype lines 422–513; server engine behind it) ————————————
+function pageSched(v) {
+  if (v.staged) {
+    const c = v.staged.counts || {};
+    return `<section aria-labelledby="staged-heading" style="background:var(--pn);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 id="staged-heading" style="margin:0;flex:1;font:600 15px var(--fd)">A schedule import is waiting for review</h2>
+        <p style="margin:0;font:11.5px var(--fm);color:var(--ft)">${esc(String(c.tasks ?? "?"))} tasks · ${esc(String(c.links ?? 0))} proposed links · nothing lands until you commit</p>
+      </div>
+      ${(v.staged.warnings || []).map((w) => `<p style="margin:0;padding:9px 16px;border-bottom:1px solid var(--ln);background:var(--wns);color:var(--wn);font-size:var(--fzs);text-wrap:pretty">${esc(w)}</p>`).join("")}
+      ${(v.staged.links || []).length ? `<div style="padding:12px 16px;border-bottom:1px solid var(--ln)">
+        <div style="display:flex;gap:9px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
+          <h3 style="margin:0;flex:1;font:600 13px var(--fd)">Inferred dependencies — tick the ones to keep</h3>
+          <button data-click="${H(v.staged.tickAll(true))}" class="hb-ls" style="min-height:30px;padding:4px 10px;border:1px solid var(--ln);border-radius:5px;font:600 11.5px var(--fd)">Tick all</button>
+          <button data-click="${H(v.staged.tickAll(false))}" class="hb-ls" style="min-height:30px;padding:4px 10px;border:1px solid var(--ln);border-radius:5px;font:600 11.5px var(--fd)">Untick all</button>
+        </div>
+        <ul style="list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:6px">
+          ${v.staged.links.map((l) => `<li style="display:flex;gap:9px;align-items:center;padding:7px 9px;border:1px solid var(--ln);border-radius:6px;background:${l.on ? "var(--as)" : "var(--p3)"}">
+            <input type="checkbox" ${l.on ? "checked" : ""} data-change="${H(l.toggle)}" style="width:17px;height:17px;accent-color:var(--ac);flex:none">
+            <span style="flex:1;font-size:12px">${esc(l.pred_name || l.pred_id)} → ${esc(l.succ_name || l.succ_id)} <span style="font-family:var(--fm);color:var(--ft)">(${esc(l.link_type || "FS")}${l.confidence ? " · " + Math.round(l.confidence * 100) + "%" : ""})</span></span>
+          </li>`).join("")}
+        </ul>
+      </div>` : ""}
+      <div style="display:flex;gap:9px;align-items:center;padding:12px 16px;background:var(--p2);flex-wrap:wrap">
+        <p style="margin:0;flex:1;font-size:12px;color:var(--mu);text-wrap:pretty">Committing replaces this job's imported tasks and keeps every task added by hand. Links land only where ticked — an inferred dependency never drives dates silently.</p>
+        <button data-click="${H(v.staged.discard)}" class="hb-ls" style="min-height:var(--tap);padding:9px 15px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 13px var(--fd)">Discard the import</button>
+        <button data-click="${H(v.staged.commit)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">Commit the import</button>
+      </div>
+    </section>`;
+  }
+  if (v.schedEmpty) {
+    return `<section style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);padding:34px 20px;text-align:center">
+      <p style="margin:0 auto;max-width:52ch;font-size:var(--fz);color:var(--mu);text-wrap:pretty">No schedule on this job yet. Import the customer's file — .mpp, MS Project XML, a flattened PDF print, Excel or CSV — or add the first task by hand.</p>
+      <div style="display:flex;gap:9px;justify-content:center;margin-top:16px;flex-wrap:wrap">
+        <button data-click="${H(v.triggerSchedImport)}" class="hb-ah" style="${btn("primary")}">Import a schedule</button>
+        <button data-click="${H(v.openNewTask)}" class="hb-ls" style="${btn("ghost")}">Add a task</button>
+      </div>
+      ${v.mppNote ? `<p style="margin:14px 0 0;font-size:12px;color:var(--ft)">${esc(v.mppNote)}</p>` : ""}
+    </section>`;
+  }
+  return `<section aria-labelledby="gantt-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--ln);flex-wrap:wrap">
+      <h2 id="gantt-heading" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Gantt chart</h2>
+      <p style="margin:0;font:500 10.5px var(--fm);letter-spacing:.07em;text-transform:uppercase;color:var(--ft)">${esc(v.ganttRange)}</p>
+      <span style="flex:1"></span>
+      <ul style="list-style:none;margin:0;padding:0;display:flex;gap:12px;font:500 10.5px var(--fm);letter-spacing:.06em;text-transform:uppercase;color:var(--mu);flex-wrap:wrap">
+        <li style="display:inline-flex;align-items:center;gap:5px"><span aria-hidden="true" style="width:14px;height:9px;border-radius:2px;border:2px solid var(--ink);display:inline-block"></span>Critical path</li>
+        <li style="display:inline-flex;align-items:center;gap:5px"><span aria-hidden="true" style="width:14px;height:9px;border-radius:2px;border:1px solid var(--ls);display:inline-block"></span>Has float</li>
+        <li style="display:inline-flex;align-items:center;gap:5px"><span aria-hidden="true" style="width:14px;height:9px;border-radius:2px;background:linear-gradient(90deg,var(--ls) 60%,transparent 60%);display:inline-block"></span>Filled to percent complete</li>
+      </ul>
+      <span role="group" aria-label="Zoom the time axis" style="display:inline-flex;gap:4px;align-items:center">
+        <button data-click="${H(v.schedZoomOut)}" aria-label="Zoom out" class="hb-ac" style="min-height:30px;min-width:30px;border:1px solid var(--ln);border-radius:5px;color:var(--mu);font:600 14px var(--fm)">−</button>
+        <button data-click="${H(v.schedZoomReset)}" aria-label="Reset zoom" class="hb-ac" style="min-height:30px;padding:0 8px;border:1px solid var(--ln);border-radius:5px;color:var(--mu);font:600 11px var(--fm)">${esc(v.schedZoomLabel)}</button>
+        <button data-click="${H(v.schedZoomIn)}" aria-label="Zoom in" class="hb-ac" style="min-height:30px;min-width:30px;border:1px solid var(--ln);border-radius:5px;color:var(--mu);font:600 14px var(--fm)">+</button>
+      </span>
+      <button data-click="${H(v.triggerSchedImport)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Import an updated schedule</button>
+      <button data-click="${H(v.openNewTask)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd)">Add a task</button>
+    </div>
+    <div style="overflow-x:auto;padding:0 0 6px">
+      <div style="min-width:${v.ganttMinWidth}px">
+        <div style="display:grid;grid-template-columns:280px minmax(0,1fr);border-bottom:1px solid var(--ln);position:sticky;top:0;background:var(--pn);z-index:1">
+          <p style="margin:0;padding:8px 16px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">Task</p>
+          <div style="display:flex;position:relative;padding:8px 16px 8px 0">
+            ${v.ganttMonths.map((m) => `<span style="${m.style}">${esc(m.label)}</span>`).join("")}
+          </div>
+        </div>
+        <ul style="list-style:none;margin:0;padding:0">
+          ${v.ganttRows.map((g) => `<li data-sched-row="${g.idx}" style="${g.rowStyle}">
+            <div class="hr-p2" style="display:grid;grid-template-columns:280px minmax(0,1fr);align-items:center">
+              <div style="padding:5px 6px 5px 8px;min-width:0;display:flex;gap:6px;align-items:center">
+                <span data-pointerdown="${H(g.gripDown)}" title="Drag to reorder this row" aria-hidden="true" style="flex:none;width:14px;color:var(--ls);cursor:grab;touch-action:none;font:700 11px/1 var(--fm);letter-spacing:0;text-align:center;user-select:none">⠿</span>
+                <span aria-hidden="true" style="${g.indentStyle}"></span>
+                ${g.caretShow ? `<button data-click="${H(g.toggleCollapse)}" aria-label="${esc(g.caretAria)}" class="hb-as" style="flex:none;width:18px;height:18px;display:grid;place-content:center;border-radius:4px;color:var(--mu);font:600 10px var(--fm)">${g.caret}</button>` : ""}
+                <span style="font:500 10.5px var(--fm);color:var(--ft);flex:none">${esc(g.num)}</span>
+                <span aria-hidden="true" style="${g.swatch}"></span>
+                <button data-click="${H(g.edit)}" class="ht-ac" style="${g.nameStyle}">${esc(g.name)}</button>
+                ${g.kidCount ? `<span style="flex:none;font:600 10px var(--fm);color:var(--ft);background:var(--p2);border:1px solid var(--ln);border-radius:999px;padding:1px 6px">${g.kidCount}</span>` : ""}
+                <button data-click="${H(g.togglePeek)}" aria-expanded="${g.peekOpen ? "true" : "false"}" aria-label="${esc(g.peekAria)}" class="hb-ac" style="flex:none;width:18px;height:18px;display:grid;place-content:center;border:1px solid var(--ln);border-radius:4px;color:var(--mu);font:600 11px var(--fm)">${g.peekChevron}</button>
+              </div>
+              <div style="position:relative;height:26px;margin-right:16px">
+                <span aria-hidden="true" style="${g.trackStyle}"></span>
+                ${g.isMilestone
+                  ? `<span data-pointerdown="${H(g.barDown)}" aria-hidden="true" style="${g.msStyle}"></span>`
+                  : `<span data-pointerdown="${H(g.barDown)}" aria-hidden="true" style="${g.barStyle}"><span style="${g.fillStyle}"></span></span>`}
+                <span aria-hidden="true" style="${g.todayStyle}"></span>
+                <span class="sr">${esc(g.aria)}</span>
+              </div>
+            </div>
+            ${g.peekOpen ? `<div style="padding:10px 16px 12px 44px;background:var(--p2);border-top:1px dashed var(--ln);animation:fadein .16s ease-out">
+              ${uiPeekFields(g)}
+              <p style="margin:9px 0 0;font-size:11.5px;color:var(--ft);text-wrap:pretty">Edits apply immediately, recalculate every dependent task, and are undoable. Dependency types: FS finish-to-start, SS start-to-start, FF finish-to-finish, SF start-to-finish.</p>
+            </div>` : ""}
+          </li>`).join("")}
+        </ul>
+      </div>
+    </div>
+    <p style="margin:0;padding:11px 16px;border-top:1px solid var(--ln);font-size:12px;color:var(--ft);text-wrap:pretty">Drag a bar to move a task, or drag the ⠿ grip to reorder the register — both ask for confirmation before anything changes. The ▾ caret collapses a summary; the + peek opens dates, predecessor, successors and dependency type as editable fields. Moving a task pushes every dependent task with it. ${esc(v.calendarNote)}</p>
+  </section>`;
+}
+
+// ——— Look ahead (prototype lines 603–679; the real 21-day model behind) ————
+function pageLook(v) {
+  if (!v.hasLook) {
+    return `<section style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);padding:26px 20px">
+      <p style="margin:0;font-size:var(--fzs);color:var(--mu)">Loading the look ahead…</p>
+    </section>`;
+  }
+  return `<section aria-labelledby="areas-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--ln);flex-wrap:wrap">
+      <h2 id="areas-heading" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Work areas</h2>
+      <p style="margin:0;font:500 10.5px var(--fm);letter-spacing:.07em;text-transform:uppercase;color:var(--ft)">${esc(v.areaCount)}</p>
+      <span style="flex:1"></span>
+      <button data-click="${H(v.openNewArea)}" class="hb-ac" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Add a work area</button>
+    </div>
+    <ul style="list-style:none;margin:0;padding:12px 16px;display:flex;gap:9px;flex-wrap:wrap">
+      ${v.areaChips.map((a) => `<li style="display:flex;align-items:center;gap:9px;padding:8px 13px;border:1px solid var(--ln);border-radius:999px;background:var(--p2)">
+        <span aria-hidden="true" style="width:11px;height:11px;border-radius:3px;background:${a.color};flex:none"></span>
+        <span style="font:600 12.5px var(--fd)">${esc(a.name)}</span>
+        <span style="font:11px var(--fm);color:var(--ft)">${esc(a.count)}</span>
+      </li>`).join("")}
+    </ul>
+  </section>
+
+  <section aria-labelledby="look-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+    <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--ln);flex-wrap:wrap">
+      <h2 id="look-heading" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">${esc(v.lookWeekCount)}</h2>
+      <p style="margin:0;font:500 10.5px var(--fm);letter-spacing:.07em;text-transform:uppercase;color:var(--ft)">${esc(v.lookRangeLabel)}</p>
+      <span role="group" aria-label="Weeks on show" style="display:inline-flex;gap:5px">
+        ${v.lookWeeksOpts.map((w) => `<button data-click="${H(w.pick)}" aria-pressed="${w.pressed}" style="${w.style}">${esc(w.label)}</button>`).join("")}
+      </span>
+      <span style="flex:1"></span>
+      <button data-click="${H(v.seedLook)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Seed from the schedule</button>
+      <button data-click="${H(v.openNewLook)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd)">Add an activity</button>
+      <button data-click="${H(v.shareLookCust)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Share with the customer</button>
+      <button data-click="${H(v.shareLookInt)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Share with the crew</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:var(--fz)">
+        <caption class="sr">Look-ahead activities. Each cell is a button that marks that day worked for that activity.</caption>
+        <thead><tr>
+          <th scope="col" style="text-align:left;padding:6px 12px;font:500 var(--lbl) var(--fm);letter-spacing:.12em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ls);border-right:1px solid var(--ln);min-width:230px">Activity</th>
+          <th scope="col" style="text-align:left;padding:6px 10px;font:500 var(--lbl) var(--fm);letter-spacing:.12em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ls);border-right:1px solid var(--ls);min-width:170px">Constraints &amp; notes</th>
+          ${v.lookDays.map((d) => `<th scope="col" style="${d.style}"><span style="display:block;font-size:9px;opacity:.8">${esc(d.dow)}</span><span style="display:block;font:600 12px var(--fd)">${esc(d.num)}</span></th>`).join("")}
+        </tr></thead>
+        <tbody>
+          ${v.lookRows.map((lr) => `<tr class="hr-p2">
+            <th scope="row" style="text-align:left;padding:6px 12px;border-bottom:1px solid var(--ln);border-right:1px solid var(--ln);font-weight:500">
+              <span style="display:flex;gap:7px;align-items:flex-start">
+                <span aria-hidden="true" style="width:3px;align-self:stretch;min-height:15px;border-radius:2px;background:${lr.areaColor};flex:none"></span>
+                <span style="flex:1;min-width:0">
+                  <button data-click="${H(lr.edit)}" class="ht-ac" style="text-align:left;font:600 12.5px/1.3 var(--fd);color:var(--bp);text-decoration:underline;text-underline-offset:2px;min-height:20px">${esc(lr.name)}</button>
+                  <span style="display:block;font:10px/1.4 var(--fm);color:var(--ft)">${esc(lr.area)} · ${esc(lr.count)} · ${esc(lr.tools)}</span>
+                </span>
+                <button data-click="${H(lr.remove)}" aria-label="Remove ${esc(lr.name)} from the look ahead" title="Remove" class="ht-er" style="flex:none;width:18px;height:18px;display:grid;place-content:center;border:1px solid var(--ln);border-radius:4px;color:var(--ft);font:600 12px/1 var(--fm)">×</button>
+              </span>
+            </th>
+            <td style="padding:6px 10px;border-bottom:1px solid var(--ln);border-right:1px solid var(--ls)">
+              ${lr.hasNotes ? `<ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px">
+                ${lr.notes.map((n) => `<li style="display:flex;gap:6px;align-items:baseline;font:11.5px/1.4 var(--fb);color:var(--mu)">
+                  <span style="font:600 8.5px var(--fm);letter-spacing:.08em;text-transform:uppercase;color:${n.color};white-space:nowrap">${esc(n.tag)}</span>
+                  <span style="flex:1;text-wrap:pretty">${esc(n.text)}</span>
+                </li>`).join("")}
+              </ul>` : `<span style="font-size:11.5px;color:var(--ft);font-style:italic">No constraint</span>`}
+            </td>
+            ${lr.days.map((d) => `<td style="${d.cellStyle}">
+              <button data-click="${H(d.toggle)}" aria-pressed="${d.pressed}" aria-label="${esc(d.label)}" style="${d.style}">${d.mark}</button>
+            </td>`).join("")}
+          </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+    <p style="margin:0;padding:11px 16px;border-top:1px solid var(--ln);font-size:12px;color:var(--ft);text-wrap:pretty">Select an activity name to edit it. Customer requirements go out on the customer copy; tools, material and operational notes never do. Dropping to two weeks hides week three rather than deleting it — the ticks keep their days.</p>
+  </section>`;
 }

@@ -726,3 +726,102 @@ function uiSettings(v) {
     </div>
   </div>`;
 }
+
+// ——— Change order composer (lines 1184–1357) ————————————————————————————
+// The prototype's preview pane simulated the letter in HTML; the production
+// pane shows the ACTUAL letter PDF the customer receives — same pane, honest
+// content (LOGIC-MERGE: real generator wins over simulation).
+function uiCO(v) {
+  if (!v.coOpen) return "";
+  return `<div style="position:fixed;inset:0;z-index:136;background:rgba(24,27,30,.45);display:flex;justify-content:center;align-items:stretch;padding:22px">
+    <form role="dialog" aria-modal="true" aria-labelledby="co-title" data-submit="${H(v.coSubmit)}" style="width:min(1220px,100%);background:var(--pn);border:1px solid var(--ls);border-radius:10px;box-shadow:var(--shp);display:flex;flex-direction:column;overflow:hidden;animation:fadein .16s ease-out">
+      <div style="flex:none;padding:14px 20px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px">
+          <p style="margin:0 0 3px;font:500 10px var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--ac)">${esc(v.coEyebrow)}</p>
+          <h2 id="co-title" style="margin:0;font:600 19px/1.2 var(--fd)">${esc(v.coTitle)}</h2>
+        </div>
+        <span style="${v.coStateStyle}">${esc(v.coStateLabel)}</span>
+        <button type="button" data-click="${H(v.coTogglePreview)}" aria-pressed="${v.coPreviewAria}" class="hb-ls" style="${v.coPreviewBtnStyle}">${esc(v.coPreviewLabel)}</button>
+        <button type="button" data-click="${H(v.coClose)}" data-ref="co" class="hb-ls-ink" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;font:600 12.5px var(--fd);color:var(--mu);white-space:nowrap">Close</button>
+      </div>
+
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:${v.coCols}">
+        <div style="overflow-y:auto;padding:16px 20px 20px;border-right:1px solid var(--ln)">
+          ${v.coShowErrors ? `<div role="alert" style="margin:0 0 15px;padding:12px 14px;border:1px solid var(--er);border-radius:7px;background:var(--ers)">
+            <p style="margin:0 0 6px;font:600 13px var(--fd);color:var(--er)">${esc(v.coErrorHeading)}</p>
+            <ul style="margin:0;padding-left:18px;font-size:var(--fzs);color:var(--er)">
+              ${v.coErrors.map((e2) => `<li>${esc(e2.text)}</li>`).join("")}
+            </ul>
+          </div>` : ""}
+
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px 16px">
+            ${v.coFields.map((f) => `<div style="${f.wrap}">
+              <label for="${f.id}" style="display:block;font:600 12px var(--fd);letter-spacing:.03em;margin-bottom:5px">${esc(f.label)}<span style="${f.reqStyle}">${esc(f.reqText)}</span></label>
+              ${f.isInput ? `<input id="${f.id}" type="${f.type}" value="${esc(f.value)}" ${f.type === "date" ? `data-change="${H(f.set)}"` : `data-input="${H(f.set)}"`} placeholder="${esc(f.placeholder)}" aria-describedby="${f.hintId}" aria-invalid="${f.invalid}" class="fi2" style="${f.control}">` : ""}
+              ${f.isArea ? `<textarea id="${f.id}" rows="${f.rows}" data-input="${H(f.set)}" placeholder="${esc(f.placeholder)}" aria-describedby="${f.hintId}" aria-invalid="${f.invalid}" class="fi2" style="${f.control}">${esc(f.value)}</textarea>` : ""}
+              ${f.isSelect ? `<select id="${f.id}" data-change="${H(f.set)}" aria-describedby="${f.hintId}" style="${f.control}">
+                ${f.options.map((o) => `<option value="${esc(o.value)}" ${String(o.value) === String(f.value) ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
+              </select>` : ""}
+              <p id="${f.hintId}" style="margin:5px 0 0;font-size:11.5px;color:${f.hintColor};text-wrap:pretty">${esc(f.hint)}</p>
+            </div>`).join("")}
+          </div>
+
+          <section aria-labelledby="co-lines" style="margin-top:18px;border:1px solid var(--ln);border-radius:7px;overflow:hidden">
+            <div style="padding:11px 14px;background:var(--p2);border-bottom:1px solid var(--ln)">
+              <h3 id="co-lines" style="margin:0;font:600 13px var(--fd)">Breakout pricing</h3>
+              <p style="margin:3px 0 0;font-size:11.5px;color:var(--mu);text-wrap:pretty">Price each cause on its own line. A credit is a negative amount.</p>
+            </div>
+            <ul style="list-style:none;margin:0;padding:0">
+              ${v.coItems.map((i) => `<li style="display:flex;gap:9px;align-items:flex-end;padding:11px 14px;border-bottom:1px solid var(--ln)">
+                <div style="flex:1;min-width:0">
+                  <label for="${i.descId}" style="display:block;font:600 11px var(--fd);margin-bottom:4px;color:var(--mu)">Line ${i.n} description</label>
+                  <input id="${i.descId}" type="text" value="${esc(i.desc)}" data-input="${H(i.setDesc)}" placeholder="Replacement anchor bolt assemblies" class="fi2" style="width:100%;min-height:var(--tap);padding:7px 10px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
+                </div>
+                <div style="width:140px;flex:none">
+                  <label for="${i.amtId}" style="display:block;font:600 11px var(--fd);margin-bottom:4px;color:var(--mu)">Amount, USD</label>
+                  <input id="${i.amtId}" type="text" inputmode="decimal" value="${esc(i.amt)}" data-input="${H(i.setAmt)}" placeholder="0.00" class="fi2" style="width:100%;min-height:var(--tap);padding:7px 10px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font:var(--fzs) var(--fm);text-align:right">
+                </div>
+                <button type="button" data-click="${H(i.remove)}" class="hb-er" style="min-height:var(--tap);padding:7px 11px;border:1px solid var(--ln);border-radius:6px;font:600 11.5px var(--fd);color:var(--mu);white-space:nowrap">Remove line ${i.n}</button>
+              </li>`).join("")}
+            </ul>
+            <div style="display:flex;gap:12px;align-items:center;padding:11px 14px;background:var(--p2);flex-wrap:wrap">
+              <button type="button" data-click="${H(v.coAddItem)}" class="hb-ac" style="min-height:var(--tap);padding:7px 13px;border:1px dashed var(--ls);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Add another line</button>
+              <span style="flex:1"></span>
+              <p style="margin:0;font:600 13px var(--fd)" aria-live="polite">Total submitted <span style="font-family:var(--fm);font-variant-numeric:tabular-nums">${esc(v.coTotal)}</span></p>
+            </div>
+          </section>
+
+          ${v.coIsCustomer ? `<fieldset style="margin:18px 0 0;padding:0;border:1px solid var(--ln);border-radius:7px;overflow:hidden">
+            <legend style="float:left;width:100%;margin:0;padding:11px 14px;background:var(--p2);border-bottom:1px solid var(--ln);font:600 13px var(--fd)">Clarifications and exceptions</legend>
+            <p style="margin:0;padding:9px 14px 0;clear:both;font-size:11.5px;color:var(--mu);text-wrap:pretty">Ticked lines print on the letter in this order. Anything you add here is saved to the firm's library for the next change order.</p>
+            <ul style="list-style:none;margin:0;padding:9px 14px 4px">
+              ${v.coClar.map((c) => `<li style="display:flex;gap:10px;align-items:flex-start;padding:7px 0">
+                <input id="${c.id}" type="checkbox" ${c.on ? "checked" : ""} data-change="${H(c.toggle)}" style="width:19px;height:19px;margin:1px 0 0;accent-color:var(--ac);flex:none">
+                <label for="${c.id}" style="flex:1;font-size:var(--fzs);color:var(--mu);cursor:pointer;text-wrap:pretty">${esc(c.text)}</label>
+                ${c.isNew ? `<span style="font:500 9.5px var(--fm);letter-spacing:.1em;text-transform:uppercase;color:var(--ok);white-space:nowrap">Added by the team</span>` : ""}
+              </li>`).join("")}
+            </ul>
+            <div style="display:flex;gap:9px;align-items:flex-end;padding:6px 14px 13px">
+              <div style="flex:1;min-width:0">
+                <label for="co-new-clar" style="display:block;font:600 11px var(--fd);margin-bottom:4px;color:var(--mu)">Write a new clarification</label>
+                <input id="co-new-clar" type="text" value="${esc(v.coNewClar)}" data-input="${H(v.coSetNewClar)}" placeholder="Pricing excludes work outside the fenced substation yard." class="fi2" style="width:100%;min-height:var(--tap);padding:7px 10px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
+              </div>
+              <button type="button" data-click="${H(v.coAddClar)}" class="hb-ac" style="min-height:var(--tap);padding:8px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12px var(--fd);white-space:nowrap">Add to the library</button>
+            </div>
+          </fieldset>` : ""}
+        </div>
+
+        ${v.coPreviewOn ? `<div style="overflow-y:auto;background:var(--p2);padding:18px;display:flex;flex-direction:column">
+          <p style="margin:0 0 10px;font:500 10px var(--fm);letter-spacing:.15em;text-transform:uppercase;color:var(--ft)">${esc(v.coPreviewNote)}</p>
+          <iframe title="Live preview of the change order letter" src="${v.coPreviewUrl}" style="flex:1;min-height:520px;width:100%;background:#FFFFFF;border:1px solid var(--ls);border-radius:4px;box-shadow:var(--sh)"></iframe>
+        </div>` : ""}
+      </div>
+
+      <div style="flex:none;padding:13px 20px;border-top:1px solid var(--ln);background:var(--p2);display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+        <p style="margin:0;flex:1;min-width:220px;font-size:12px;color:var(--mu);text-wrap:pretty" aria-live="polite">${esc(v.coFootnote)}</p>
+        <button type="submit" class="hb-ls" style="min-height:var(--tap);padding:9px 16px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 13px var(--fd)">${esc(v.coSaveLabel)}</button>
+        <button type="button" data-click="${H(v.coSaveAndSend)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">${esc(v.coSendLabel)}</button>
+      </div>
+    </form>
+  </div>`;
+}

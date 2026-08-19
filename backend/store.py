@@ -46,7 +46,7 @@ PO_FIELDS = {"po_number", "vendor", "description", "order_date", "ordered_by",
              "source_co_id"}
 CO_FIELDS = {"kind", "co_number", "cust_co_number", "date_submitted",
              "description", "amount_submitted", "amount_pending",
-             "amount_approved", "approved_by", "subcontractor", "status",
+             "amount_approved", "approved_by", "subcontractor", "status", "raised_from",
              # The prose explaining what changed and why. `description` stays
              # the short register label; this is what the letter says.
              "narrative"}

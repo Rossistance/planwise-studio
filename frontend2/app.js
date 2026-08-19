@@ -49,6 +49,10 @@ const App = {
 
     // — schedule interactions
     schedCollapsed: {}, schedPeek: null, schedDrag: null,
+    schedZoom: 1, schedStaged: null,
+
+    // — CO composer + PO import
+    coPreview: true, coNewClar: "", poImport: null,
 
     // — undo + announcements
     undo: null, live: "",
@@ -249,7 +253,7 @@ const App = {
     if (!job) return;
     const want = new Set(["job", "attention"]);
     if (page === "dash") want.add("history");
-    if (page === "sched") want.add("schedule");
+    if (page === "sched") { want.add("schedule"); this.loadStagedImport && this.loadStagedImport(); }
     if (page === "look") want.add("lookahead");
     if (page === "docs") want.add("documents");
     if (page === "rfis" || page === "subs") want.add("records");
@@ -414,7 +418,11 @@ const App = {
   // act() is called AFTER a mutation succeeded, with the activity id the
   // server returned; undo POSTs the reversal and refreshes what it touched.
   act(message, activityId, refreshKinds) {
-    setState({ undo: { message, activityId, refreshKinds: refreshKinds || ["job"] }, live: message });
+    const kinds = refreshKinds || ["job"];
+    setState({ undo: { message, activityId, refreshKinds: kinds }, live: message });
+    // The mutation happened server-side; every act() pulls the fresh truth
+    // (and the attention list, which is derived from it) back down.
+    App.refresh(...kinds);
   },
   async doUndo() {
     const u = App.state.undo;
@@ -562,6 +570,29 @@ Object.assign(App, {
         rows, total: ["All cost types", [money(estTotal), money(tot("mtd_cost")), money(actTotal), money(openTotal), uncTotal ? money(uncTotal) : "none", money(actTotal + openTotal),
           estTotal ? ((actTotal + openTotal) / estTotal * 100).toFixed(1) + "% committed" : "",
           money(tot("projected_cost")), signed(estTotal - actTotal === 0 ? 0 : tot("variance"))]] };
+    }
+
+    if (s.page === "sched") {
+      const tasks = App.schedTasks();
+      const rows = tasks.map((t, ti) => {
+        const critical = !!t.is_critical;
+        const pct = Math.round(t.percent_complete || 0);
+        const primary = App.primaryPred(t.id);
+        const predName = primary ? ((tasks.find((x) => x.id === primary.pred_id) || {}).external_id || "?") : "";
+        return { id: t.id, key: t.name || "?",
+          keySub: "Task " + (t.external_id || "—") + (t.outline_level ? " · level " + t.outline_level : "") + (predName ? " · after " + predName + " " + (primary.link_type || "FS") : ""),
+          sortVals: [t.name, t.duration_days, t.start, t.finish, pct, t.total_float],
+          edge: taskColor(t.external_id || ti + 1), sched: App.schedRowProps(ti),
+          cells: [P(t.duration_days !== null && t.duration_days !== undefined ? Math.round(t.duration_days) + " d" : "—", 1), P(t.start || ""), P(t.finish || ""),
+            { kind: "bar", text: pct + "%", w: pct, color: pct === 0 ? "var(--ls)" : taskColor(t.external_id || ti + 1) },
+            P(t.total_float === null || t.total_float === undefined ? "—" : Math.round(t.total_float) + " d", 1),
+            S(t.is_summary ? "Summary" : critical ? "Critical" : "Has float")] };
+      });
+      return { title: "Schedule tasks", source: tasks.length + " tasks · " + (((s.data.schedule || {}).critical_count) || 0) + " on the critical path", kind: "task",
+        caption: "Schedule tasks on job " + s.job + " with duration, start, finish, percent complete, float and whether the task is on the critical path. Select a task name to edit it.",
+        footnote: "Float is in working days on the job calendar, computed by the engine — never typed. Tasks with zero float move the finish date if they slip. Drag the ⠿ grip to reorder rows, or open + to edit dates, predecessor, successors and dependency type in place — the Gantt follows every change. Tasks added or edited in PlanWise keep their changes when the customer's schedule is re-imported.",
+        columns: [["Task", 0, 1], ["Duration", 1, 1], ["Start", 0, 1], ["Finish", 0, 1], ["Complete", 0, 1], ["Float", 1, 1], ["Path", 0, 0]],
+        rows, noSort: !!s.schedDrag, emptyText: "No tasks yet. Import a schedule or add the first task." };
     }
 
     if (s.page === "activity") {
@@ -1239,8 +1270,28 @@ Object.assign(App, {
       ],
       settingsExtra: "",
 
+      // POs page: exposure + import review view models
+      poImport: s.poImport ? {
+        filename: s.poImport.filename, warnings: s.poImport.warnings,
+        rows: s.poImport.rows,
+        poImportSet: App.poImportSet,
+        poImportAccept: () => App.poImportAccept(),
+        poImportDiscard: () => setState({ poImport: null }),
+      } : null,
+      poImportSet: App.poImportSet,
+      poImportAccept: () => App.poImportAccept(),
+      poImportDiscard: () => setState({ poImport: null }),
+      poImportCostTypes: [...new Set((jd.cost_types || []).map((c) => c.cost_type))],
+      uncovered: ((jd.approved_no_po || {}).cos || []).map((u) => ({
+        n: u.co_number || "?", sub: u.subcontractor || "", desc: u.description || "",
+        amt: money(u.amount_approved), issue: App.issuePoFromCo(u.id) })),
+      uncoveredTotal: money((jd.approved_no_po || {}).total || 0),
+
       // page bodies
       ...this.buildConfirm(),
+      ...this.buildCO(),
+      ...this.buildSched(),
+      ...this.buildLook(),
       ...this.buildRegister(),
       ...this.buildDetail(),
       ...this.buildForm(),
@@ -1269,6 +1320,1670 @@ Object.assign(App, {
           </div>
         </div>
       </div>`
-      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v);
+      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v);
   },
 });
+
+// ————— companion send ladder (1.x logic, kept: LOGIC-MERGE) ————————————————
+// Try the local Outlook companion; a NETWORK failure means "no companion on
+// this machine" (normal on a phone) and falls to the .eml download, while a
+// companion that answered and refused shows its real message. Both paths
+// still deliver something.
+const COMPANION = "http://127.0.0.1:8772";
+let companionToken = null;
+
+async function companionFetch(path, body) {
+  if (companionToken === null) companionToken = (await api("/api/companion/token")).token;
+  const r = await fetch(COMPANION + path, { method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...body, token: companionToken }) });
+  const out = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(out.detail || "Companion error " + r.status);
+  return out;
+}
+const isNetErr = (err) => /failed to fetch|networkerror|load failed|connection refused/i.test(err.message || "");
+
+function downloadEmlUrl(url, live) {
+  // Binary response, cookie rides along; synthesized <a download>.
+  fetch(url, { credentials: "same-origin" }).then(async (r) => {
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.status);
+    const blob = await r.blob();
+    const cd = r.headers.get("content-disposition") || "";
+    const name = (/filename="?([^\";]+)"?/.exec(cd) || [])[1] || "planwise.eml";
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    if (live) setState({ live });
+  }).catch((err) => setState({ live: "Could not download the email file: " + err.message }));
+}
+
+// ————— change order composer (prototype chrome; real endpoints) ————————————
+Object.assign(App, {
+  nextCoNumber(kind) {
+    const cos = ((this.state.data.job || {}).change_orders || []).filter((c) => c.kind === kind);
+    const max = cos.reduce((m, c) => Math.max(m, parseInt(String(c.co_number || "").replace(/[^0-9]/g, "")) || 0), 0);
+    const n = max + 1;
+    return (kind === "subcontractor" ? "S-" : "") + (n < 10 ? "0" : "") + n;
+  },
+
+  // "Compose a change order" CREATES the row first (as Unsent), then opens
+  // the composer on it — a real id from the first keystroke is what lets the
+  // preview pane show the real letter PDF instead of a simulation.
+  openCO: (id, kind) => async () => {
+    const job = App.state.job;
+    try {
+      let co;
+      let isNew = false;
+      if (!id) {
+        isNew = true;
+        co = await api(`/api/jobs/${encodeURIComponent(job)}/cos`, { method: "POST",
+          body: JSON.stringify({ kind: kind || "customer", co_number: App.nextCoNumber(kind || "customer"),
+            status: "Unsent", date_submitted: new Date().toISOString().slice(0, 10) }) });
+        App.refresh("job");
+      } else {
+        co = ((App.state.data.job || {}).change_orders || []).find((c) => c.id === id);
+        if (!co) throw new Error("No such change order.");
+      }
+      const [items, sel, lib] = await Promise.all([
+        api(`/api/jobs/${encodeURIComponent(job)}/cos/${co.id}/items`),
+        api(`/api/jobs/${encodeURIComponent(job)}/cos/${co.id}/clarifications`),
+        api("/api/co-clarifications"),
+      ]);
+      App.state.data.clarifications = lib;
+      const clar = {};
+      const libRows = lib.clarifications || [];
+      (sel.clarifications || []).forEach((c) => {
+        const hit = libRows.find((l) => l.text === (c.text || c));
+        if (hit) clar[hit.id] = true;
+      });
+      setState({ co: {
+        id: co.id, kind: co.kind, isNew,
+        num: co.co_number || "", cust: co.cust_co_number || "",
+        date: co.date_submitted || new Date().toISOString().slice(0, 10),
+        cause: co.raised_from || "", desc: co.description || "",
+        narrative: co.narrative || "", subcontractor: co.subcontractor || "",
+        status: co.status || "Unsent",
+        items: (items.items || []).length ? (items.items || []).map((i) => ({ desc: i.description || "", amt: i.amount === null ? "" : String(i.amount) })) : [{ desc: "", amt: "" }],
+        clar, submitted: false, touched: false, previewRev: 0, saving: false,
+      }, coPreview: true, coNewClar: "" }, focusRef("co"));
+      App.refreshCoPreview();
+    } catch (err) {
+      setState({ live: "Could not open the composer: " + err.message });
+    }
+  },
+
+  coClose: async () => {
+    const co = App.state.co;
+    setState({ co: null });
+    // A CO created empty and abandoned untouched is deleted quietly — closing
+    // an accidental composer must not leave a blank row on the register.
+    if (co && co.isNew && !co.touched && !co.desc && !co.narrative &&
+        !co.items.some((i) => i.desc.trim() || String(i.amt).trim())) {
+      try {
+        await api(`/api/jobs/${encodeURIComponent(App.state.job)}/cos/${co.id}`, { method: "DELETE" });
+        App.refresh("job");
+      } catch (e) {}
+    }
+  },
+
+  coSet: (key) => (e) => {
+    const co = App.state.co;
+    co[key] = e.target.value;
+    co.touched = true;
+    setState({});
+    App.debouncedCoSave();
+  },
+  coSetItem: (i, key) => (e) => {
+    const co = App.state.co;
+    co.items = co.items.map((it, n) => n === i ? { ...it, [key]: e.target.value } : it);
+    co.touched = true;
+    setState({});
+    App.debouncedCoSave();
+  },
+  coAddItem() { const co = App.state.co; co.items = co.items.concat([{ desc: "", amt: "" }]); co.touched = true; setState({}); },
+  coRemoveItem: (i) => () => { const co = App.state.co; co.items = co.items.filter((it, n) => n !== i); co.touched = true; setState({}); App.debouncedCoSave(); },
+  coToggleClar: (id) => () => {
+    const co = App.state.co;
+    co.clar = { ...co.clar, [id]: !co.clar[id] };
+    co.touched = true;
+    setState({});
+    App.debouncedCoSave();
+  },
+  coSetNewClar(e) { setState({ coNewClar: e.target.value }); },
+  coTogglePreview() { setState({ coPreview: !App.state.coPreview }); },
+
+  async coAddClar() {
+    const text = (App.state.coNewClar || "").trim();
+    if (!text) { setState({ live: "Write the clarification before adding it." }); return; }
+    try {
+      const row = await api("/api/co-clarifications", { method: "POST", body: JSON.stringify({ text }) });
+      const lib = await api("/api/co-clarifications");
+      App.state.data.clarifications = lib;
+      const co = App.state.co;
+      co.clar = { ...co.clar, [row.id]: true };
+      co.touched = true;
+      setState({ coNewClar: "", live: "Clarification added to the library and ticked on this change order." });
+      App.debouncedCoSave();
+    } catch (err) {
+      setState({ live: "Could not add it: " + err.message });
+    }
+  },
+
+  coErrors(co) {
+    const errs = [];
+    if (co.kind === "customer") {
+      if (!co.desc.trim()) errs.push("Description is required — it prints as the subject of the letter.");
+      if (!co.date) errs.push("Date submitted is required.");
+      if (!co.cause) errs.push("Say what raised this change order.");
+      if (!co.narrative.trim()) errs.push("The narrative is required. It is what the customer reads to understand the entitlement.");
+      const good = co.items.filter((i) => i.desc.trim() && parseFloat(String(i.amt).replace(/[^0-9.-]/g, "")));
+      if (!good.length) errs.push("At least one breakout line needs a description and an amount.");
+    } else {
+      if (!co.desc.trim()) errs.push("Description is required — it is the line on the log.");
+      if (!co.subcontractor.trim()) errs.push("Name the subcontractor.");
+    }
+    return errs;
+  },
+
+  // Persist the draft: fields + breakout lines + clarification selection.
+  // Debounced 700ms so the letter preview tracks typing without a request
+  // per keystroke (1.x behavior, kept).
+  async coPersist() {
+    const co = App.state.co;
+    if (!co || co.saving) return;
+    co.saving = true;
+    try {
+      const job = encodeURIComponent(App.state.job);
+      await api(`/api/jobs/${job}/cos/${co.id}`, { method: "PATCH", body: JSON.stringify({
+        co_number: co.num || null, cust_co_number: co.cust || null,
+        date_submitted: co.date || null, description: co.desc || null,
+        narrative: co.narrative || null, raised_from: co.cause || null,
+        subcontractor: co.subcontractor || null }) });
+      const items = co.items.filter((i) => i.desc.trim() || String(i.amt).trim())
+        .map((i) => ({ description: i.desc.trim(), amount: parseFloat(String(i.amt).replace(/[^0-9.-]/g, "")) || 0 }));
+      await api(`/api/jobs/${job}/cos/${co.id}/items`, { method: "PUT", body: JSON.stringify({ items }) });
+      if (co.kind === "customer") {
+        const lib = ((App.state.data.clarifications || {}).clarifications) || [];
+        const texts = lib.filter((l) => co.clar[l.id]).map((l) => l.text);
+        await api(`/api/jobs/${job}/cos/${co.id}/clarifications`, { method: "PATCH", body: JSON.stringify({ clarifications: texts }) });
+      }
+      App.refreshCoPreview();
+      App.refresh("job");
+    } catch (err) {
+      setState({ live: "Could not save the draft: " + err.message });
+    } finally {
+      co.saving = false;
+    }
+  },
+  debouncedCoSave: debounce(() => App.coPersist(), 700),
+
+  refreshCoPreview() {
+    const co = App.state.co;
+    if (!co) return;
+    co.previewRev++;
+    setState({});
+  },
+
+  async coSubmit() { await App.coPersist(); const co = App.state.co; if (!co) return;
+    const errs = App.coErrors(co);
+    if (errs.length) { co.submitted = true; setState({ live: errs.length + " thing" + (errs.length === 1 ? "" : "s") + " to fix before this can be saved." }); return; }
+    setState({ co: null, live: (co.num ? "CO-" + co.num : "The change order") + " saved as a draft. Nothing has gone to the customer." });
+    App.refresh("job");
+  },
+
+  // Save-and-send: the 1.x companion ladder behind the prototype's button.
+  async coSaveAndSend() {
+    const co = App.state.co;
+    if (!co) return;
+    const errs = App.coErrors(co);
+    if (errs.length) { co.submitted = true; setState({ live: errs.length + " thing" + (errs.length === 1 ? "" : "s") + " to fix before this can go out." }); return; }
+    await App.coPersist();
+    App.coSend(co.id, true)();
+  },
+
+  coSend: (coId, fromComposer) => async () => {
+    const job = encodeURIComponent(App.state.job);
+    let payload;
+    try {
+      payload = await api(`/api/jobs/${job}/cos/${coId}/share`);
+    } catch (err) {
+      if (err.body && err.body.needs_contact) {
+        setState({ co: null, live: "This job has no customer contact with an email address yet. Taking you to Job setup to add one." });
+        setTimeout(() => App.go("setup")(), 1400);
+        return;
+      }
+      setState({ live: err.message });
+      return;
+    }
+    try {
+      await companionFetch("/draft", { to: payload.to, subject: payload.subject,
+        body: payload.body, attachments: payload.attachments, display: true });
+      const upd = await api(`/api/jobs/${job}/cos/${coId}`, { method: "PATCH",
+        body: JSON.stringify({ status: "Awaiting Outlook" }) });
+      setState({ co: null });
+      App.act("The change order letter is drafted in Outlook with the PDF and Word copies attached. It shows as Awaiting Outlook until you press Send there.",
+        upd.activity_id, ["job"]);
+    } catch (err) {
+      const eml = `/api/jobs/${job}/cos/${coId}/share.eml`;
+      if (isNetErr(err)) {
+        setState({ co: null, live: "No Outlook companion on this machine — downloading the email file instead. Open it and press Send." });
+        downloadEmlUrl(eml, "Email file downloaded. Open it in Outlook and press Send.");
+      } else {
+        setState({ co: null, live: "The companion answered but refused: " + err.message + " — downloading the email file instead." });
+        downloadEmlUrl(eml);
+      }
+    }
+  },
+
+  coDelete: (coId) => () => {
+    const co = ((App.state.data.job || {}).change_orders || []).find((c) => c.id === coId) || {};
+    setState({
+      confirm: {
+        eyebrow: "Remove a change order", title: "CO-" + (co.co_number || "?") + (co.description ? " · " + co.description : ""),
+        body: "This removes the change order and its breakout lines from the register.",
+        checks: [
+          ["pass", "The register", "The register total drops by " + money(co.amount_submitted || 0) + " the moment this is removed."],
+          [co.status === "Approved" ? "warn" : "pass", "Approval state", co.status === "Approved" ? "This change order shows as Approved. Vista's change order revenue will no longer reconcile against the register until the next extract explains it." : "It has not been approved, so nothing downstream references it."],
+        ],
+        blocked: false,
+        verdict: "Removing is undoable — the reversal restores the row with its lines and clarifications.",
+        label: "Remove this change order",
+        run: async () => {
+          try {
+            await api(`/api/jobs/${encodeURIComponent(App.state.job)}/cos/${coId}`, { method: "DELETE" });
+            const acts = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/activity?limit=1`);
+            setState({ confirm: null, detail: null });
+            App.act("CO-" + (co.co_number || "?") + " removed from the register.", ((acts.activity || [])[0] || {}).id, ["job"]);
+          } catch (err) { setState({ confirm: null, live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  buildCO() {
+    const co = this.state.co;
+    if (!co) return { coOpen: "" };
+    const errs = this.coErrors(co);
+    const num = (v) => parseFloat(String(v || "").replace(/[^0-9.-]/g, "")) || 0;
+    const total = co.items.reduce((t, i) => t + num(i.amt), 0);
+    const control = "width:100%;min-height:var(--tap);padding:8px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)";
+    const isCust = co.kind === "customer";
+    const defs = isCust ? [
+      ["num", "PlanWise number", "text", { hint: "Assigned in sequence. Change it only to match paper already in the file." }],
+      ["cust", "Customer change order number", "text", { placeholder: "CUST-0000", hint: "Leave blank. The customer assigns this on receipt." }],
+      ["date", "Date submitted", "date", { req: true, hint: "The date the letter is dated." }],
+      ["cause", "Raised from", "select", { req: true, options: [["", "Choose one"], ["Field direction", "Field direction"], ["RFI answer", "RFI answer"], ["Revised drawing", "Revised drawing"], ["Owner request", "Owner request"]], hint: "What entitles the firm to this change." }],
+      ["desc", "Description", "text", { req: true, wide: true, placeholder: "Transformer pad anchor revision", hint: "Prints as the subject of the letter." }],
+      ["narrative", "Narrative", "textarea", { req: true, wide: true, rows: 7, placeholder: "Set out what was found, what direction was given, what work is required, and why it is a change rather than included work.", hint: "This is the part the customer actually reads. Say what happened, in order, and name the document or direction that caused it." }],
+    ] : [
+      ["num", "PlanWise number", "text", { hint: "Assigned in sequence." }],
+      ["subcontractor", "Subcontractor", "text", { req: true, placeholder: "Caprock Boring", hint: "Whose change this is." }],
+      ["date", "Date submitted", "date", { req: true, hint: "" }],
+      ["desc", "Description", "text", { req: true, wide: true, placeholder: "Bore alignment change", hint: "The line on the log." }],
+    ];
+    const lib = ((this.state.data.clarifications || {}).clarifications) || [];
+    const jd = this.state.data.job || {};
+    const job = jd.job || {};
+    const previewUrl = `/api/jobs/${encodeURIComponent(this.state.job)}/cos/${co.id}/document.pdf?rev=${co.previewRev}`;
+    return {
+      coOpen: true, coClose: () => App.coClose(),
+      coEyebrow: co.isNew ? "New change order" : "Editing CO-" + co.num,
+      coTitle: co.isNew && !co.desc ? "Compose a change order" : co.desc || "CO-" + co.num,
+      coStateLabel: co.status === "Unsent" || co.status === "Draft" ? "Draft — editable" : co.status,
+      coStateStyle: stamp(STATUS_TONE[co.status] || "wn"),
+      coPreviewOn: this.state.coPreview,
+      coPreviewAria: this.state.coPreview ? "true" : "false",
+      coPreviewLabel: this.state.coPreview ? "Hide the preview" : "Show the preview",
+      coPreviewBtnStyle: "min-height:var(--tap);padding:7px 13px;border-radius:6px;font:600 12.5px var(--fd);white-space:nowrap;border:1px solid " +
+        (this.state.coPreview ? "var(--ac)" : "var(--ln)") + ";background:" + (this.state.coPreview ? "var(--as)" : "var(--pn)") + ";color:" + (this.state.coPreview ? "var(--ac)" : "var(--mu)"),
+      coCols: this.state.coPreview ? "minmax(0,1fr) minmax(0,1.05fr)" : "minmax(0,1fr)",
+      coShowErrors: co.submitted && errs.length ? true : "",
+      coErrorHeading: errs.length + " thing" + (errs.length === 1 ? "" : "s") + " to fix",
+      coErrors: errs.map((text) => ({ text })),
+      coIsCustomer: isCust,
+      coPreviewUrl: previewUrl,
+      coPreviewNote: isCust
+        ? "Live preview · the actual letter PDF, refreshed as you type"
+        : "Live preview · the subcontractor change order log, refreshed as you type",
+      coFields: defs.map(([key, label, type, o]) => {
+        const bad = co.submitted && o.req && !String(co[key] || "").trim();
+        return {
+          id: "co-" + key, label, type: type === "date" ? "date" : "text",
+          isInput: type === "text" || type === "date", isArea: type === "textarea", isSelect: type === "select",
+          rows: o.rows || 3, value: co[key] || "", set: App.coSet(key),
+          placeholder: o.placeholder || "", hint: bad ? label + " is required." : o.hint,
+          hintId: "co-" + key + "-hint", hintColor: bad ? "var(--er)" : "var(--ft)", invalid: bad ? "true" : "false",
+          reqText: o.req ? "Required" : "Optional",
+          reqStyle: "margin-left:7px;font:500 9.5px var(--fm);letter-spacing:.1em;text-transform:uppercase;color:" + (o.req ? "var(--ac)" : "var(--ft)"),
+          wrap: "min-width:0" + (o.wide ? ";grid-column:1 / -1" : ""),
+          control: control + (bad ? ";border-color:var(--er);background:var(--ers)" : "") + (type === "textarea" ? ";min-height:auto;resize:vertical;line-height:1.55" : ""),
+          options: (o.options || []).map(([value, l]) => ({ value, label: l })),
+        };
+      }),
+      coItems: co.items.map((it, i) => ({
+        n: i + 1, descId: "coi-d" + i, amtId: "coi-a" + i, desc: it.desc, amt: it.amt,
+        setDesc: App.coSetItem(i, "desc"), setAmt: App.coSetItem(i, "amt"), remove: App.coRemoveItem(i),
+      })),
+      coAddItem: () => App.coAddItem(), coTotal: money(total),
+      coClar: lib.map((c) => ({
+        id: "coc-" + c.id, text: c.text, on: !!co.clar[c.id], toggle: App.coToggleClar(c.id), isNew: !c.seeded,
+      })),
+      coNewClar: this.state.coNewClar || "", coSetNewClar: (e) => App.coSetNewClar(e), coAddClar: () => App.coAddClar(),
+      coFootnote: co.isNew
+        ? "Saving keeps this as a draft on the register. Nothing reaches the customer until you send it, and sending is undoable."
+        : "Changes are saved to the draft as you type. A change order that has gone to the customer should not be edited here.",
+      coSaveLabel: co.isNew ? "Save as a draft" : "Save changes",
+      coSubmit: () => App.coSubmit(), coSaveAndSend: () => App.coSaveAndSend(),
+      coSendLabel: isCust ? "Save and draft the email in Outlook" : "Save and draft the log email in Outlook",
+    };
+  },
+});
+
+// ————— register specs: cos, pos, rfis/subs, docs (prototype branches, live
+// data) — appended into regSpec by wrapping it —————————————————————————————
+(() => {
+  const base = App.regSpec.bind(App);
+  App.regSpec = function () {
+    const s = this.state;
+    const d = s.data;
+    const jd = d.job || {};
+    const P = (text, right) => ({ kind: "plain", text, right: !!right });
+    const S = (text) => ({ kind: "stamp", text });
+
+    if (s.page === "cos") {
+      const all = (jd.change_orders || []).map((c) => ({
+        id: c.id, n: c.co_number || "?", kind: c.kind,
+        cust: c.kind === "customer" ? (c.cust_co_number || "—") : (c.subcontractor || "—"),
+        date: c.date_submitted || "", desc: c.description || "",
+        status: c.status || (c.amount_approved ? "Approved" : "Draft"),
+        amt: c.amount_submitted, appr: c.amount_approved, by: c.approved_by || "—",
+      }));
+      const rows = all.filter((c) => s.recFilter === "All" || c.status === s.recFilter).map((c) => ({
+        id: c.id, key: "CO-" + c.n,
+        keySub: c.kind === "subcontractor" ? "Subcontractor · " + c.cust : (c.cust === "—" ? "No customer number yet" : c.cust),
+        sortVals: ["CO-" + c.n, c.date, c.desc, c.amt, c.status],
+        cells: [P(c.date), P(c.desc), P(money(c.amt), 1), S(c.status), P(c.appr ? money(c.appr) : "not reported")],
+      }));
+      const counts = { All: all.length };
+      ["Approved", "Sent", "Awaiting Outlook", "Draft", "Unsent"].forEach((k) => { counts[k] = all.filter((c) => c.status === k).length; });
+      const custTotal = all.filter((c) => c.kind === "customer").reduce((t, c) => t + (c.amt || 0), 0);
+      return { title: "Change order register", source: all.filter((c) => c.kind === "customer").length + " customer · " + all.filter((c) => c.kind === "subcontractor").length + " subcontractor", kind: "co",
+        caption: "Change orders on job " + s.job + " with date, description, amount, status and approved amount. Select a change order number to audit its breakout lines and clarifications.",
+        footnote: "Approved amounts come from the customer's paperwork and are entered when it lands. A change order stays Unsent until the letter goes out, and only a sent change order can be approved.",
+        filters: ["All", "Approved", "Sent", "Awaiting Outlook", "Draft", "Unsent"].map((k) => [k, counts[k]]),
+        columns: [["Change order", 0, 1], ["Submitted", 0, 1], ["Description", 0, 1], ["Amount", 1, 1], ["Status", 0, 1], ["Approved", 1, 1]],
+        rows, total: ["Total submitted", ["", "", money(all.reduce((t, c) => t + (c.amt || 0), 0)), "", money(all.reduce((t, c) => t + (c.appr || 0), 0))]],
+        extras: [
+          { label: "Compose a change order", click: App.openCO(null, "customer"), hoverClass: "hb-fill",
+            style: "min-height:var(--tap);padding:7px 14px;border-radius:6px;border:1px solid var(--ac);background:var(--as);color:var(--ac);font:600 12.5px var(--fd);letter-spacing:.03em;white-space:nowrap" },
+          { label: "Log a subcontractor CO", click: App.openCO(null, "subcontractor"), hoverClass: "hb-ls",
+            style: "min-height:var(--tap);padding:7px 14px;border-radius:6px;border:1px solid var(--ln);background:var(--pn);font:600 12.5px var(--fd);white-space:nowrap" },
+        ] };
+    }
+
+    if (s.page === "pos") {
+      const all = (jd.purchase_orders || []).map((p) => {
+        const inv = (p.invoices || []).reduce((t, i) => t + (i.amount || 0), 0);
+        const amt = p.adjusted_amount !== null && p.adjusted_amount !== undefined ? p.adjusted_amount : p.original_amount;
+        return { id: p.id, n: p.po_number || "(unnumbered)", vendor: p.vendor || "", desc: p.description || "",
+          ct: p.cost_type || "Unassigned", orig: amt, inv, status: p.status || "Open" };
+      });
+      const rows = all.filter((p) => s.poFilter === "All" || p.status === s.poFilter).map((p) => {
+        const pct = p.orig ? p.inv / p.orig * 100 : 0;
+        const rem = (p.orig || 0) - p.inv;
+        return { id: p.id, key: p.n, keySub: p.vendor, sortVals: [p.n, p.vendor, p.ct, p.orig, p.inv, rem, p.status],
+          cells: [P(p.desc), P(p.ct), P(money(p.orig), 1), P(money(p.inv), 1),
+            { kind: "plain", text: p.orig === null ? "unpriced" : rem <= 0 ? "Fully invoiced" : money(rem), right: 1, color: rem <= 0 ? "var(--ft)" : p.status === "Open" ? "var(--ok)" : "var(--ink)" },
+            { kind: "bar", text: pct.toFixed(0) + "%", w: Math.min(100, pct), color: pct > 95 ? "var(--wn)" : "var(--bp)" }, S(p.status)] };
+      });
+      const counts = { All: all.length, Open: all.filter((p) => p.status === "Open").length, Closed: all.filter((p) => p.status === "Closed").length };
+      const remTotal = all.reduce((t, p) => t + (p.status === "Open" ? Math.max(0, (p.orig || 0) - p.inv) : 0), 0);
+      return { title: "Purchase order register", source: all.length + " purchase orders logged", kind: "po",
+        caption: "Purchase orders logged against job " + s.job + " with vendor, cost type, original amount, invoiced to date, remaining to invoice and status. Select a purchase order number to audit its invoices.",
+        footnote: "Purchase orders are raised in Vista. PlanWise logs them so the register can feed open committed cost: the total below is the remaining column summed across open orders only, and it is the same figure the cost breakdown shows. A closed order contributes nothing even if it was never fully invoiced.",
+        filters: ["All", "Open", "Closed"].map((k) => [k, counts[k]]),
+        columns: [["Purchase order", 0, 1], ["Description", 0, 0], ["Cost type", 0, 1], ["Original", 1, 1], ["Invoiced", 1, 1], ["Remaining to invoice", 1, 1], ["Invoiced of order", 0, 0], ["Status", 0, 1]],
+        rows, total: ["All purchase orders · remaining counts open orders only", ["", "", money(all.reduce((t, p) => t + (p.orig || 0), 0)), money(all.reduce((t, p) => t + p.inv, 0)), money(remTotal), "", ""]] };
+    }
+
+    if (s.page === "rfis" || s.page === "subs") {
+      const isR = s.page === "rfis";
+      const base2 = ((d.records || {}).records || []).filter((r) => isR ? r.kind === "rfi" : r.kind !== "rfi");
+      const rows = base2.filter((r) => s.recFilter === "All" || r.status === s.recFilter).map((r) => {
+        const pages = (r.attachments || []).length;
+        const marks = r.markup_count || 0;
+        return { id: r.id, key: r.number || "?", keySub: r.title || "",
+          sortVals: [r.number, r.status, r.to_name, r.due_date],
+          cells: [P(isR ? "Question" : (r.spec_section || "—")), S(r.status || "Draft"), P(r.to_name || "Not yet sent"), P(r.due_date || ""),
+            P(pages ? pages + (pages === 1 ? " page" : " pages") + (marks ? " · " + marks + (marks === 1 ? " mark" : " marks") : "") : "No pages")] };
+      });
+      const st = isR ? ["All", "Draft", "Sent", "Answered", "Closed"] : ["All", "Draft", "Sent", "Approved", "Revise & Resubmit"];
+      const counts = {}; st.forEach((k) => { counts[k] = k === "All" ? base2.length : base2.filter((r) => r.status === k).length; });
+      return { title: isR ? "RFI register" : "Submittal register", source: base2.length + " on the register", kind: isR ? "rfi" : "sub",
+        caption: (isR ? "Requests for information" : "Submittals") + " on job " + s.job + " with status, recipient, due date and attached pages. Select a number to audit the full record and its thread.",
+        footnote: isR ? "A reply is matched to its RFI from the Outlook thread, but the answer is not published to the field until a project manager confirms it." : "Nothing goes out without a project manager review. A returned submittal keeps its history when it is resubmitted.",
+        filters: st.map((k) => [k, counts[k]]),
+        columns: [[isR ? "RFI" : "Submittal", 0, 1], [isR ? "Type" : "Spec section", 0, 0], ["Status", 0, 1], [isR ? "Sent to" : "Reviewer", 0, 1], ["Due", 0, 1], ["Attached pages", 0, 0]],
+        rows };
+    }
+
+    if (s.page === "docs") {
+      const docs = ((d.documents || {}).documents) || [];
+      const rows = docs.map((doc) => ({
+        id: doc.id, key: doc.name, keySub: (doc.page_count || 0) + " pages",
+        sortVals: [doc.name, doc.page_count, doc.uploaded_at, doc.annotation_count],
+        cells: [P(String(doc.page_count || 0), 1), P((doc.uploaded_by || "") + " · " + usDate(doc.uploaded_at)),
+          P(!doc.annotation_count ? "No markups" : doc.annotation_count + " markups"), S(doc.annotation_count ? "Marked" : "Clean")],
+      }));
+      return { title: "Drawing and specification library", source: docs.length + " sets on this job", kind: "doc",
+        caption: "Drawing sets and specifications uploaded to job " + s.job + ", with page count, who uploaded them and how many markups they carry.",
+        footnote: "Originals are immutable. Redlines live on layers: the internal team layer stays in the building, and each RFI or submittal carries its own layer that goes out with its package.",
+        columns: [["Set or specification", 0, 1], ["Pages", 1, 1], ["Uploaded", 0, 1], ["Markups", 0, 1], ["State", 0, 0]], rows,
+        emptyText: "No drawing sets on this job yet. Upload a PDF set to start the library." };
+    }
+
+    return base();
+  };
+})();
+
+// ————— detail drawers: co + po (prototype branches, live data) ——————————————
+(() => {
+  const base = App.buildDetail.bind(App);
+  App.buildDetail = function () {
+    const d = this.state.detail;
+    if (!d || (d.kind !== "co" && d.kind !== "po")) return base();
+    const S = (id, title, rows) => ({ id: "ds-" + id, title, rows: rows.map(([label, value, note, style]) => ({ label, value, note: note || "", valueStyle: style || "" })) });
+    const A = (list) => list.map(([what, who, when], i) => ({ what, who, when: when || "", color: i === list.length - 1 ? "var(--ac)" : "var(--ls)" }));
+    const btn2 = (label, kind, click) => ({ label, style: btn(kind), hoverClass: kind === "primary" ? "hb-ah" : "hb-ls", click: click || (() => {}) });
+    const out = { detailOpen: true, detailHasItems: "", detailHasNotes: "", detailNotes: [], detailActions: [], detailFootnote: "" };
+    const jd = this.state.data.job || {};
+    const audit = (((this.state.data.activity || {}).activity) || []);
+
+    if (d.kind === "co") {
+      const c = (jd.change_orders || []).find((x) => x.id === d.id) || {};
+      const status = c.status || (c.amount_approved ? "Approved" : "Draft");
+      const trail = audit.filter((a) => a.object_id === c.id).slice(0, 6).reverse()
+        .map((a) => [a.detail || a.action, a.actor || "PlanWise", usDate(a.ts)]);
+      const isCust = c.kind === "customer";
+      const editable = ["Unsent", "Draft", null, undefined, ""].includes(c.status);
+      return Object.assign(out, {
+        detailKind: isCust ? "Customer change order" : "Subcontractor change order",
+        detailTitle: "CO-" + (c.co_number || "?") + (c.description ? " · " + c.description : ""),
+        detailStatus: status, detailStampStyle: stamp(STATUS_TONE[status] || "nt"),
+        detailMeta: "Submitted " + (c.date_submitted || "—") + " · " + money(c.amount_submitted),
+        detailSections: [
+          S("co-id", "Identification", [["PlanWise number", "CO-" + (c.co_number || "?")],
+            isCust ? ["Customer change order number", c.cust_co_number || "Not issued — the customer assigns this on receipt", c.cust_co_number ? "From the customer" : ""] : ["Subcontractor", c.subcontractor || "not reported"],
+            ["Kind", isCust ? "Customer" : "Subcontractor"], ["Date submitted", c.date_submitted || "not reported"]]),
+          S("co-money", "Money", [["Amount submitted", money(c.amount_submitted), "PlanWise", "font-variant-numeric:tabular-nums"],
+            ["Amount approved", c.amount_approved ? money(c.amount_approved) : "not reported", c.amount_approved ? "Entered from the approval" : "", c.amount_approved ? "font-variant-numeric:tabular-nums" : "color:var(--ft);font-style:italic"],
+            ["Approved by", c.approved_by || "not reported", "", c.approved_by ? "" : "color:var(--ft);font-style:italic"]]),
+          S("co-src", "Where this came from", [["Raised from", c.raised_from || "not recorded"], ["Narrative", c.narrative ? "On the letter" : "Not written yet"]]),
+        ],
+        detailAudit: A(trail.length ? trail : [["Change order created in PlanWise", c.created_by || "—", usDate(c.created_at)]]),
+        detailFootnote: editable ? "Nothing has gone to the customer yet. Sending is undoable." : "A change order that has gone out should be corrected by a follow-up letter, not an edit.",
+        detailActions: [
+          btn2("Close this panel", "ghost", App.closeDetail),
+          btn2("Remove CO-" + (c.co_number || "?"), "ghost", () => { App.closeDetail(); App.coDelete(c.id)(); }),
+          btn2("Open the composer", editable ? "ghost" : "ghost", () => { App.closeDetail(); App.openCO(c.id)(); }),
+          ...(editable && isCust ? [btn2("Send CO-" + (c.co_number || "?"), "primary", () => { App.closeDetail(); App.coSend(c.id)(); })] : []),
+        ],
+      });
+    }
+
+    // d.kind === "po"
+    const p = (jd.purchase_orders || []).find((x) => x.id === d.id) || {};
+    const inv = (p.invoices || []);
+    const invTotal = inv.reduce((t, i) => t + (i.amount || 0), 0);
+    const amt = p.adjusted_amount !== null && p.adjusted_amount !== undefined ? p.adjusted_amount : p.original_amount;
+    const srcCo = p.source_co_id ? (jd.change_orders || []).find((c) => c.id === p.source_co_id) : null;
+    const trail = audit.filter((a) => a.object_id === p.id).slice(0, 6).reverse()
+      .map((a) => [a.detail || a.action, a.actor || "PlanWise", usDate(a.ts)]);
+    return Object.assign(out, {
+      detailKind: "Purchase order", detailTitle: (p.po_number || "(unnumbered)") + (p.vendor ? " · " + p.vendor : ""),
+      detailStatus: p.status || "Open", detailStampStyle: stamp(STATUS_TONE[p.status || "Open"] || "nt"),
+      detailMeta: (p.cost_type || "Unassigned") + " · " + money(amt) + " ordered",
+      detailSections: [
+        S("po-id", "Order", [["Purchase order number", p.po_number || "(unnumbered)"], ["Vendor", p.vendor || "not reported"],
+          ["Description", p.description || "not reported"], ["Cost type", p.cost_type || "Unassigned"],
+          ["Order date", p.order_date || "not reported"], ["Ordered by", p.ordered_by || "not reported"],
+          ...(srcCo ? [["Raised against", "Sub CO-" + (srcCo.co_number || "?") + " · " + (srcCo.subcontractor || ""), "Covers the commitment"]] : [])]),
+        S("po-money", "Money", [["Original amount", money(p.original_amount), "PlanWise", "font-variant-numeric:tabular-nums"],
+          ["Adjusted amount", p.adjusted_amount !== null && p.adjusted_amount !== undefined ? money(p.adjusted_amount) : "not adjusted", "", p.adjusted_amount !== null && p.adjusted_amount !== undefined ? "font-variant-numeric:tabular-nums" : "color:var(--ft);font-style:italic"],
+          ["Invoiced to date", money(invTotal), "", "font-variant-numeric:tabular-nums"],
+          ["Remaining on the order", amt === null || amt === undefined ? "unpriced" : money(amt - invTotal), "", "font-variant-numeric:tabular-nums;color:" + (amt !== null && amt - invTotal <= 0 ? "var(--er)" : "var(--ok)")],
+          ["Counts toward committed cost", (p.status || "Open") === "Open" ? "Yes, open committed" : "No, order is closed"]]),
+      ],
+      detailHasItems: inv.length > 0,
+      detailItems: inv.map((i) => ({ label: "Invoice " + (i.invoice_number || "?") + " · " + (i.date || ""), value: money(i.amount), color: "var(--ink)" })),
+      detailItemsTitle: "Invoices against this order", detailItemsCol1: "Invoice", detailItemsCol2: "Amount",
+      detailItemsTotalLabel: "Invoiced to date", detailItemsTotal: money(invTotal),
+      detailAudit: A(trail.length ? trail : [["Purchase order logged", p.created_by || "—", usDate(p.created_at)]]),
+      detailFootnote: "Open committed cost on the cost breakdown is the sum of the remaining amounts on open orders.",
+      detailActions: [
+        btn2("Close this panel", "ghost", App.closeDetail),
+        btn2((p.status || "Open") === "Open" ? "Close this order" : "Reopen this order", "ghost", App.togglePoStatus(p.id)),
+        btn2("Record an invoice", "primary", () => { App.closeDetail(); App.openForm("invoice", { po: p.id })(); }),
+      ],
+    });
+  };
+})();
+
+// ————— PO handlers: status flip, issue from sub CO, PDF import ———————————————
+Object.assign(App, {
+  togglePoStatus: (poId) => async () => {
+    const p = ((App.state.data.job || {}).purchase_orders || []).find((x) => x.id === poId) || {};
+    const next = (p.status || "Open") === "Open" ? "Closed" : "Open";
+    try {
+      const upd = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/pos/${poId}`,
+        { method: "PATCH", body: JSON.stringify({ status: next }) });
+      setState({ detail: null });
+      App.act((p.po_number || "The order") + " is now " + next + "." +
+        (next === "Closed" ? " Its remaining value no longer counts toward open committed cost." : " Its remaining value counts toward open committed cost again."),
+        upd.activity_id, ["job"]);
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  triggerPoImport() {
+    let input = document.getElementById("po-import-input");
+    if (!input) {
+      input = document.createElement("input");
+      input.type = "file"; input.accept = ".pdf"; input.id = "po-import-input";
+      input.style.display = "none";
+      document.body.appendChild(input);
+      input.addEventListener("change", () => {
+        if (input.files && input.files[0]) App.runPoImport(input.files[0]);
+        input.value = "";
+      });
+    }
+    input.click();
+  },
+
+  async runPoImport(file) {
+    setState({ live: "Reading " + file.name + "…" });
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const out = await fetch(`/api/jobs/${encodeURIComponent(App.state.job)}/pos/import`,
+        { method: "POST", body: fd, credentials: "same-origin" }).then(async (r) => {
+          const b = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(b.detail || r.status);
+          return b;
+        });
+      if (!(out.candidates || []).length) {
+        setState({ live: out.detail || "No purchase agreement number was found in that file." });
+        return;
+      }
+      setState({ poImport: {
+        filename: file.name,
+        warnings: out.warnings || [],
+        rows: out.candidates.map((c) => ({ ...c,
+          cost_type: c.cost_type || "", accepted: !c.already_on_register })),
+      }, live: out.candidates.length + (out.candidates.length === 1 ? " purchase agreement read from " : " purchase agreements read from ") + file.name + ". Nothing is written until you accept." });
+    } catch (err) {
+      setState({ live: "Couldn't read that file: " + err.message });
+    }
+  },
+
+  poImportSet: (i, key) => (e) => {
+    const im = App.state.poImport;
+    im.rows[i][key] = key === "accepted" ? e.target.checked : e.target.value;
+    setState({});
+  },
+
+  async poImportAccept() {
+    const im = App.state.poImport;
+    const rows = im.rows.filter((r) => r.accepted);
+    if (!rows.length) { setState({ live: "Tick at least one order to log." }); return; }
+    try {
+      let last = null;
+      for (const r of rows) {
+        last = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/pos`, { method: "POST",
+          body: JSON.stringify({ po_number: r.po_number, vendor: r.vendor, description: r.description,
+            original_amount: parseFloat(String(r.amount || "").replace(/[$,]/g, "")) || null,
+            cost_type: r.cost_type || null, order_date: r.order_date || null }) });
+      }
+      setState({ poImport: null });
+      App.act(rows.length + (rows.length === 1 ? " purchase order logged from " : " purchase orders logged from ") + im.filename + ". Open committed cost has gone up by their remaining value.",
+        last && last.activity_id, ["job"]);
+    } catch (err) { setState({ live: "Could not log the orders: " + err.message }); }
+  },
+
+  issuePoFromCo: (coId) => () => {
+    const c = ((App.state.data.job || {}).change_orders || []).find((x) => x.id === coId) || {};
+    App.openForm("po", { source_co_id: coId, vendor: c.subcontractor || "",
+      desc: c.description || "", amount: c.amount_approved })();
+  },
+});
+
+// ————— form kinds: po, invoice, rfi, sub (prototype specs, real submits) ————
+(() => {
+  const baseSpec = App.formSpec.bind(App);
+  App.formSpec = function (kind, ctx) {
+    const jd = this.state.data.job || {};
+    const contacts = ((jd.meta || {}).contacts || []).filter((c) => c.email);
+    const costTypes = [...new Set((jd.cost_types || []).map((c) => c.cost_type))];
+    if (kind === "po") {
+      const pre = ctx || {};
+      return {
+        eyebrow: pre.source_co_id ? "Cover a commitment" : "Log a record",
+        title: pre.source_co_id ? "Issue the purchase order this sub CO is waiting on" : "Log a purchase order from Vista",
+        submit: "Log this purchase order",
+        intro: pre.source_co_id
+          ? "Logging this order covers the approved subcontractor change order: the exposure line clears and the value moves into open committed cost."
+          : "Purchase orders are raised in Vista. Logging one here records it against the job so it feeds open committed cost. This does not create anything in Vista.",
+        fields: [
+          ["number", "Vista purchase order number", "text", { req: true, placeholder: "P" + (this.state.job || "") + "-01", hint: "Exactly as Vista numbered it. PlanWise does not assign this." }],
+          ["vendor", "Vendor", "text", { req: true, value: pre.vendor || "", placeholder: "Cinco Steel Supply", hint: "The name that appears on the vendor's invoices." }],
+          ["desc", "Description", "textarea", { req: true, rows: 2, wide: true, value: pre.desc || "", placeholder: "Galvanized structures, Bays 2–4", hint: "What is being bought, in the words the field would use." }],
+          ["ct", "Cost type", "select", { req: true, value: pre.source_co_id ? "Subcontract" : "", hint: "Determines which line of the cost breakdown this commits against.", options: [["", "Choose one"]].concat(costTypes.map((o) => [o, o])) }],
+          ["date", "Order date", "date", { req: true, value: new Date().toISOString().slice(0, 10), hint: "" }],
+          ["amount", "Original amount, US dollars", "text", { req: true, value: pre.amount ? String(pre.amount) : "", placeholder: "412600.00", hint: "Numbers only. Enter the amount on the order, not the invoiced amount." }],
+        ],
+        review: "Logging this order adds its full amount to open committed cost and to the remaining-to-invoice column. Invoices are recorded against it afterwards from its own panel.",
+      };
+    }
+    if (kind === "invoice") {
+      const po = ((jd.purchase_orders || []).find((p) => p.id === (ctx || {}).po)) || {};
+      const amt = po.adjusted_amount !== null && po.adjusted_amount !== undefined ? po.adjusted_amount : po.original_amount;
+      const rem = amt === null || amt === undefined ? null : amt - (po.invoices || []).reduce((t, i) => t + (i.amount || 0), 0);
+      return {
+        eyebrow: "Against " + (po.po_number || "this order"), title: "Record an invoice", submit: "Record this invoice",
+        intro: "This records a vendor invoice against " + (po.po_number || "the order") + ". It reduces the remaining amount on the order; it does not approve the invoice for payment.",
+        fields: [
+          ["number", "Invoice number", "text", { req: true, placeholder: "4412", hint: "Exactly as the vendor wrote it." }],
+          ["date", "Invoice date", "date", { req: true, value: new Date().toISOString().slice(0, 10), hint: "" }],
+          ["amount", "Amount, US dollars", "text", { req: true, placeholder: "0.00", hint: rem === null ? "The order is unpriced." : money(rem) + " remains on this order." }],
+        ],
+        review: "The invoice is recorded against " + (po.po_number || "the order") + " and appears in its invoice list and in invoiced-to-date on the register.",
+      };
+    }
+    if (kind === "rfi" || kind === "sub") {
+      const isR = kind === "rfi";
+      return {
+        eyebrow: "New record",
+        title: isR ? "New request for information" : "New submittal",
+        submit: isR ? "Create this RFI" : "Create this submittal",
+        intro: "This creates a draft. Drafts never leave the building — you send it from the register once the question and pages are right.",
+        fields: [
+          ["title", "Title", "text", { req: true, wide: true, placeholder: isR ? "Control building conduit stub-up count" : "Relay panel shop drawings — Bay 3", hint: "Short enough to read on the register." }],
+          isR ? ["question", "Question", "textarea", { req: true, rows: 4, wide: true, placeholder: "State the conflict, cite the sheet, and ask one answerable question.", hint: "One question per RFI. Two questions in one RFI get one answer." }]
+              : ["spec", "Spec section", "text", { placeholder: "26 05 26 — Grounding and Bonding", hint: "The section this submittal answers to, if it has one. Leave blank for a submittal that answers to a drawing rather than a specification." }],
+          ["to", "Send to", "select", { req: true, options: [["", "Choose a recipient"]].concat(contacts.map((c) => [c.email, (c.name || c.email) + " — " + c.email])), hint: contacts.length ? "Their email is filled in from the job contacts." : "No contacts with an email yet — add one on Job setup first." }],
+          ["due", "Reply needed by", "date", { req: true, hint: "Set this from the schedule, not from hope." }],
+        ],
+        review: "The record is created as a Draft with the pages you attached. It stays in PlanWise until you send it, and the outbound package carries only this record's own layer.",
+      };
+    }
+    return baseSpec(kind, ctx);
+  };
+
+  const baseSubmit = App.submitForm.bind(App);
+  App.submitForm = async function () {
+    const f = App.state.form;
+    if (!f) return;
+    if (!["po", "invoice", "rfi", "sub"].includes(f.kind)) return baseSubmit();
+    const spec = App.formSpec(f.kind, f.ctx);
+    const errs = App.formErrors(spec, f);
+    if (errs.length) {
+      f.submitted = true;
+      setState({ live: errs.length + " field" + (errs.length === 1 ? "" : "s") + " need attention before this can be created." });
+      return;
+    }
+    const job = encodeURIComponent(App.state.job);
+    const num = (vv) => parseFloat(String(vv || "").replace(/[^0-9.-]/g, "")) || null;
+    try {
+      if (f.kind === "po") {
+        const out = await api(`/api/jobs/${job}/pos`, { method: "POST", body: JSON.stringify({
+          po_number: f.values.number, vendor: f.values.vendor, description: f.values.desc,
+          cost_type: f.values.ct || null, order_date: f.values.date || null,
+          original_amount: num(f.values.amount), source_co_id: (f.ctx || {}).source_co_id || null }) });
+        setState({ form: null });
+        App.act(f.values.number + " logged for " + money(num(f.values.amount)) +
+          ((f.ctx || {}).source_co_id ? ". The commitment it covers has left the exposure list." : ". Open committed cost has gone up by the same amount."),
+          out.activity_id, ["job"]);
+      } else if (f.kind === "invoice") {
+        const poId = (f.ctx || {}).po;
+        const out = await api(`/api/jobs/${job}/pos/${poId}/invoices`, { method: "POST", body: JSON.stringify({
+          invoice_number: f.values.number, date: f.values.date || null, amount: num(f.values.amount) }) });
+        setState({ form: null });
+        App.act("Invoice " + f.values.number + " for " + money(num(f.values.amount)) + " recorded.", out.activity_id, ["job"]);
+      } else {
+        const contacts = (((App.state.data.job || {}).meta || {}).contacts || []);
+        const to = contacts.find((c) => c.email === f.values.to) || {};
+        const out = await api(`/api/jobs/${job}/records`, { method: "POST", body: JSON.stringify({
+          kind: f.kind === "rfi" ? "rfi" : "submittal",
+          number: App.nextRecordNumber(f.kind),
+          title: f.values.title, question: f.values.question || null,
+          spec_section: f.values.spec || null,
+          to_name: to.name || null, to_email: f.values.to || null,
+          due_date: f.values.due || null }) });
+        setState({ form: null });
+        const acts = await api(`/api/jobs/${job}/activity?limit=1`);
+        App.act((out.number || "The record") + " created as a Draft. Nothing has been sent.",
+          ((acts.activity || [])[0] || {}).id, ["records"]);
+        App.refresh("records");
+      }
+    } catch (err) {
+      setState({ live: "Could not create it: " + err.message });
+    }
+  };
+})();
+
+Object.assign(App, {
+  nextRecordNumber(kind) {
+    const recs = ((this.state.data.records || {}).records || []).filter((r) => kind === "rfi" ? r.kind === "rfi" : r.kind !== "rfi");
+    const max = recs.reduce((m, r) => Math.max(m, parseInt(String(r.number || "").replace(/[^0-9]/g, "")) || 0), 0);
+    const n = max + 1;
+    return (kind === "rfi" ? "RFI-" : "SUB-") + (n < 100 ? "0" : "") + n;
+  },
+});
+
+// ————— POs page body: exposure panel + import review above the register ————
+function pagePos(v) {
+  let out = "";
+  if (v.poImport) {
+    out += `<section aria-labelledby="poimp-heading" style="background:var(--pn);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 id="poimp-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Read from ${esc(v.poImport.filename)}</h2>
+        <p style="margin:0;font:11.5px var(--fm);color:var(--ft)">Nothing is written until you accept</p>
+      </div>
+      ${v.poImport.warnings.map((w) => `<p style="margin:0;padding:10px 16px;border-bottom:1px solid var(--ln);background:var(--wns);color:var(--wn);font-size:var(--fzs);text-wrap:pretty">${esc(w)}</p>`).join("")}
+      <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:var(--fzs)">
+        <thead><tr>
+          ${["Log it", "Purchase order", "Vendor", "Description", "Amount", "Cost type", "Read from"].map((h) => `<th scope="col" style="text-align:left;padding:9px 12px;font:500 var(--lbl) var(--fm);letter-spacing:.12em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ln);white-space:nowrap">${h}</th>`).join("")}
+        </tr></thead>
+        <tbody>
+          ${v.poImport.rows.map((r, i) => `<tr style="${r.already_on_register ? "background:var(--ers)" : ""}">
+            <td style="padding:8px 12px;border-bottom:1px solid var(--ln)"><input type="checkbox" ${r.accepted ? "checked" : ""} data-change="${H(v.poImportSet(i, "accepted"))}" aria-label="Log ${esc(r.po_number)}" style="width:19px;height:19px;accent-color:var(--ac)"></td>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--ln)"><input type="text" value="${esc(r.po_number)}" data-input="${H(v.poImportSet(i, "po_number"))}" class="fi2" style="min-width:110px;min-height:32px;padding:5px 8px;border:1px solid var(--ln);border-radius:5px;background:var(--p2);font:12px var(--fm)">${r.already_on_register ? `<span style="display:block;margin-top:3px;font:600 10px var(--fm);color:var(--er)">already on the register</span>` : ""}</td>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--ln)"><input type="text" value="${esc(r.vendor)}" data-input="${H(v.poImportSet(i, "vendor"))}" class="fi2" style="min-width:130px;min-height:32px;padding:5px 8px;border:1px solid var(--ln);border-radius:5px;background:var(--p2);font-size:12px"></td>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--ln)"><input type="text" value="${esc(r.description)}" data-input="${H(v.poImportSet(i, "description"))}" class="fi2" style="min-width:170px;min-height:32px;padding:5px 8px;border:1px solid var(--ln);border-radius:5px;background:var(--p2);font-size:12px"></td>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--ln)"><input type="text" inputmode="decimal" value="${esc(r.amount === null || r.amount === undefined ? "" : r.amount)}" data-input="${H(v.poImportSet(i, "amount"))}" class="fi2" style="width:110px;min-height:32px;padding:5px 8px;border:1px solid var(--ln);border-radius:5px;background:var(--p2);font:12px var(--fm);text-align:right"></td>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--ln)">
+              <select data-change="${H(v.poImportSet(i, "cost_type"))}" style="min-height:32px;padding:5px 8px;border:1px solid var(--ln);border-radius:5px;background:var(--p2);font-size:12px">
+                <option value="">Choose one</option>
+                ${v.poImportCostTypes.map((ct) => `<option value="${esc(ct)}" ${ct === r.cost_type ? "selected" : ""}>${esc(ct)}</option>`).join("")}
+              </select>
+            </td>
+            <td style="padding:8px 12px;border-bottom:1px solid var(--ln);font:11px var(--fm);color:var(--ft);max-width:220px">${esc(r.evidence || "")}${r.phase ? " · Phase " + esc(r.phase) : ""}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>
+      </div>
+      <div style="display:flex;gap:9px;align-items:center;padding:12px 16px;background:var(--p2);flex-wrap:wrap">
+        <p style="margin:0;flex:1;font-size:12px;color:var(--mu);text-wrap:pretty">The number comes from the document, never the filename — Vista's export sometimes injects an extra digit that means nothing. Amounts are what the agreement's subtotal said; correct anything the reader got wrong before accepting.</p>
+        <button data-click="${H(v.poImportDiscard)}" class="hb-ls" style="min-height:var(--tap);padding:9px 15px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 13px var(--fd)">Discard</button>
+        <button data-click="${H(v.poImportAccept)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">Log the ticked orders</button>
+      </div>
+    </section>`;
+  }
+  if (v.uncovered.length) {
+    out += `<section aria-labelledby="unc-heading" style="background:var(--pn);border:1px solid var(--er);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+        <span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;background:var(--er);box-shadow:0 0 0 3px var(--ers)"></span>
+        <h2 id="unc-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Approved subcontractor work with no purchase order</h2>
+        <p style="margin:0;font:600 12px var(--fm);color:var(--er)">${esc(v.uncoveredTotal)} exposed</p>
+      </div>
+      <ul style="list-style:none;margin:0;padding:0">
+        ${v.uncovered.map((u) => `<li style="display:flex;gap:12px;align-items:center;padding:11px 16px;border-bottom:1px solid var(--ln)">
+          <span style="flex:1;min-width:0">
+            <span style="display:block;font:600 var(--fzs) var(--fd)">Sub CO-${esc(u.n)} · ${esc(u.sub)}</span>
+            <span style="display:block;font-size:12.5px;color:var(--mu)">${esc(u.desc)}</span>
+          </span>
+          <span style="font:600 13px var(--fm);font-variant-numeric:tabular-nums">${esc(u.amt)}</span>
+          <button data-click="${H(u.issue)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd);white-space:nowrap">Issue the purchase order</button>
+        </li>`).join("")}
+      </ul>
+      <p style="margin:0;padding:11px 16px;font-size:12px;color:var(--ft);text-wrap:pretty">Exposure, not a commitment: the money is owed in principle but nothing has been ordered against it. Issuing the purchase order moves it into open committed cost, where the cost breakdown can see it.</p>
+    </section>`;
+  }
+  return out;
+}
+
+// ————— schedule (prototype interactions on the SERVER engine — decision H) —
+// The prototype shipped a client 8-pass relaxation engine; the repo's CPM
+// engine (all four link types, real job calendar, computed float and critical
+// path) is strictly richer, so the client keeps only presentation and
+// gestures. Every date edit PATCHes the task and announces the engine's own
+// `moved` list — "N dependent tasks moved with it" is the server's truth.
+Object.assign(App, {
+  schedTasks() {
+    return ((this.state.data.schedule || {}).tasks) || [];
+  },
+  schedLinks() {
+    return ((this.state.data.schedule || {}).links) || [];
+  },
+  // Hierarchy is positional, exactly the prototype's rule: a row's children
+  // are the following rows with a greater outline level.
+  taskChildIdx(tasks, i) {
+    const lvl = tasks[i].outline_level || 0;
+    const kids = [];
+    for (let j = i + 1; j < tasks.length; j++) {
+      if ((tasks[j].outline_level || 0) <= lvl) break;
+      kids.push(j);
+    }
+    return kids;
+  },
+  schedHiddenSet(tasks) {
+    const hidden = {};
+    tasks.forEach((t, i) => {
+      if (!t.collapsed) return;
+      this.taskChildIdx(tasks, i).forEach((j) => { hidden[j] = true; });
+    });
+    return hidden;
+  },
+  primaryPred(taskId) {
+    const links = this.schedLinks().filter((l) => l.succ_id === taskId);
+    return links[0] || null;
+  },
+  extraPreds(taskId) {
+    return this.schedLinks().filter((l) => l.succ_id === taskId).slice(1);
+  },
+
+  async schedPatch(taskId, patch, phrase) {
+    try {
+      const out = await api(`/api/jobs/${encodeURIComponent(this.state.job)}/schedule/tasks/${taskId}`,
+        { method: "PATCH", body: JSON.stringify(patch) });
+      const moved = out.moved || [];
+      const msg = phrase + (moved.length
+        ? " " + moved.length + (moved.length === 1 ? " dependent task moved with it." : " dependent tasks moved with it.")
+        : "");
+      App.act(msg, out.activity_id, ["schedule"]);
+    } catch (err) {
+      setState({ live: "Could not apply that: " + err.message });
+      App.refresh("schedule");
+    }
+  },
+
+  setSchedDate: (taskId, field) => (e) => {
+    const vv = e.target.value;
+    if (!vv) return;
+    const t = App.schedTasks().find((x) => x.id === taskId) || {};
+    App.schedPatch(taskId, { [field]: vv },
+      "“" + (t.name || "?") + "” " + field + " set to " + vv + ".");
+  },
+
+  setSchedPred: (taskId) => async (e) => {
+    const predId = e.target.value;
+    const t = App.schedTasks().find((x) => x.id === taskId) || {};
+    const current = App.primaryPred(taskId);
+    try {
+      if (current) await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/links/${current.id}`, { method: "DELETE" });
+      if (predId) {
+        await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/links`, { method: "POST",
+          body: JSON.stringify({ pred_id: predId, succ_id: taskId, link_type: (current || {}).link_type || "FS" }) });
+        const p = App.schedTasks().find((x) => x.id === predId) || {};
+        setState({ live: "“" + (t.name || "?") + "” now follows “" + (p.name || "?") + "” (" + ((current || {}).link_type || "FS") + ")." });
+      } else {
+        setState({ live: "Predecessor removed from “" + (t.name || "?") + "”." });
+      }
+      App.refresh("schedule");
+    } catch (err) { setState({ live: err.message }); App.refresh("schedule"); }
+  },
+
+  setSchedDep: (taskId) => async (e) => {
+    const type = e.target.value;
+    const current = App.primaryPred(taskId);
+    if (!current) return;
+    const t = App.schedTasks().find((x) => x.id === taskId) || {};
+    try {
+      await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/links/${current.id}`, { method: "DELETE" });
+      await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/links`, { method: "POST",
+        body: JSON.stringify({ pred_id: current.pred_id, succ_id: taskId, link_type: type, lag_days: current.lag_days || 0 }) });
+      setState({ live: "“" + (t.name || "?") + "” dependency is now " + type + "." });
+      App.refresh("schedule");
+    } catch (err) { setState({ live: err.message }); App.refresh("schedule"); }
+  },
+
+  addSchedSucc: (taskId) => async (e) => {
+    const succId = e.target.value;
+    if (!succId) return;
+    const t = App.schedTasks().find((x) => x.id === taskId) || {};
+    const sTask = App.schedTasks().find((x) => x.id === succId) || {};
+    try {
+      await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/links`, { method: "POST",
+        body: JSON.stringify({ pred_id: taskId, succ_id: succId, link_type: "FS" }) });
+      setState({ live: "“" + (sTask.name || "?") + "” now follows “" + (t.name || "?") + "” (FS)." });
+      App.refresh("schedule");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  dropSchedLink: (linkId, phrase) => async () => {
+    try {
+      await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/links/${linkId}`, { method: "DELETE" });
+      setState({ live: phrase });
+      App.refresh("schedule");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  toggleSchedCollapse: (taskId) => async () => {
+    const t = App.schedTasks().find((x) => x.id === taskId) || {};
+    const next = t.collapsed ? 0 : 1;
+    t.collapsed = next;   // optimistic — the caret flips under the pointer
+    setState({ live: next
+      ? "“" + (t.name || "?") + "” collapsed. Its subtasks are hidden but still scheduled."
+      : "“" + (t.name || "?") + "” expanded." });
+    try {
+      await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/tasks/${t.id}`,
+        { method: "PATCH", body: JSON.stringify({ collapsed: next }) });
+    } catch (err) {}
+  },
+
+  toggleSchedPeek: (taskId) => () => {
+    setState({ schedPeek: App.state.schedPeek === taskId ? null : taskId });
+  },
+
+  // Shared peek/drag bindings for one task — the prototype's schedRowProps,
+  // consumed by BOTH the Gantt list and the register's peek row.
+  schedRowProps(i) {
+    const tasks = this.schedTasks();
+    const t = tasks[i];
+    const peek = this.state.schedPeek === t.id;
+    const preds = this.schedLinks().filter((l) => l.succ_id === t.id);
+    const primary = preds[0] || null;
+    const succs = this.schedLinks().filter((l) => l.pred_id === t.id);
+    const nameOf = (id) => { const x = tasks.find((y) => y.id === id) || {}; return (x.external_id ? x.external_id + " · " : "") + (x.name || "?"); };
+    const hasKids = this.taskChildIdx(tasks, i).length > 0;
+    return {
+      hasSched: true, schedIdx: String(i),
+      gripDown: App.schedRowDown(i),
+      peekOpen: peek, togglePeek: App.toggleSchedPeek(t.id),
+      peekAria: (peek ? "Close the details for " : "Peek at the dates and dependencies of ") + (t.name || "?"),
+      peekChevron: peek ? "−" : "+",
+      peekStart: t.start || "", peekFinish: t.finish || "",
+      // Handoff resolved decision #4: a summary's dates are derived from its
+      // children — the engine overwrites anything typed, so don't offer it.
+      datesDisabled: !!t.is_summary && hasKids,
+      setStart: App.setSchedDate(t.id, "start"), setFinish: App.setSchedDate(t.id, "finish"),
+      predValue: primary ? primary.pred_id : "",
+      predOpts: [{ value: "", label: "None" }].concat(tasks.filter((x) => x.id !== t.id).map((x) => ({ value: x.id, label: nameOf(x.id) }))),
+      setPred: App.setSchedPred(t.id),
+      depValue: primary ? primary.link_type || "FS" : "FS",
+      depShow: !!primary,
+      depOpts: DEP_TYPES.map(([value, label]) => ({ value, label: value + " — " + label })),
+      setDep: App.setSchedDep(t.id),
+      // Handoff resolved decision #2: one primary predecessor is editable;
+      // the rest are listed read-only.
+      morePreds: preds.slice(1).map((l) => nameOf(l.pred_id) + " (" + (l.link_type || "FS") + ")").join(", "),
+      succChips: succs.map((l) => ({
+        label: nameOf(l.succ_id) + " (" + (l.link_type || "FS") + ")" + (l.inferred && !l.confirmed_at ? " · inferred" : ""),
+        drop: App.dropSchedLink(l.id, "“" + nameOf(l.succ_id).split("· ").pop() + "” no longer follows “" + (t.name || "?") + "”."),
+        dropAria: "Remove the dependency: " + nameOf(l.succ_id) + " no longer follows " + (t.name || "?"),
+      })),
+      succNone: succs.length === 0,
+      succOpts: [{ value: "", label: "Add a successor…" }].concat(
+        tasks.filter((x) => x.id !== t.id && !succs.some((l) => l.succ_id === x.id)).map((x) => ({ value: x.id, label: nameOf(x.id) }))),
+      addSucc: App.addSchedSucc(t.id),
+    };
+  },
+
+  // ————— drags (prototype pointer handlers, verbatim mechanics) ————————————
+  schedBarDown: (i) => (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    const track = e._el.parentElement;
+    const rect = track.getBoundingClientRect();
+    const gs = App.ganttSpan();
+    App._schedDrag = { kind: "bar", i, x0: e.clientX, w: rect.width, spanMs: gs.span, delta: 0 };
+    App._schedMoveH = (ev) => App.schedDragMove(ev);
+    App._schedUpH = () => App.schedDragUp();
+    document.addEventListener("pointermove", App._schedMoveH);
+    document.addEventListener("pointerup", App._schedUpH);
+  },
+  schedRowDown: (i) => (e) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    e.preventDefault();
+    App._schedDrag = { kind: "row", i, over: i };
+    App._schedMoveH = (ev) => App.schedDragMove(ev);
+    App._schedUpH = () => App.schedDragUp();
+    document.addEventListener("pointermove", App._schedMoveH);
+    document.addEventListener("pointerup", App._schedUpH);
+  },
+  schedDragMove(ev) {
+    const d = App._schedDrag;
+    if (!d) return;
+    if (d.kind === "bar") {
+      const days = Math.round((ev.clientX - d.x0) / d.w * (d.spanMs / 86400000));
+      if (days !== d.delta) { d.delta = days; setState({ schedDrag: { kind: "bar", index: d.i, delta: days } }); }
+      return;
+    }
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const row = el && el.closest ? el.closest("[data-sched-row]") : null;
+    const parsed = row ? parseInt(row.getAttribute("data-sched-row")) : NaN;
+    const over = isNaN(parsed) ? d.over : parsed;
+    if (over !== d.over) { d.over = over; setState({ schedDrag: { kind: "row", index: d.i, over } }); }
+  },
+  schedDragUp() {
+    document.removeEventListener("pointermove", App._schedMoveH);
+    document.removeEventListener("pointerup", App._schedUpH);
+    const d = App._schedDrag;
+    App._schedDrag = null;
+    setState({ schedDrag: null });
+    if (!d) return;
+    if (d.kind === "bar" && d.delta) App.confirmSchedMove(d.i, d.delta);
+    if (d.kind === "row" && d.over !== d.i) App.confirmSchedReorder(d.i, d.over);
+  },
+
+  confirmSchedMove(i, delta) {
+    const tasks = this.schedTasks();
+    const t = tasks[i];
+    const MS = 86400000;
+    const shift = (iso) => new Date(new Date(iso + "T00:00:00Z").getTime() + delta * MS).toISOString().slice(0, 10);
+    const ns = shift(t.start), nf = shift(t.finish);
+    const dir = delta > 0 ? "later" : "earlier";
+    const succs = this.schedLinks().filter((l) => l.pred_id === t.id);
+    const checks = [
+      ["pass", "The move", "“" + (t.name || "?") + "” shifts " + Math.abs(delta) + (Math.abs(delta) === 1 ? " day " : " days ") + dir + ": " + ns + " to " + nf + ". Duration is unchanged."],
+      succs.length
+        ? ["warn", "Downstream tasks", "The engine reschedules every dependent task to keep its constraints satisfied — the exact list is announced when the move applies. " + succs.length + (succs.length === 1 ? " task follows this one directly." : " tasks follow this one directly.")]
+        : ["pass", "Downstream tasks", "Nothing else depends on these dates. No other bar moves."],
+      t.is_critical
+        ? ["warn", "Critical path", "This task is on the critical path. Moving it " + dir + (delta > 0 ? " moves the job finish date." : " may create float elsewhere.")]
+        : ["pass", "Critical path", "This task carries float, so the finish date should hold."],
+    ];
+    // Dates only push (handoff resolved decision #1): the stored start is a
+    // floor, so a drag EARLIER can be pulled back by the network the moment
+    // the engine recomputes. Say so before it happens.
+    if (delta < 0 && this.primaryPred(t.id)) {
+      checks.splice(1, 0, ["warn", "Its own predecessor",
+        "This task follows another. Constraints push, never pull — if the move lands before what its predecessor allows, the engine holds it at the earliest date the network permits."]);
+    }
+    setState({
+      confirm: {
+        eyebrow: "Confirm a schedule move", title: t.name || "?",
+        body: "You dragged this bar on the Gantt. Nothing has changed yet — the move applies when you confirm it, and it is undoable afterwards.",
+        checks, blocked: false,
+        verdict: "The Gantt and the register update together the moment you confirm.",
+        label: "Move this task",
+        run: () => {
+          setState({ confirm: null });
+          App.schedPatch(t.id, { start: ns, finish: nf },
+            "“" + (t.name || "?") + "” moved to " + ns + " – " + nf + ".");
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  confirmSchedReorder(from, over) {
+    const tasks = this.schedTasks();
+    if (over === undefined || over === null || isNaN(over) || over === from) return;
+    const block = [from].concat(this.taskChildIdx(tasks, from));
+    if (block.includes(over)) return;
+    const t = tasks[from], target = tasks[over];
+    setState({
+      confirm: {
+        eyebrow: "Confirm a register reorder", title: t.name || "?",
+        body: "You dragged this row. Reordering changes reading order only — dates, dependencies and the Gantt bars stay exactly as they are.",
+        checks: [
+          ["pass", "The move", "“" + (t.name || "?") + "”" + (block.length > 1 ? " and its " + (block.length - 1) + " subtask" + (block.length === 2 ? "" : "s") : "") + " move " + (over > from ? "below" : "above") + " “" + (target.name || "?") + "”."],
+          ["pass", "Dates", "No dates change. A reorder is presentation only."],
+        ],
+        blocked: false,
+        verdict: "The register and the Gantt re-list in the new order when you confirm.",
+        label: "Reorder the register",
+        run: async () => {
+          setState({ confirm: null });
+          // Rebuild the order client-side, then persist a fresh sort_order
+          // for every task whose position changed.
+          const rows = tasks.slice();
+          const lift = block.map((j) => rows[j]);
+          const rest = rows.filter((x, j) => !block.includes(j));
+          let at = rest.findIndex((x) => x.id === target.id);
+          if (at < 0) at = rest.length - 1;
+          const insertAt = over > from ? at + 1 : at;
+          const next = rest.slice(0, insertAt).concat(lift, rest.slice(insertAt));
+          try {
+            for (let k = 0; k < next.length; k++) {
+              if ((next[k].sort_order ?? null) !== k) {
+                await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/tasks/${next[k].id}`,
+                  { method: "PATCH", body: JSON.stringify({ sort_order: k }) });
+              }
+            }
+            setState({ live: "“" + (t.name || "?") + "” moved " + (over > from ? "below" : "above") + " “" + (target.name || "?") + "” on the register. Dates and dependencies are untouched." });
+            App.refresh("schedule");
+          } catch (err) { setState({ live: err.message }); App.refresh("schedule"); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  clearSchedule() {
+    const n = App.schedTasks().length;
+    setState({
+      confirm: {
+        eyebrow: "Clear the schedule", title: "Remove every task on job " + App.state.job,
+        body: "The way back from a bad import. Every task and every dependency goes; the working calendar survives, because working days are a property of the job, not the tasks.",
+        checks: [
+          ["warn", "The removal", n + (n === 1 ? " task" : " tasks") + " and every link between them are removed."],
+          ["pass", "Look ahead", "Look-ahead rows seeded from these tasks keep their own rows; they simply stop pointing anywhere."],
+          ["warn", "No undo", "Clearing is not reversible from the undo bar. Re-import the schedule file to rebuild."],
+        ],
+        blocked: false,
+        verdict: "The register and the Gantt empty the moment you confirm.",
+        label: "Clear the schedule",
+        run: async () => {
+          try {
+            await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/tasks`, { method: "DELETE" });
+            setState({ confirm: null, live: "Schedule cleared." });
+            App.refresh("schedule");
+          } catch (err) { setState({ confirm: null, live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  // ————— import (1.x staging flow, kept — richer than the prototype's) ————
+  triggerSchedImport() {
+    let input = document.getElementById("sched-import-input");
+    if (!input) {
+      input = document.createElement("input");
+      input.type = "file"; input.accept = ".mpp,.xml,.mspdi,.pdf,.xlsx,.xlsm,.csv";
+      input.id = "sched-import-input"; input.style.display = "none";
+      document.body.appendChild(input);
+      input.addEventListener("change", () => {
+        if (input.files && input.files[0]) App.runSchedImport(input.files[0]);
+        input.value = "";
+      });
+    }
+    input.click();
+  },
+  async runSchedImport(file) {
+    setState({ live: "Reading " + file.name + "…" });
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/import?mode=replace`,
+        { method: "POST", body: fd, credentials: "same-origin" });
+      const out = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(out.detail || r.status);
+      if (out.committed) {
+        setState({ live: "Imported " + (out.tasks ?? "the") + " tasks from " + file.name + "." });
+        App.refresh("schedule");
+      } else {
+        setState({ live: "Staged " + file.name + " for review — nothing lands until you commit it." });
+        App.refresh("schedule");
+        App.loadStagedImport();
+      }
+    } catch (err) {
+      setState({ live: "Couldn't read that file: " + err.message });
+    }
+  },
+  async loadStagedImport() {
+    try {
+      const staged = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/import/staged`);
+      if (!staged || !staged.id) { setState({ schedStaged: null }); return; }
+      const detail = await api(`/api/schedule/import/${staged.id}`);
+      detail.accept = {};
+      (detail.links || []).forEach((l) => { detail.accept[l.id] = (l.confidence || 0) >= 0.45; });
+      setState({ schedStaged: detail });
+    } catch (e) { setState({ schedStaged: null }); }
+  },
+  async commitStagedImport(mode) {
+    const st = App.state.schedStaged;
+    if (!st) return;
+    try {
+      const ids = Object.keys(st.accept).filter((k) => st.accept[k]);
+      await api(`/api/schedule/import/${st.id}/commit`, { method: "POST",
+        body: JSON.stringify({ mode: mode || "replace", accepted_link_ids: ids }) });
+      setState({ schedStaged: null, live: "Import committed. The schedule below is what landed." });
+      App.refresh("schedule");
+    } catch (err) { setState({ live: err.message }); }
+  },
+  async discardStagedImport() {
+    const st = App.state.schedStaged;
+    if (!st) return;
+    try {
+      await api(`/api/schedule/import/${st.id}/discard`, { method: "POST" });
+      setState({ schedStaged: null, live: "Import discarded. Nothing changed." });
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  // ————— Gantt frame (real project span, padded to month edges) ————————————
+  ganttSpan() {
+    const sd = this.state.data.schedule || {};
+    const start = sd.project_start ? new Date(sd.project_start + "T00:00:00Z") : new Date();
+    const finish = sd.project_finish ? new Date(sd.project_finish + "T00:00:00Z") : new Date(start.getTime() + 120 * 86400000);
+    const t0 = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1);
+    const t1 = Date.UTC(finish.getUTCFullYear(), finish.getUTCMonth() + 1, 1);
+    return { t0, t1, span: Math.max(t1 - t0, 86400000) };
+  },
+  schedZoomIn() { setState({ schedZoom: Math.min(6, (App.state.schedZoom || 1) * 1.4) }); },
+  schedZoomOut() { setState({ schedZoom: Math.max(0.5, (App.state.schedZoom || 1) / 1.4) }); },
+  schedZoomReset() { setState({ schedZoom: 1 }); },
+});
+
+// ————— schedule view models: Gantt rows + register branch ————————————————
+Object.assign(App, {
+  buildSched() {
+    const s = this.state;
+    if (s.page !== "sched") return {};
+    const sd = s.data.schedule || {};
+    const tasks = this.schedTasks();
+    const links = this.schedLinks();
+    const gs = this.ganttSpan();
+    const zoom = s.schedZoom || 1;
+    const hidden = this.schedHiddenSet(tasks);
+    const drag = s.schedDrag;
+    const today = Date.now();
+    const todayPct = Math.min(100, Math.max(0, (today - gs.t0) / gs.span * 100));
+
+    // Month header cells across the real project span.
+    const months = [];
+    for (let t = gs.t0; t < gs.t1;) {
+      const d = new Date(t);
+      months.push({ label: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getUTCMonth()] +
+        (d.getUTCMonth() === 0 || t === gs.t0 ? " ’" + String(d.getUTCFullYear()).slice(2) : ""),
+        style: "flex:1;font:500 10px var(--fm);letter-spacing:.08em;color:var(--ft);text-align:left;border-left:1px solid " + (t === gs.t0 ? "transparent" : "var(--ln)") + ";padding-left:5px" });
+      t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+    }
+
+    const ms = (iso) => new Date((iso || "") + "T00:00:00Z").getTime();
+    const num = (t) => t.external_id || "";
+    const ganttRows = tasks.map((t, i) => ({ t, i })).filter((p) => !hidden[p.i]).map(({ t, i }) => {
+      const dragMs = drag && drag.kind === "bar" && drag.index === i ? drag.delta * 86400000 : 0;
+      // Bars draw from the ENGINE's early dates where it computed them: a
+      // stored date is a floor (push-only, D43), so the bar the field sees
+      // must be where the network actually puts the work, not the floor.
+      const barStart = t.early_start || t.start;
+      const barFinish = t.early_finish || t.finish;
+      const start = (ms(barStart) + dragMs - gs.t0) / gs.span * 100;
+      const end = (ms(barFinish) + 86400000 + dragMs - gs.t0) / gs.span * 100;
+      const w = Math.max(0.8, end - start);
+      const pct = Math.round(t.percent_complete || 0);
+      const done = pct >= 100;
+      const color = taskColor(num(t) || i + 1);
+      const summary = !!t.is_summary;
+      const milestone = !!t.is_milestone && !summary;
+      const kids = this.taskChildIdx(tasks, i);
+      const collapsed = !!t.collapsed;
+      const rowOver = drag && drag.kind === "row" && drag.over === i && drag.index !== i;
+      const rowLift = drag && drag.kind === "row" && drag.index === i;
+      const primary = links.find((l) => l.succ_id === t.id);
+      const pr = primary ? tasks.find((x) => x.id === primary.pred_id) : null;
+      const critical = !!t.is_critical;
+      const floatTxt = t.total_float === null || t.total_float === undefined ? "" : Math.round(t.total_float) + " d float";
+      return {
+        ...this.schedRowProps(i),
+        num: num(t), name: t.name || "?", idx: String(i),
+        edit: App.openTaskForm(t.id),
+        rowStyle: "border-bottom:1px solid var(--ln);background:" + (rowOver ? "var(--bps)" : rowLift ? "var(--p2)" : "transparent") +
+          (rowOver ? ";box-shadow:inset 0 2px 0 var(--bp)" : "") + (rowLift ? ";opacity:.55" : ""),
+        caretShow: kids.length > 0,
+        caret: collapsed ? "▸" : "▾",
+        caretAria: (collapsed ? "Expand" : "Collapse") + " " + (t.name || "?") + ", " + kids.length + (kids.length === 1 ? " subtask" : " subtasks"),
+        toggleCollapse: App.toggleSchedCollapse(t.id),
+        kidCount: collapsed && kids.length ? "+" + kids.length : "",
+        swatch: "width:10px;height:10px;border-radius:3px;flex:none;background:" + color + (critical ? ";box-shadow:0 0 0 2px var(--ers)" : ""),
+        nameStyle: "text-align:left;font:" + (summary ? "600" : "500") + " 12.5px var(--fd);color:var(--bp);text-decoration:underline;text-underline-offset:3px;min-height:24px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0",
+        indentStyle: "display:inline-block;width:" + ((t.outline_level || 0) * 12) + "px;flex:none",
+        trackStyle: "position:absolute;left:0;right:0;top:11px;height:4px;border-radius:2px;background:var(--ln)",
+        barDown: App.schedBarDown(i),
+        isMilestone: milestone,
+        msStyle: "position:absolute;top:6px;left:calc(" + start.toFixed(2) + "% - 7px);width:14px;height:14px;background:" + color + ";transform:rotate(45deg);border-radius:2px;cursor:grab;touch-action:none" + (critical ? ";box-shadow:0 0 0 2px var(--ers)" : ""),
+        barStyle: "position:absolute;top:" + (summary ? "8px" : "6px") + ";left:" + start.toFixed(2) + "%;width:" + w.toFixed(2) + "%;height:" + (summary ? "10px" : "14px") +
+          ";border-radius:" + (summary ? "2px" : "4px") + ";background:" + taskSoft(num(t) || i + 1) + ";border:" + (critical ? "2px" : "1px") + " solid " + color + ";overflow:hidden;cursor:grab;touch-action:none" +
+          (summary ? ";clip-path:polygon(0 0,100% 0,100% 100%,calc(100% - 6px) 55%,6px 55%,0 100%)" : "") +
+          (dragMs ? ";box-shadow:0 3px 10px rgba(24,27,30,.25);cursor:grabbing" : ""),
+        fillStyle: "display:block;height:100%;width:" + pct + "%;background:" + color + ";opacity:" + (done ? ".55" : "1") + ";pointer-events:none",
+        todayStyle: "position:absolute;top:0;bottom:0;left:" + todayPct.toFixed(2) + "%;width:1px;background:var(--ac);opacity:.5",
+        aria: (t.name || "?") + ", " + (barStart || "") + " to " + (barFinish || "") + ", " + pct + "% complete, " +
+          (critical ? "on the critical path" : floatTxt || "float not computed") +
+          (pr ? ", follows " + (pr.name || "?") + " " + (DEP_NAME[primary.link_type] || primary.link_type || "FS") : "") +
+          ". Drag the bar to move it; changes ask for confirmation.",
+      };
+    });
+
+    return {
+      hasSchedule: tasks.length > 0,
+      schedEmpty: tasks.length === 0,
+      ganttMonths: months,
+      ganttRows,
+      ganttMinWidth: Math.max(760, Math.round(months.length * 90 * zoom)),
+      ganttRange: (sd.project_start ? usDate(sd.project_start) : "—") + " – " + (sd.project_finish ? usDate(sd.project_finish) : "—") + " · today " + usDate(new Date().toISOString().slice(0, 10)),
+      schedZoomIn: () => App.schedZoomIn(), schedZoomOut: () => App.schedZoomOut(), schedZoomReset: () => App.schedZoomReset(),
+      schedZoomLabel: Math.round((s.schedZoom || 1) * 100) + "%",
+      openNewTask: App.openForm("task"),
+      triggerSchedImport: () => App.triggerSchedImport(),
+      clearSchedule: () => App.clearSchedule(),
+      calendarNote: (() => {
+        const cal = sd.calendar || {};
+        const mask = cal.workdays || "1111100";
+        const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].filter((d2, i2) => mask[i2] === "1").join(", ");
+        const hol = (cal.holidays || []).length;
+        return "Working days: " + days + (hol ? " · " + hol + " holidays" : "") + ". Float is in working days on this calendar.";
+      })(),
+      mppNote: ((sd.mpp || {}).available === false) ? "Binary .mpp import needs Java on the server; XML, PDF, Excel and CSV import regardless." : "",
+      staged: s.schedStaged ? {
+        counts: s.schedStaged.counts || {},
+        warnings: s.schedStaged.warnings || [],
+        links: (s.schedStaged.links || []).map((l) => ({
+          ...l, on: !!s.schedStaged.accept[l.id],
+          toggle: () => { s.schedStaged.accept[l.id] = !s.schedStaged.accept[l.id]; setState({}); },
+        })),
+        tickAll: (on) => () => { (s.schedStaged.links || []).forEach((l) => { s.schedStaged.accept[l.id] = on; }); setState({}); },
+        commit: () => App.commitStagedImport("replace"),
+        discard: () => App.discardStagedImport(),
+      } : null,
+    };
+  },
+
+  openTaskForm: (taskId) => () => {
+    const t = App.schedTasks().find((x) => x.id === taskId) || {};
+    App.openForm("task", { taskId, task: t })();
+  },
+});
+
+// task form kind + submit (extends the chain built in part 6)
+(() => {
+  const baseSpec = App.formSpec.bind(App);
+  App.formSpec = function (kind, ctx) {
+    if (kind !== "task") return baseSpec(kind, ctx);
+    const t = (ctx || {}).task || {};
+    const editing = !!(ctx || {}).taskId;
+    const tasks = this.schedTasks();
+    const primary = editing ? this.primaryPred(t.id) : null;
+    return {
+      eyebrow: editing ? "Editing a task" : "New task",
+      title: editing ? "Edit this schedule task" : "Add a schedule task",
+      submit: editing ? "Save these changes" : "Add this task",
+      intro: editing
+        ? "The schedule is a working tool, not a frozen import. Editing a task moves its bar on the Gantt immediately and recalculates what the register shows."
+        : "Add work the imported schedule never had. Tasks added here are marked as PlanWise-owned so an import cannot silently overwrite them.",
+      fields: [
+        ["name", "Task", "text", { req: true, wide: true, value: t.name || "", placeholder: "Relay panel terminations, Bay 3", hint: "The words the crew and the customer would both recognise." }],
+        ["start", "Start", "date", { req: true, value: t.start || new Date().toISOString().slice(0, 10), hint: "" }],
+        ["finish", "Finish", "date", { req: true, value: t.finish || "", hint: "Must be on or after the start date." }],
+        ["pct", "Percent complete", "text", { req: true, value: String(Math.round(t.percent_complete || 0)), placeholder: "0", hint: "Whole number from 0 to 100. Float and the critical path are computed by the engine, never typed." }],
+        ["level", "Indent level", "select", { req: true, value: String(t.outline_level ?? 1), options: [["0", "Summary"], ["1", "Task"], ["2", "Subtask"]], hint: "Sets how far the task is indented on the Gantt." }],
+        ["milestone", "Milestone", "select", { req: true, value: t.is_milestone ? "Yes" : "No", options: [["No", "No"], ["Yes", "Yes"]], hint: "A milestone draws as a diamond on its start date." }],
+        ["pred", "Predecessor", "select", { value: primary ? primary.pred_id : "", options: [["", "None"]].concat(tasks.filter((x) => x.id !== t.id).map((x) => [x.id, (x.external_id ? x.external_id + " · " : "") + (x.name || "?")])), hint: "The task this one waits on. Moving the predecessor pushes this task with it." }],
+        ["dep", "Dependency type", "select", { value: primary ? primary.link_type || "FS" : "FS", options: DEP_TYPES.map(([vv, l]) => [vv, vv + " — " + l]), hint: "FS is the usual case: this task starts after the predecessor finishes." }],
+      ],
+      review: editing
+        ? "Changes apply to the Gantt and the register straight away, and are undoable."
+        : "The task is added to the Gantt and the register. It does not write back to the customer's schedule file.",
+    };
+  };
+
+  const baseSubmit = App.submitForm.bind(App);
+  App.submitForm = async function () {
+    const f = App.state.form;
+    if (!f || f.kind !== "task") return baseSubmit();
+    const spec = App.formSpec(f.kind, f.ctx);
+    const errs = App.formErrors(spec, f);
+    const p = parseInt(f.values.pct);
+    if (f.values.start && f.values.finish && f.values.finish < f.values.start) errs.push("Finish cannot be before start.");
+    if (String(f.values.pct).trim() && (isNaN(p) || p < 0 || p > 100)) errs.push("Percent complete must be a whole number between 0 and 100.");
+    if (errs.length) {
+      f.submitted = true;
+      setState({ live: errs.length + " field" + (errs.length === 1 ? "" : "s") + " need attention." });
+      return;
+    }
+    const job = encodeURIComponent(App.state.job);
+    const editing = !!(f.ctx || {}).taskId;
+    const body = { name: f.values.name, start: f.values.start, finish: f.values.finish,
+      percent_complete: p || 0, outline_level: parseInt(f.values.level) || 1,
+      is_milestone: f.values.milestone === "Yes" ? 1 : 0 };
+    try {
+      let taskId, actId, phrase;
+      if (editing) {
+        const out = await api(`/api/jobs/${job}/schedule/tasks/${f.ctx.taskId}`, { method: "PATCH", body: JSON.stringify(body) });
+        taskId = f.ctx.taskId; actId = out.activity_id;
+        const moved = (out.moved || []).length;
+        phrase = "“" + f.values.name + "” updated." + (moved ? " " + moved + " dependent task" + (moved === 1 ? "" : "s") + " moved with it." : "");
+      } else {
+        const out = await api(`/api/jobs/${job}/schedule/tasks`, { method: "POST", body: JSON.stringify(body) });
+        taskId = out.id;
+        const acts = await api(`/api/jobs/${job}/activity?limit=1`);
+        actId = ((acts.activity || [])[0] || {}).id;
+        phrase = "“" + f.values.name + "” added to the schedule.";
+      }
+      // Primary predecessor: reconcile the link.
+      const prevLink = App.primaryPred(taskId);
+      const wantPred = f.values.pred || "";
+      const wantType = f.values.dep || "FS";
+      if (prevLink && (!wantPred || prevLink.pred_id !== wantPred || (prevLink.link_type || "FS") !== wantType)) {
+        await api(`/api/jobs/${job}/schedule/links/${prevLink.id}`, { method: "DELETE" }).catch(() => {});
+      }
+      if (wantPred && (!prevLink || prevLink.pred_id !== wantPred || (prevLink.link_type || "FS") !== wantType)) {
+        await api(`/api/jobs/${job}/schedule/links`, { method: "POST",
+          body: JSON.stringify({ pred_id: wantPred, succ_id: taskId, link_type: wantType }) }).catch(() => {});
+      }
+      setState({ form: null });
+      App.act(phrase, actId, ["schedule"]);
+    } catch (err) {
+      setState({ live: "Could not save the task: " + err.message });
+    }
+  };
+})();
+
+// ————— look ahead (1.x model, kept — prototype grid in front of it) —————————
+Object.assign(App, {
+  laPeriod() { return this.state.data.lookahead || {}; },
+  laAreas() { return ((this.state.data.areas || {}).areas) || []; },
+
+  toggleTick: (itemId, dayIndex) => async () => {
+    // Optimistic: patch the cached bitmap in place (1.x behavior, kept — a
+    // crew ticking across a row must not wait a round-trip per tick).
+    const la = App.laPeriod();
+    const item = (la.items || []).find((i) => i.id === itemId);
+    if (item) {
+      const days = (item.days || "").padEnd(21, "0").split("");
+      days[dayIndex] = days[dayIndex] === "1" ? "0" : "1";
+      item.days = days.join("");
+      setState({});
+    }
+    try {
+      await api(`/api/lookahead/items/${itemId}/day/${dayIndex}`, { method: "POST" });
+    } catch (err) {
+      setState({ live: "That tick did not save: " + err.message });
+      App.refresh("lookahead");
+    }
+  },
+
+  setLaWeeks: (weeks) => async () => {
+    const la = App.laPeriod();
+    try {
+      await api(`/api/lookahead/${la.id}`, { method: "PATCH", body: JSON.stringify({ weeks }) });
+      App.refresh("lookahead");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  async seedLook() {
+    const la = App.laPeriod();
+    if (!la.id) return;
+    try {
+      const out = await api(`/api/lookahead/${la.id}/seed`, { method: "POST" });
+      setState({ live: (out.added ?? "The schedule's") + " activities seeded from the schedule. Re-seeding later adds only what is new and never disturbs hand edits." });
+      App.refresh("lookahead");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  removeLaItem: (itemId) => async () => {
+    const item = (App.laPeriod().items || []).find((i) => i.id === itemId) || {};
+    try {
+      await api(`/api/lookahead/items/${itemId}`, { method: "DELETE" });
+      const acts = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/activity?limit=1`);
+      App.act("“" + (item.description || "the activity") + "” removed from the look ahead.",
+        ((acts.activity || [])[0] || {}).id, ["lookahead"]);
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  shareLook: (audience) => async () => {
+    const la = App.laPeriod();
+    if (!la.id) return;
+    try {
+      const payload = await api(`/api/lookahead/${la.id}/share?audience=${audience}&weeks=${la.weeks || 2}`);
+      await companionFetch("/draft", { to: payload.to || "", subject: payload.subject,
+        html: payload.html, attachments: [{ filename: payload.filename || "look-ahead.pdf", content_b64: payload.pdf_b64 }], display: true });
+      setState({ live: audience === "customer"
+        ? "The customer look ahead is drafted in Outlook. Tools, material and operational notes were stripped from it."
+        : "The internal look ahead is drafted in Outlook with tools and material on it. Address it before sending." });
+    } catch (err) {
+      const eml = `/api/lookahead/${la.id}/share.eml?audience=${audience}&weeks=${la.weeks || 2}`;
+      if (isNetErr(err)) {
+        setState({ live: "No Outlook companion here — downloading the email file instead." });
+        downloadEmlUrl(eml, "Email file downloaded. Open it in Outlook and press Send.");
+      } else {
+        setState({ live: "The companion refused: " + err.message + " — downloading the email file instead." });
+        downloadEmlUrl(eml);
+      }
+    }
+  },
+
+  buildLook() {
+    const s = this.state;
+    if (s.page !== "look") return {};
+    const la = this.laPeriod();
+    const areas = this.laAreas();
+    const items = la.items || [];
+    const weeks = la.weeks || 2;
+    const shown = weeks * 7;
+    const days = (la.days || []).slice(0, shown);
+    const areaOf = (id) => areas.find((a) => a.id === id);
+
+    const lookRows = items.map((r) => {
+      const bitmap = (r.days || "").padEnd(21, "0");
+      const on = bitmap.slice(0, shown).split("").filter((t) => t === "1").length;
+      const area = areaOf(r.work_area_id) || { name: "No area", color: "var(--nt)" };
+      const notes = [];
+      if (r.requirements) notes.push({ tag: "Customer", text: r.requirements, color: "var(--bp)" });
+      if (r.notes) notes.push({ tag: "Ops", text: r.notes, color: "var(--nt)" });
+      return {
+        id: r.id, name: r.description || "?", area: area.name, areaColor: area.color || "var(--nt)",
+        notes, hasNotes: notes.length > 0,
+        tools: r.tools || "None",
+        edit: App.openForm("look", { itemId: r.id, item: r }),
+        remove: App.removeLaItem(r.id),
+        count: on + (on === 1 ? " day" : " days"),
+        days: days.map((d, di) => {
+          const isOn = bitmap[di] === "1";
+          return {
+            pressed: isOn ? "true" : "false",
+            label: (isOn ? "Worked" : "Not worked") + " on " + d.dow + " " + d.day + ", " + (r.description || "?") + ", " + area.name + ". Select to change.",
+            mark: isOn ? "✓" : "",
+            toggle: App.toggleTick(r.id, di),
+            cellStyle: "padding:3px 2px;text-align:center;border-bottom:1px solid var(--ln);border-right:1px solid " +
+              ((di + 1) % 7 === 0 ? "var(--ls)" : "var(--ln)") + ";background:" + (d.weekend ? "var(--p2)" : "transparent"),
+            style: "width:26px;height:24px;border-radius:4px;font:700 12px var(--fd);border:1px solid " +
+              (isOn ? (area.color || "var(--nt)") : "var(--ln)") + ";background:" + (isOn ? (area.color || "var(--nt)") : "var(--pn)") +
+              ";color:" + (isOn ? "#FFFFFF" : "var(--ft)"),
+          };
+        }),
+      };
+    });
+
+    const ticked = items.reduce((t, r) => t + (r.days || "").slice(0, shown).split("").filter((x) => x === "1").length, 0);
+    return {
+      hasLook: !!la.id,
+      lookDays: days.map((d, i) => ({
+        dow: d.dow, num: String(d.day),
+        style: "padding:5px 2px;text-align:center;color:" + (d.weekend ? "var(--ft)" : "var(--mu)") +
+          ";font:500 var(--lbl) var(--fm);letter-spacing:.03em;border-bottom:1px solid var(--ls);border-right:1px solid " +
+          ((i + 1) % 7 === 0 ? "var(--ls)" : "var(--ln)") + ";background:" + (d.weekend ? "var(--p2)" : "transparent") + ";min-width:32px",
+      })),
+      lookRows, lookTicked: ticked,
+      lookRangeLabel: la.start_date ? usDate(la.start_date) + " – " + usDate(la.end_date) + " · " + ticked + " days ticked" : "",
+      lookWeeksOpts: [2, 3].map((w) => ({
+        label: w + " wk", pressed: weeks === w ? "true" : "false",
+        pick: App.setLaWeeks(w), style: chip(weeks === w) })),
+      areaCount: areas.length + (areas.length === 1 ? " area" : " areas") + " on this job",
+      areaChips: areas.map((a) => {
+        const n = items.filter((r) => r.work_area_id === a.id).length;
+        return { name: a.name, color: a.color || "var(--nt)", count: n + (n === 1 ? " activity" : " activities") };
+      }).concat(items.some((r) => !r.work_area_id)
+        ? [{ name: "No area", color: "var(--nt)", count: items.filter((r) => !r.work_area_id).length + " activities" }] : []),
+      openNewArea: App.openForm("area"),
+      openNewLook: App.openForm("look"),
+      seedLook: () => App.seedLook(),
+      shareLookCust: App.shareLook("customer"),
+      shareLookInt: App.shareLook("team"),
+      lookWeekCount: weeks === 2 ? "Two-week look ahead" : "Three-week look ahead",
+    };
+  },
+});
+
+// look/area form kinds
+(() => {
+  const baseSpec = App.formSpec.bind(App);
+  App.formSpec = function (kind, ctx) {
+    if (kind === "area") return {
+      eyebrow: "New work area", title: "Add a work area", submit: "Add this work area",
+      intro: "Work areas group the look ahead the way the site is actually divided. Each one carries a colour so the crew can read the grid at a glance.",
+      fields: [
+        ["name", "Area name", "text", { req: true, wide: true, placeholder: "Control building", hint: "The name the crew already uses for it on site." }],
+      ],
+      colors: true,
+      review: "The area becomes selectable on every look-ahead activity and its colour appears on the grid straight away.",
+    };
+    if (kind === "look") {
+      const item = (ctx || {}).item || {};
+      const editing = !!(ctx || {}).itemId;
+      const areas = App.laAreas();
+      return {
+        eyebrow: editing ? "Editing an activity" : "New activity",
+        title: editing ? "Edit this look-ahead activity" : "Add an activity to the look ahead",
+        submit: editing ? "Save these changes" : "Add this activity",
+        intro: editing
+          ? "Everything here is editable. Tools, material and operational notes stay internal; the customer copy carries the activity, the area and the days only."
+          : "Activities can come from the schedule or be added by hand when the field finds work the schedule never had.",
+        fields: [
+          ["name", "Activity", "text", { req: true, wide: true, value: item.description || "", placeholder: "Set bus insulators, Bay 3", hint: "The words the crew would use for it." }],
+          ["area", "Work area", "select", { value: item.work_area_id || "", options: [["", "No area"]].concat(areas.map((a) => [a.id, a.name])), hint: "Optional. An area sets the colour this activity carries on the grid; without one it uses the job's default colour." }],
+          ["custReq", "Customer requirement", "textarea", { rows: 2, wide: true, value: item.requirements || "", placeholder: "Escort required inside the Bay 3 fence for the full outage.", hint: "Something the customer has to provide or permit. Appears on the customer copy." }],
+          ["opsNote", "Operational note", "textarea", { rows: 2, wide: true, value: item.notes || "", placeholder: "Two crews, staggered start at 6 am.", hint: "Internal only. Never appears on the customer copy." }],
+          ["tools", "Tools", "text", { value: item.tools || "", placeholder: "90-ton crane, torque wrenches", hint: "Internal only. Stripped from the customer copy." }],
+          ["material", "Material", "text", { value: item.materials || "", placeholder: "Insulators (24), hardware kits", hint: "Internal only. Stripped from the customer copy." }],
+        ],
+        review: editing
+          ? "Changes apply to the grid immediately. The customer copy is regenerated the next time you share it."
+          : "The activity is added to the grid. Tick its days straight from the grid; nothing is sent to anyone until you share the look ahead.",
+      };
+    }
+    return baseSpec(kind, ctx);
+  };
+
+  const baseSubmit = App.submitForm.bind(App);
+  App.submitForm = async function () {
+    const f = App.state.form;
+    if (!f || (f.kind !== "look" && f.kind !== "area")) return baseSubmit();
+    const spec = App.formSpec(f.kind, f.ctx);
+    const errs = App.formErrors(spec, f);
+    if (errs.length) {
+      f.submitted = true;
+      setState({ live: errs.length + " field" + (errs.length === 1 ? "" : "s") + " need attention." });
+      return;
+    }
+    try {
+      if (f.kind === "area") {
+        await api(`/api/jobs/${encodeURIComponent(App.state.job)}/lookahead/areas`, { method: "POST",
+          body: JSON.stringify({ name: f.values.name, color: (AREA_COLORS[f.color || 0] || [])[1]
+            ? getComputedStyle(document.documentElement).getPropertyValue(
+                (AREA_COLORS[f.color || 0][1].match(/var\((--[a-z]+)\)/) || [])[1] || "--nt").trim() || "#5C636A"
+            : "#5C636A" }) });
+        setState({ form: null, live: "Work area “" + f.values.name + "” added in " + AREA_COLORS[f.color || 0][0].toLowerCase() + "." });
+        App.refresh("areas", "lookahead");
+      } else {
+        const body = { description: f.values.name, work_area_id: f.values.area || null,
+          requirements: f.values.custReq || null, notes: f.values.opsNote || null,
+          tools: f.values.tools || null, materials: f.values.material || null };
+        const editing = !!(f.ctx || {}).itemId;
+        if (editing) {
+          await api(`/api/lookahead/items/${f.ctx.itemId}`, { method: "PATCH", body: JSON.stringify(body) });
+          setState({ form: null, live: "“" + f.values.name + "” updated on the look ahead." });
+        } else {
+          const la = App.laPeriod();
+          await api(`/api/lookahead/${la.id}/items`, { method: "POST", body: JSON.stringify(body) });
+          setState({ form: null, live: "“" + f.values.name + "” added to the look ahead. Tick its days on the grid." });
+        }
+        App.refresh("lookahead");
+      }
+    } catch (err) {
+      setState({ live: "Could not save: " + err.message });
+    }
+  };
+})();

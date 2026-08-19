@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PlanWise</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<!-- Theme colors track the active palette so the phone's chrome matches (kept from 1.x). -->
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#EFEDE6">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#14171A">
+<script>
+// No-flash chrome: apply saved theme/density/mode/accent before first paint.
+// Kept from 1.x (blocking inline script); extended to the 2.0 four-axis
+// preference bag. Migrates the 1.x key on first run.
+(function () {
+  var prefs = {};
+  try {
+    prefs = JSON.parse(localStorage.getItem("pw.prefs") || "null");
+    if (!prefs) {
+      var legacy = localStorage.getItem("planwise.theme");
+      prefs = legacy ? { theme: legacy } : {};
+      localStorage.setItem("pw.prefs", JSON.stringify(prefs));
+    }
+  } catch (e) { prefs = {}; }
+  var el = document.documentElement;
+  var dark = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches;
+  el.dataset.theme = prefs.theme || (dark ? "dark" : "light");
+  el.dataset.density = prefs.density || "comfortable";
+  el.dataset.mode = prefs.mode || "desk";
+  if (prefs.accent) { el.style.setProperty("--ac", prefs.accent); el.style.setProperty("--ah", prefs.accent); }
+})();
+</script>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="tokens.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div id="app"></div>
+<script src="vendor/morphdom-umd.min.js"></script>
+<script src="copy.js"></script>
+<script src="api.js"></script>
+<script src="core.js"></script>
+<script src="ui.js"></script>
+<script src="pages.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

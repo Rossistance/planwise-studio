@@ -1,0 +1,59 @@
+/* PlanWise 2.0 — the small class layer over the verbatim token block.
+   The prototype styles everything inline (its template DSL had no classes);
+   the port keeps one-off layout inline for fidelity and promotes exactly the
+   REPEATED states a stylesheet does better — hover/focus, which the prototype
+   expressed through its runtime's style-hover/style-focus attributes, and the
+   sr-only idiom. Naming: h* = hover effect, f* = focus effect.
+   (Decision D in the plan; every class here maps 1:1 to a prototype
+   style-hover/style-focus string.) */
+
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* Skip links: hidden until focused, then a solid accent pill (prototype
+   style-focus on the two skip anchors). */
+.skip { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.skip:focus { position: static; width: auto; height: auto; clip: auto; padding: 9px 14px; background: var(--ac); color: var(--acink); border-radius: 6px; font: 600 13px var(--fd); text-decoration: none; }
+
+/* Hover vocabulary — each is one prototype style-hover string. */
+.hb-ls:hover { border-color: var(--ls) !important; }
+.hb-ls-ink:hover { border-color: var(--ls) !important; color: var(--ink) !important; }
+.hb-ac:hover { border-color: var(--ac) !important; color: var(--ac) !important; }
+.hb-er:hover { border-color: var(--er) !important; color: var(--er) !important; }
+.hb-ah:hover { background: var(--ah) !important; }
+.hb-ah2:hover { background: var(--ah) !important; border-color: var(--ah) !important; }
+.hb-fill:hover { background: var(--ac) !important; color: var(--acink) !important; }
+.hb-acp3:hover { border-color: var(--ac) !important; background: var(--p3) !important; }
+.hb-as:hover { border-color: var(--ac) !important; background: var(--as) !important; }
+.ht-ac:hover { color: var(--ac) !important; }
+.ht-ink:hover { color: var(--ink) !important; }
+.ht-er:hover { color: var(--er) !important; }
+.ho-1:hover { opacity: 1 !important; }
+.hr-p2:hover { background: var(--p2) !important; }
+.hr-as:hover { background: var(--as) !important; }
+.hp2-ink:hover { background: var(--p2) !important; color: var(--ink) !important; }
+.hu:hover { background: var(--bg) !important; color: var(--ink) !important; }
+
+/* Focus vocabulary. */
+.fi:focus { outline-offset: 0; border-color: var(--ac) !important; background: var(--p3) !important; }
+.fi2:focus { outline-offset: 0; border-color: var(--ac) !important; }
+.fj:focus { outline-offset: -2px; background: var(--p3) !important; }
+.fu:focus { outline-offset: 0; border-bottom-color: var(--ac) !important; }
+
+/* Table row hover (prototype puts style-hover on <tr>). */
+tr.hr-p2:hover, tr.hr-p2:hover > th, tr.hr-p2:hover > td { background: var(--p2) !important; }
+
+/* 1.x mobile card reflow (kept — the prototype was a desktop preview).
+   Tables opt in with .reflow; the render pass stamps data-label from each
+   column header so cells caption themselves. */
+@media (max-width: 720px) {
+  input, select, textarea { font-size: 16px !important; }   /* defeat iOS zoom */
+  table.reflow thead { display: none; }
+  table.reflow, table.reflow tbody, table.reflow tr, table.reflow td, table.reflow th { display: block; width: 100% !important; }
+  table.reflow tr { border-bottom: 2px solid var(--ls); padding: 6px 0; }
+  table.reflow td[data-label]::before, table.reflow th[data-label]::before {
+    content: attr(data-label); display: block;
+    font: 500 var(--lbl) var(--fm); letter-spacing: .12em; text-transform: uppercase; color: var(--ft);
+    margin-bottom: 2px;
+  }
+  table.reflow td, table.reflow th { text-align: left !important; border-bottom: 1px solid var(--ln) !important; }
+}

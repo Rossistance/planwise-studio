@@ -75,3 +75,17 @@ def test_email_uniqueness_is_case_insensitive_and_null_tolerant():
     conn.execute("INSERT INTO users (id, name, created_at) VALUES ('c', 'C', 't')")
     conn.execute("INSERT INTO users (id, name, created_at) VALUES ('d', 'D', 't')")
     conn.commit()
+
+
+def test_two_point_oh_tables_and_activity_columns_exist():
+    """2.0 additions: vista_history + briefings tables, and the reversal
+    columns on activity — all additive, so a 1.x database opens unchanged."""
+    conn = db.connect()
+    tables = {r["name"] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'")}
+    assert {"vista_history", "briefings"} <= tables
+    act_cols = {r["name"] for r in conn.execute("PRAGMA table_info(activity)")}
+    assert {"object_kind", "object_id", "revert", "reversal_of"} <= act_cols
+    # And a plain 1.x-era insert (no new columns) still works.
+    conn.execute("INSERT INTO activity (ts, actor, action) VALUES ('t', 'a', 'x')")
+    conn.commit()

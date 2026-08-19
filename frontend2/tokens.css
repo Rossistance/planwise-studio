@@ -1,0 +1,65 @@
+/* PlanWise 2.0 design tokens — ported VERBATIM from the prototype
+   (design/PlanWise Redesign v3.dc.html lines 14–71). This block is the design system; do not
+   "improve" values here — fidelity to the prototype is the requirement (governing rule §1).
+   One deliberate fix: the prototype's dark --wn declared a junk value first
+   (`--wn:#E4AF४7` — a Devanagari digit four), immediately re-declared correctly; only the
+   correct declaration is carried.
+   Four axes, all attributes on <html> so every component inherits (IMPLEMENTATION-NOTES §2):
+   data-theme="dark" · data-density="compact" · data-mode="field" · accent override (--ac/--ah
+   inline, set by chrome.js from the user's saved preference). */
+:root{
+  --bg:#EFEDE6; --pn:#FBFAF6; --p2:#F4F2EB; --p3:#FFFFFF;
+  --ink:#181B1E; --mu:#4E555E; --ft:#6E757D;
+  --ln:#E1DED4; --ls:#C7C3B6;
+  --ac:#C7420A; --ah:#A83605; --as:#FAEAE0; --acink:#FFFFFF;
+  --bp:#1F5F97; --bps:#E7EFF7;
+  --ok:#1B6B3D; --oks:#E4F0E8; --wn:#7A5100; --wns:#F7EEDA;
+  --er:#A9291D; --ers:#F9E8E5; --nt:#5C636A; --nts:#EDECE7;
+  --vi:#5B3A8E; --vis:#EDE7F5;
+  --fd:'Barlow Semi Condensed','Segoe UI Semibold',system-ui,sans-serif;
+  --fb:Archivo,'Segoe UI',system-ui,sans-serif;
+  --fm:'JetBrains Mono','Cascadia Mono',Consolas,monospace;
+  --sh:0 1px 2px rgba(24,27,30,.05),0 8px 24px rgba(24,27,30,.06);
+  --shp:0 18px 50px rgba(24,27,30,.20);
+  --rowY:12px; --cellY:11px; --tap:36px; --fz:13.5px; --fzs:12.5px; --lbl:9.5px; --h1:21px;
+}
+[data-theme="dark"]{
+  --bg:#14171A; --pn:#1D2125; --p2:#191D21; --p3:#23282D;
+  --ink:#EDECE8; --mu:#AEB4BA; --ft:#8B9298;
+  --ln:#2C3237; --ls:#414850;
+  --ac:#F97435; --ah:#FF8B55; --as:#3A2A20; --acink:#17191B;
+  --bp:#7FBBEC; --bps:#22303C;
+  --ok:#54BC80; --oks:#1D2E26; --wn:#E7B44E; --wns:#312918;
+  --er:#EE7A6C; --ers:#372321; --nt:#A8AFB6; --nts:#282D32;
+  --vi:#B294E0; --vis:#2A2337;
+  --sh:0 1px 2px rgba(0,0,0,.3),0 8px 24px rgba(0,0,0,.28);
+  --shp:0 18px 50px rgba(0,0,0,.55);
+}
+[data-density="compact"]{ --rowY:8px; --cellY:8px; --tap:30px; --fz:13px; --fzs:12px; --h1:19px; }
+[data-mode="field"]{ --rowY:17px; --cellY:16px; --tap:48px; --fz:16px; --fzs:15px; --lbl:11px; --h1:25px; --mu:#33393F; --ft:#4A5158; }
+[data-theme="dark"][data-mode="field"]{ --mu:#D2D7DC; --ft:#B4BBC1; }
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+input,select,textarea{max-width:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:var(--fz)/1.5 var(--fb);-webkit-font-smoothing:antialiased}
+a{color:var(--bp);text-decoration:underline;text-underline-offset:2px}
+a:hover{color:var(--ac)}
+button{font:inherit;cursor:pointer;color:inherit;background:none;border:none}
+input,select,textarea{font:var(--fz) var(--fb);color:var(--ink)}
+h1,h2,h3{text-wrap:balance}
+:where(a,button,input,select,textarea,summary,[tabindex]):focus-visible{outline:3px solid var(--ac);outline-offset:2px;border-radius:3px}
+::selection{background:var(--ac);color:var(--acink)}
+::-webkit-scrollbar{width:12px;height:12px}
+::-webkit-scrollbar-thumb{background:var(--ls);border-radius:8px;border:3px solid transparent;background-clip:content-box}
+@keyframes fadein{from{opacity:0;transform:translateY(3px)}to{opacity:1;transform:none}}
+@keyframes plumbswing{0%{transform:rotate(-19deg)}22%{transform:rotate(13deg)}44%{transform:rotate(-7.5deg)}64%{transform:rotate(4deg)}82%{transform:rotate(-1.6deg)}100%{transform:rotate(0)}}
+@keyframes plumbdrop{0%{opacity:0;transform:translateY(-34px)}40%{opacity:1}100%{opacity:1;transform:translateY(0)}}
+@keyframes gridin{from{opacity:0;stroke-dashoffset:200}to{opacity:1;stroke-dashoffset:0}}
+@keyframes risein{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes vialdraw{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes bubbleset{0%{left:8%}38%{left:66%}68%{left:38%}100%{left:calc(50% - 6px)}}
+@keyframes splashout{to{opacity:0;visibility:hidden}}
+@keyframes letterset{0%{opacity:0;transform:translateY(11px) scaleY(1.18)}55%{opacity:1;transform:translateY(-1.5px) scaleY(.985)}78%{transform:translateY(.5px)}100%{opacity:1;transform:none}}
+@keyframes sloganrule{from{transform:scaleX(0)}to{transform:scaleX(1)}}
+@keyframes riseup{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}

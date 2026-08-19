@@ -810,6 +810,8 @@ def update_task(job_number: str, task_id: str, fields: dict[str, Any],
     if not clean:
         return None
     conn = db.connect()
+    old = conn.execute("SELECT * FROM schedule_tasks WHERE id = ? AND job_number = ?",
+                       (task_id, job_number)).fetchone()
     sets = ", ".join(f"{k} = ?" for k in clean)
     cur = conn.execute(f"UPDATE schedule_tasks SET {sets} WHERE id = ? AND job_number = ?",  # noqa: S608
                        (*clean.values(), task_id, job_number))
@@ -824,10 +826,16 @@ def update_task(job_number: str, task_id: str, fields: dict[str, Any],
                      (task_id,))
         conn.commit()
         sync_links_from_text(job_number, source="manual", actor=actor)
-    db.log_activity(actor, job_number, "schedule.task.update",
-                    f"{task_id}: {', '.join(clean)}")
-    return dict(conn.execute("SELECT * FROM schedule_tasks WHERE id = ?",
-                             (task_id,)).fetchone())
+    activity_id = db.log_activity(
+        actor, job_number, "schedule.task.update",
+        f"{task_id}: {', '.join(clean)}",
+        object_kind="task", object_id=task_id,
+        revert={"op": "task.patch", "id": task_id, "job_number": job_number,
+                "fields": {k: (old[k] if old else None) for k in clean}})
+    out = dict(conn.execute("SELECT * FROM schedule_tasks WHERE id = ?",
+                            (task_id,)).fetchone())
+    out["activity_id"] = activity_id
+    return out
 
 
 def clear_tasks(job_number: str, actor: str | None = None) -> int:

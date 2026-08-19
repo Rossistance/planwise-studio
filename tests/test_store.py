@@ -21,7 +21,10 @@ def test_po_crud_round_trip():
     po = store.add_po("24-003", {"po_number": "24-003113", "vendor": "SENSEHAWK INC.",
                                  "adjusted_amount": "2000", "cost_type": "Subcontractor"},
                       actor="Ross")
-    assert store.list_pos("24-003") == [po]
+    # 2.0: mutations also return their activity_id (the undo bar reverses by
+    # it); the stored row itself is everything else.
+    stored = {k: v for k, v in po.items() if k != "activity_id"}
+    assert store.list_pos("24-003") == [stored]
     assert po["adjusted_amount"] == 2000.0  # string in, number stored
     assert po["created_by"] == "Ross"
 

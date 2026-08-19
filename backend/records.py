@@ -107,15 +107,24 @@ def update_record(rec_id: str, fields: dict[str, Any],
     if rec is None:
         return None
     clean = _clean(rec["kind"], fields)
+    activity_id = None
     if clean:
         conn = db.connect()
         sets = ", ".join(f"{k} = ?" for k in clean)
         conn.execute(f"UPDATE pipeline_records SET {sets} WHERE id = ?",  # noqa: S608
                      (*clean.values(), rec_id))
         conn.commit()
-        db.log_activity(actor, rec["job_number"], f"{rec['kind']}.update",
-                        f"{rec_id}: {', '.join(clean)}")
-    return get_record(rec_id)
+        activity_id = db.log_activity(
+            actor, rec["job_number"], f"{rec['kind']}.update",
+            f"{rec_id}: {', '.join(clean)}",
+            object_kind="record", object_id=rec_id,
+            # The inverse is these fields as the record held them before.
+            revert={"op": "record.patch", "id": rec_id,
+                    "fields": {k: rec.get(k) for k in clean}})
+    out = get_record(rec_id)
+    if out is not None and activity_id is not None:
+        out["activity_id"] = activity_id
+    return out
 
 
 def delete_record(rec_id: str, actor: str | None = None) -> bool:
@@ -197,10 +206,22 @@ def mark_sent(rec_id: str, actor: str | None = None,
                  "sent_by = COALESCE(sent_by, ?) WHERE id = ?",
                  (sent_at or db.now(), actor, rec_id))
     conn.commit()
-    db.log_activity(actor, rec["job_number"], f"{rec['kind']}.sent",
-                    f"{rec['number'] or rec_id}"
-                    + (" (detected in Outlook Sent Items)" if sent_at else ""))
-    return get_record(rec_id)
+    activity_id = db.log_activity(
+        actor, rec["job_number"], f"{rec['kind']}.sent",
+        f"{rec['number'] or rec_id}"
+        + (" (detected in Outlook Sent Items)" if sent_at else ""),
+        object_kind="record", object_id=rec_id,
+        # Undoing a send cannot unsend the email — Outlook owns that — but it
+        # restores the record to the state it held before, which is what the
+        # register and the watch lists act on.
+        revert={"op": "record.patch", "id": rec_id,
+                "fields": {"status": rec.get("status") or "Draft",
+                           "sent_at": rec.get("sent_at"),
+                           "sent_by": rec.get("sent_by")}})
+    out = get_record(rec_id)
+    if out is not None:
+        out["activity_id"] = activity_id
+    return out
 
 
 def _replies_dir():

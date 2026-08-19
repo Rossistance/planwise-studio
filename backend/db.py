@@ -427,6 +427,46 @@ CREATE TABLE IF NOT EXISTS activity (
     detail      TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_act_job ON activity(job_number);
+
+-- 2.0: one row per job per Vista extract, appended when a workbook lands.
+-- The snapshot has no time axis of its own, and the dashboard's forecast
+-- chart must plot real history or nothing — inventing a curve would break
+-- the app's own doctrine. History accrues from the day 2.0 ships; the chart
+-- shows an honest empty state until there are at least two points.
+CREATE TABLE IF NOT EXISTS vista_history (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    as_of         TEXT NOT NULL,
+    job_number    TEXT NOT NULL,
+    actual_cost   REAL,
+    projected_cost REAL,
+    current_estimate REAL,
+    actual_billed REAL,
+    pct_complete  REAL,
+    captured_at   TEXT NOT NULL,
+    UNIQUE(job_number, as_of)
+);
+CREATE INDEX IF NOT EXISTS ix_vh_job ON vista_history(job_number, as_of);
+
+-- 2.0: the weekly briefing. One row per job per week; `blocks` is the PM's
+-- editable JSON {progress:[], risks:[], asks:[], signature:[]} — seeded from
+-- the live registers as proposals, then owned by the PM. Two renderings come
+-- from one row (customer strips money; internal carries it), so the copies
+-- can never state different facts.
+CREATE TABLE IF NOT EXISTS briefings (
+    id          TEXT PRIMARY KEY,
+    job_number  TEXT NOT NULL,
+    week_start  TEXT NOT NULL,
+    blocks      TEXT,
+    status      TEXT NOT NULL DEFAULT 'Draft',
+    created_by  TEXT,
+    created_at  TEXT NOT NULL,
+    updated_by  TEXT,
+    updated_at  TEXT,
+    sent_at     TEXT,
+    sent_by     TEXT,
+    UNIQUE(job_number, week_start)
+);
+CREATE INDEX IF NOT EXISTS ix_brief_job ON briefings(job_number, week_start);
 """
 
 
@@ -488,6 +528,16 @@ MIGRATIONS = [
     # PO exists — the commitment and the paperwork have no way to find each
     # other.
     ("purchase_orders", "source_co_id", "TEXT"),
+    # 2.0: the reversal mechanism behind "anything you send can be undone" and
+    # the Activity page's reverse flow. A mutation that knows its own inverse
+    # stores it as `revert` JSON ({op, ...}) when it logs; reversing applies
+    # that payload and appends a new entry pointing back via `reversal_of`.
+    # The log stays append-only — a reversal is a new fact, never an erasure.
+    # Rows written before 2.0 have no revert payload and honestly refuse.
+    ("activity", "object_kind", "TEXT"),
+    ("activity", "object_id", "TEXT"),
+    ("activity", "revert", "TEXT"),
+    ("activity", "reversal_of", "INTEGER"),
 ]
 
 POST_MIGRATION_SQL = """
@@ -543,9 +593,23 @@ def now() -> str:
 
 
 def log_activity(actor: str | None, job_number: str | None, action: str,
-                 detail: str = "") -> None:
+                 detail: str = "", *, object_kind: str | None = None,
+                 object_id: str | None = None, revert: dict | None = None,
+                 reversal_of: int | None = None) -> int:
+    """Append one activity entry; returns its id.
+
+    `revert` is the entry's own inverse — a JSON payload the reversal engine
+    (backend/reversal.py) knows how to apply. A mutation that passes one is
+    thereby undoable, both from the undo bar (which reverses the id it just
+    got back) and from the Activity page (which reverses any entry still
+    inside the window). Entries without one are facts only.
+    """
+    import json as _json
     conn = connect()
-    conn.execute(
-        "INSERT INTO activity (ts, actor, job_number, action, detail) VALUES (?,?,?,?,?)",
-        (now(), actor, job_number, action, detail))
+    cur = conn.execute(
+        "INSERT INTO activity (ts, actor, job_number, action, detail,"
+        " object_kind, object_id, revert, reversal_of) VALUES (?,?,?,?,?,?,?,?,?)",
+        (now(), actor, job_number, action, detail, object_kind, object_id,
+         _json.dumps(revert) if revert else None, reversal_of))
     conn.commit()
+    return int(cur.lastrowid or 0)

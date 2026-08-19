@@ -109,8 +109,11 @@ def add_po(job_number: str, fields: dict[str, Any], actor: str | None = None) ->
     conn.execute(f"INSERT INTO purchase_orders ({cols}) VALUES ({','.join('?' * len(rec))})",  # noqa: S608
                  tuple(rec.values()))
     conn.commit()
-    db.log_activity(actor, job_number, "po.create",
-                    f"PO {rec['po_number'] or '(unnumbered)'} · {rec['vendor'] or ''}")
+    rec["activity_id"] = db.log_activity(
+        actor, job_number, "po.create",
+        f"PO {rec['po_number'] or '(unnumbered)'} · {rec['vendor'] or ''}",
+        object_kind="po", object_id=rec["id"],
+        revert={"op": "po.delete", "id": rec["id"]})
     rec["invoices"] = []
     return rec
 
@@ -118,11 +121,18 @@ def add_po(job_number: str, fields: dict[str, Any], actor: str | None = None) ->
 def update_po(job_number: str, po_id: str, fields: dict[str, Any],
               actor: str | None = None) -> dict[str, Any] | None:
     clean = _clean(fields, PO_FIELDS)
-    if not _update("purchase_orders", po_id, clean):
-        return None
-    db.log_activity(actor, job_number, "po.update", f"{po_id}: {', '.join(clean)}")
     conn = db.connect()
+    old = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)).fetchone()
+    if old is None or not _update("purchase_orders", po_id, clean):
+        return None
+    activity_id = db.log_activity(
+        actor, job_number, "po.update", f"{po_id}: {', '.join(clean)}",
+        object_kind="po", object_id=po_id,
+        # The inverse is these fields exactly as they stood before the write.
+        revert={"op": "po.patch", "id": po_id,
+                "fields": {k: old[k] for k in clean}})
     po = dict(conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)).fetchone())
+    po["activity_id"] = activity_id
     po["invoices"] = [dict(r) for r in conn.execute(
         "SELECT * FROM invoices WHERE po_id = ? ORDER BY created_at", (po_id,))]
     return po
@@ -130,11 +140,18 @@ def update_po(job_number: str, po_id: str, fields: dict[str, Any],
 
 def delete_po(job_number: str, po_id: str, actor: str | None = None) -> bool:
     conn = db.connect()
+    row = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (po_id,)).fetchone()
+    invoices = [dict(r) for r in conn.execute(
+        "SELECT * FROM invoices WHERE po_id = ?", (po_id,))] if row else []
     cur = conn.execute("DELETE FROM purchase_orders WHERE id = ?", (po_id,))
     conn.commit()
     if cur.rowcount == 0:
         return False
-    db.log_activity(actor, job_number, "po.delete", po_id)
+    db.log_activity(actor, job_number, "po.delete", po_id,
+                    object_kind="po", object_id=po_id,
+                    # Deleting cascades the invoices, so the inverse carries
+                    # them too: an undone deletion restores the whole order.
+                    revert={"op": "po.recreate", "row": dict(row), "invoices": invoices})
     return True
 
 
@@ -151,20 +168,27 @@ def add_invoice(job_number: str, po_id: str, fields: dict[str, Any],
     conn.execute(f"INSERT INTO invoices ({cols}) VALUES ({','.join('?' * len(rec))})",  # noqa: S608
                  tuple(rec.values()))
     conn.commit()
-    db.log_activity(actor, job_number, "invoice.create",
-                    f"{rec['invoice_number'] or '(unnumbered)'} on PO {po_id}")
+    rec["activity_id"] = db.log_activity(
+        actor, job_number, "invoice.create",
+        f"{rec['invoice_number'] or '(unnumbered)'} on PO {po_id}",
+        object_kind="invoice", object_id=rec["id"],
+        revert={"op": "invoice.delete", "id": rec["id"], "po_id": po_id})
     return rec
 
 
 def delete_invoice(job_number: str, po_id: str, invoice_id: str,
                    actor: str | None = None) -> bool:
     conn = db.connect()
+    row = conn.execute("SELECT * FROM invoices WHERE id = ? AND po_id = ?",
+                       (invoice_id, po_id)).fetchone()
     cur = conn.execute("DELETE FROM invoices WHERE id = ? AND po_id = ?",
                        (invoice_id, po_id))
     conn.commit()
     if cur.rowcount == 0:
         return False
-    db.log_activity(actor, job_number, "invoice.delete", invoice_id)
+    db.log_activity(actor, job_number, "invoice.delete", invoice_id,
+                    object_kind="invoice", object_id=invoice_id,
+                    revert={"op": "invoice.recreate", "row": dict(row)})
     return True
 
 
@@ -194,8 +218,11 @@ def add_co(job_number: str, fields: dict[str, Any], actor: str | None = None) ->
     conn.execute(f"INSERT INTO change_orders ({cols}) VALUES ({','.join('?' * len(rec))})",  # noqa: S608
                  tuple(rec.values()))
     conn.commit()
-    db.log_activity(actor, job_number, "co.create",
-                    f"{rec['kind']} CO {rec['co_number'] or '(unnumbered)'}")
+    rec["activity_id"] = db.log_activity(
+        actor, job_number, "co.create",
+        f"{rec['kind']} CO {rec['co_number'] or '(unnumbered)'}",
+        object_kind="co", object_id=rec["id"],
+        revert={"op": "co.delete", "id": rec["id"]})
     return rec
 
 
@@ -203,20 +230,35 @@ def update_co(job_number: str, co_id: str, fields: dict[str, Any],
               actor: str | None = None) -> dict[str, Any] | None:
     clean = _clean(fields, CO_FIELDS)
     clean.pop("kind", None)  # a CO does not change sides after creation
-    if not _update("change_orders", co_id, clean):
-        return None
-    db.log_activity(actor, job_number, "co.update", f"{co_id}: {', '.join(clean)}")
     conn = db.connect()
-    return dict(conn.execute("SELECT * FROM change_orders WHERE id = ?", (co_id,)).fetchone())
+    old = conn.execute("SELECT * FROM change_orders WHERE id = ?", (co_id,)).fetchone()
+    if old is None or not _update("change_orders", co_id, clean):
+        return None
+    activity_id = db.log_activity(
+        actor, job_number, "co.update", f"{co_id}: {', '.join(clean)}",
+        object_kind="co", object_id=co_id,
+        revert={"op": "co.patch", "id": co_id,
+                "fields": {k: old[k] for k in clean}})
+    rec = dict(conn.execute("SELECT * FROM change_orders WHERE id = ?", (co_id,)).fetchone())
+    rec["activity_id"] = activity_id
+    return rec
 
 
 def delete_co(job_number: str, co_id: str, actor: str | None = None) -> bool:
     conn = db.connect()
+    row = conn.execute("SELECT * FROM change_orders WHERE id = ?", (co_id,)).fetchone()
+    items = [dict(r) for r in conn.execute(
+        "SELECT * FROM change_order_items WHERE co_id = ?", (co_id,))] if row else []
+    clars = [dict(r) for r in conn.execute(
+        "SELECT * FROM change_order_clarifications WHERE co_id = ?", (co_id,))] if row else []
     cur = conn.execute("DELETE FROM change_orders WHERE id = ?", (co_id,))
     conn.commit()
     if cur.rowcount == 0:
         return False
-    db.log_activity(actor, job_number, "co.delete", co_id)
+    db.log_activity(actor, job_number, "co.delete", co_id,
+                    object_kind="co", object_id=co_id,
+                    revert={"op": "co.recreate", "row": dict(row),
+                            "items": items, "clars": clars})
     return True
 
 
@@ -233,6 +275,7 @@ def get_meta(job_number: str) -> dict[str, Any]:
 def patch_meta(job_number: str, fields: dict[str, Any],
                actor: str | None = None) -> dict[str, Any]:
     data = get_meta(job_number)
+    old_data = dict(data)
     for k, v in fields.items():
         if v in (None, ""):
             data.pop(k, None)
@@ -246,7 +289,12 @@ def patch_meta(job_number: str, fields: dict[str, Any],
         "updated_at = excluded.updated_at",
         (job_number, json.dumps(data), actor, db.now()))
     conn.commit()
-    db.log_activity(actor, job_number, "meta.update", ", ".join(fields))
+    db.log_activity(actor, job_number, "meta.update", ", ".join(fields),
+                    object_kind="meta", object_id=job_number,
+                    # Inverse = the same keys as they stood before; a key that
+                    # did not exist reverts to None, which patch_meta clears.
+                    revert={"op": "meta.patch",
+                            "fields": {k: old_data.get(k) for k in fields}})
     return data
 
 
@@ -280,6 +328,29 @@ def po_remaining(po: dict[str, Any]) -> float | None:
     if amt is None:
         return None
     return amt - po_invoiced(po)
+
+
+def approved_no_po(job_number: str) -> dict[str, Any]:
+    """Approved subcontractor work that no purchase order covers yet.
+
+    The cost breakdown counts this SEPARATELY from committed cost because it
+    is exposure, not a commitment: the money is owed in principle but nothing
+    has been ordered against it. A sub CO leaves this list the moment a PO
+    carries its id in `source_co_id` (the issue-PO flow writes that link).
+    Attributed to the Subcontract cost type: these are subcontractor change
+    orders by definition, and that is the line their eventual POs land on.
+    """
+    conn = db.connect()
+    covered = {r["source_co_id"] for r in conn.execute(
+        "SELECT source_co_id FROM purchase_orders WHERE job_number = ? "
+        "AND source_co_id IS NOT NULL", (job_number,))}
+    cos = [dict(r) for r in conn.execute(
+        "SELECT * FROM change_orders WHERE job_number = ? AND kind = 'subcontractor' "
+        "AND amount_approved IS NOT NULL AND amount_approved > 0", (job_number,))]
+    waiting = [c for c in cos if c["id"] not in covered]
+    total = sum(c["amount_approved"] or 0 for c in waiting)
+    return {"cos": waiting, "total": total,
+            "by_cost_type": ({"Subcontract": total} if waiting else {})}
 
 
 def open_committed_by_cost_type(job_number: str) -> dict[str, float]:

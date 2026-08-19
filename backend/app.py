@@ -18,8 +18,9 @@ from fastapi import Body, FastAPI, File, Header, HTTPException, Request, Respons
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (ai, auth, changeorder, config, db, documents, eml, lookahead,
-               outbox, po_pdf, push, records, schedule, store, vista)
+from . import (ai, attention, auth, briefing, changeorder, config, db,
+               documents, eml, lookahead, outbox, po_pdf, push, records,
+               reversal, schedule, store, vista)
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -513,6 +514,7 @@ async def push_vista_workbook(file: UploadFile = File(...),
             pass
 
     vista.load(force=True)                     # drop the cached snapshot immediately
+    _capture_history(snap)                     # 2.0: accrue the forecast chart's history
     db.log_activity(None, None, "vista.workbook.push",
                     f"{size / 1_048_576:.1f} MB · {len(snap.jobs)} jobs")
     return {"received_bytes": size, "jobs": len(snap.jobs),
@@ -808,8 +810,13 @@ def get_job(job_number: str):
     # Σ remaining value of open POs per cost type. (The Power BI model has no
     # commitment data; verified 2026-08-08. Swap to the model if bPOIT lands.)
     committed = store.open_committed_by_cost_type(job_number)
+    # 2.0: approved subcontractor work with no PO — exposure, counted
+    # separately from commitment (the prototype's "Approved, no PO" column).
+    uncovered = store.approved_no_po(job_number)
+    unc_by_ct = dict(uncovered["by_cost_type"])
     for row in cost_types:
         row["open_committed"] = committed.pop(row["cost_type"], None)
+        row["approved_no_po"] = unc_by_ct.pop(row["cost_type"], None)
     for name, amount in committed.items():
         cost_types.append({
             "cost_type": name, "phase_count": 0, "phase_codes": [],
@@ -817,6 +824,15 @@ def get_job(job_number: str):
             "projected_cost": None, "hours_units": None, "mtd_cost": None,
             "variance": None, "pct_complete": None,
             "open_committed": amount, "po_only": True,
+            "approved_no_po": unc_by_ct.pop(name, None),
+        })
+    for name, amount in unc_by_ct.items():
+        cost_types.append({
+            "cost_type": name, "phase_count": 0, "phase_codes": [],
+            "actual_cost": None, "current_estimate": None,
+            "projected_cost": None, "hours_units": None, "mtd_cost": None,
+            "variance": None, "pct_complete": None,
+            "open_committed": None, "po_only": True, "approved_no_po": amount,
         })
 
     return {
@@ -829,8 +845,146 @@ def get_job(job_number: str):
         "phases": vista.phases_for(snap, job_number),
         "purchase_orders": store.list_pos(job_number),
         "change_orders": store.list_cos(job_number),
+        "approved_no_po": uncovered,
         "meta": store.get_meta(job_number),
     }
+
+
+def _capture_history(snap) -> None:
+    """One vista_history row per job per extract date, idempotent.
+
+    The Vista snapshot has no time axis; the dashboard's cost curve must plot
+    real history or nothing. Each push appends today's figures, and UNIQUE
+    (job_number, as_of) makes a re-push of the same extract a no-op rather
+    than a duplicate point.
+    """
+    as_of = snap.as_of.isoformat() if snap.as_of else db.now()[:10]
+    conn = db.connect()
+    for num, rec in snap.jobs.items():
+        conn.execute(
+            "INSERT OR IGNORE INTO vista_history (as_of, job_number, actual_cost,"
+            " projected_cost, current_estimate, actual_billed, pct_complete, captured_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (as_of, num, rec.get("actual_cost"), rec.get("projected_cost"),
+             rec.get("current_estimate"), rec.get("actual_billed"),
+             rec.get("pct_complete"), db.now()))
+    conn.commit()
+
+
+@app.get("/api/jobs/{job_number}/history")
+def job_history(job_number: str):
+    """Accrued Vista extract history for the forecast chart. Two points make
+    a line; fewer make an honest empty state."""
+    conn = db.connect()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT as_of, actual_cost, projected_cost, current_estimate,"
+        " actual_billed, pct_complete FROM vista_history WHERE job_number = ?"
+        " ORDER BY as_of", (job_number,))]
+    return {"history": rows}
+
+
+@app.get("/api/jobs/{job_number}/attention")
+def job_attention(job_number: str):
+    """The Needs-attention panel: only items genuinely waiting on the user,
+    newest cause first, each deep-linking to where it can be finished.
+    Derived, never stored — items disappear because the cause row changed."""
+    snap = None
+    stale, as_of = False, None
+    try:
+        snap = _snapshot()
+        stale, as_of = snap.is_stale, (snap.as_of.isoformat() if snap.as_of else None)
+    except HTTPException:
+        pass
+    items = attention.items_for(job_number, vista_stale=stale, vista_as_of=as_of)
+    return {"items": items, "count": len(items)}
+
+
+@app.post("/api/activity/{activity_id}/reverse")
+def reverse_activity(activity_id: int):
+    """Apply an entry's stored inverse. The checks returned are the SAME list
+    the confirm dialog rendered — this endpoint enforces what that dialog
+    promised. Appends a reversal entry; deletes nothing."""
+    me = _CURRENT_USER.get() or {}
+    result = reversal.apply(activity_id, actor=me.get("name") or "unknown",
+                            is_admin=bool(me.get("is_admin")))
+    if not result.get("ok"):
+        return JSONResponse(status_code=409, content=result)
+    return result
+
+
+@app.get("/api/activity/{activity_id}/checks")
+def activity_checks(activity_id: int):
+    """The pass/warn/fail list for the confirm dialog, computed server-side so
+    the dialog shows exactly what the apply path will enforce."""
+    me = _CURRENT_USER.get() or {}
+    entry = reversal.get_entry(activity_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="No such activity entry.")
+    gate = reversal.checks_for(entry, actor=me.get("name") or "unknown",
+                               is_admin=bool(me.get("is_admin")))
+    return {"entry": {k: entry.get(k) for k in
+                      ("id", "ts", "actor", "action", "detail", "object_kind", "object_id")},
+            **gate}
+
+
+# --- weekly briefing (2.0) ----------------------------------------------------
+
+@app.get("/api/jobs/{job_number}/briefing")
+def get_briefing(job_number: str, week: str | None = None):
+    """This week's briefing (or the named week's), created from live-register
+    proposals on first read."""
+    me = _CURRENT_USER.get() or {}
+    return briefing.get_or_create(job_number, week, actor=me.get("name"))
+
+
+@app.patch("/api/briefings/{briefing_id}")
+def patch_briefing(briefing_id: str, body: dict = Body(...)):
+    me = _CURRENT_USER.get() or {}
+    out = briefing.patch(briefing_id, body, actor=me.get("name"))
+    if out is None:
+        raise HTTPException(status_code=404, detail="No such briefing.")
+    return out
+
+
+@app.post("/api/briefings/{briefing_id}/reseed")
+def reseed_briefing(briefing_id: str):
+    """Replace the blocks with fresh proposals from the registers — the PM
+    asked for a redo, so their edits are deliberately overwritten."""
+    me = _CURRENT_USER.get() or {}
+    conn = db.connect()
+    row = conn.execute("SELECT * FROM briefings WHERE id = ?", (briefing_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such briefing.")
+    return briefing.patch(briefing_id, {"blocks": briefing.seed_blocks(row["job_number"])},
+                          actor=me.get("name"))
+
+
+@app.get("/api/briefings/{briefing_id}/share")
+def share_briefing(briefing_id: str, audience: str = "customer"):
+    """Outlook payload for one audience: subject + HTML body + contacts.
+    audience=customer strips the money; audience=team appends the position."""
+    conn = db.connect()
+    row = conn.execute("SELECT * FROM briefings WHERE id = ?", (briefing_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such briefing.")
+    b = dict(row)
+    import json as _json
+    b["blocks"] = _json.loads(b["blocks"] or "{}") or {}
+    job = None
+    try:
+        job = _snapshot().jobs.get(b["job_number"])
+    except HTTPException:
+        pass
+    internal = audience == "team"
+    name = (job or {}).get("job_name") or b["job_number"]
+    subject = ("[Internal] " if internal else "") +         f"Weekly briefing — {name} (week of {b['week_start']})"
+    meta = store.get_meta(b["job_number"])
+    contacts = meta.get("contacts") or []
+    return {"subject": subject,
+            "html": briefing.render_html(b, job, audience),
+            "to": "" if internal else "; ".join(
+                c.get("email") for c in contacts if c.get("email")),
+            "contacts": contacts, "audience": audience}
 
 
 @app.get("/api/jobs/{job_number}/activity")
@@ -1611,9 +1765,23 @@ def create_task(job_number: str, body: dict = Body(...),
 @app.patch("/api/jobs/{job_number}/schedule/tasks/{task_id}")
 def patch_task(job_number: str, task_id: str, body: dict = Body(...),
                x_planwise_user: str | None = Header(default=None)):
+    """Edit a task. The response carries `moved` — which OTHER tasks the CPM
+    engine rescheduled because of this edit — so the UI can announce
+    "N dependent tasks moved with it" from the engine's truth, not a client
+    guess (2.0 schedule interactions, LOGIC-MERGE)."""
+    before = {t["id"]: (t.get("early_start"), t.get("early_finish"))
+              for t in schedule.analyze(job_number)["tasks"]}
     t = schedule.update_task(job_number, task_id, body, actor=_actor(x_planwise_user))
     if t is None:
         raise HTTPException(status_code=404, detail="No such task.")
+    moved = []
+    for row in schedule.analyze(job_number)["tasks"]:
+        if row["id"] == task_id:
+            continue
+        prev = before.get(row["id"])
+        if prev and prev != (row.get("early_start"), row.get("early_finish")):
+            moved.append({"id": row["id"], "name": row["name"]})
+    t["moved"] = moved
     return t
 
 
@@ -1792,6 +1960,18 @@ def lookahead_pdf(period_id: str, audience: str = "customer", weeks: int | None 
 def global_activity(limit: int = 150):
     return {"activity": store.list_activity(None, limit)}
 
+
+# 2.0 development mount: while the redesign is built in frontend2/, both UIs
+# run against this one backend — 1.x at /, 2.0 at /v2. The cutover (plan
+# Phase 12) moves frontend2/ over frontend/ and deletes this block.
+FRONTEND2 = FRONTEND.parent / "frontend2"
+if FRONTEND2.is_dir():
+    @app.get("/v2")
+    @app.get("/v2/")
+    def index_v2():
+        return FileResponse(FRONTEND2 / "index.html")
+
+    app.mount("/v2", StaticFiles(directory=FRONTEND2), name="frontend2")
 
 # Frontend last so /api/* wins.
 if FRONTEND.is_dir():

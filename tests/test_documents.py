@@ -101,3 +101,25 @@ def test_annotation_counts_surface_in_library_listing():
     documents.add_annotation(doc["id"], 1, "rfi:x", {"type": "text", "text": "t"})
     listed = documents.list_documents("24-003")[0]
     assert listed["internal_annotation_count"] == 1  # rfi layer not counted
+
+
+def test_a_v2_mark_round_trips_and_the_old_vocabulary_still_works():
+    """2.0 marks ({v:2, tool, x%, y%}) join the 1.x shapes on the same
+    layer-scoped rows — both dialects valid forever, junk still refused."""
+    doc = documents.add_document("24-003", "E-201.pdf", make_pdf(2), actor="pm")
+    mark = {"v": 2, "tool": "Cloud", "x": 61.2, "y": 40.0, "ink": "#A9291D",
+            "weight": 2.5, "text": ""}
+    row = documents.add_annotation(doc["id"], 1, "internal", mark, actor="pm")
+    assert row["shape"]["tool"] == "Cloud"
+
+    legacy = {"type": "rect", "x0": 0.1, "y0": 0.1, "x1": 0.3, "y1": 0.2,
+              "color": "#A9291D"}
+    documents.add_annotation(doc["id"], 1, "internal", legacy, actor="pm")
+    assert len(documents.list_annotations(doc["id"])) == 2
+
+    with pytest.raises(documents.DocumentError):
+        documents.add_annotation(doc["id"], 1, "internal",
+                                 {"v": 2, "tool": "Scribble", "x": 1, "y": 1}, actor="pm")
+    with pytest.raises(documents.DocumentError):
+        documents.add_annotation(doc["id"], 1, "internal",
+                                 {"v": 2, "tool": "Pin", "x": 140, "y": 1}, actor="pm")

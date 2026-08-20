@@ -825,3 +825,103 @@ function uiCO(v) {
     </form>
   </div>`;
 }
+
+// ——— Drawing viewer (lines 1016–1150) — real pages under prototype chrome ———
+function uiViewer(v) {
+  if (!v.viewerOpen) return "";
+  return `<div style="position:fixed;inset:0;z-index:150;background:rgba(24,27,30,.62);display:flex;align-items:stretch;padding:18px">
+    <div role="dialog" aria-modal="true" aria-labelledby="viewer-title" style="flex:1;min-width:0;display:flex;flex-direction:column;background:var(--pn);border:1px solid var(--ls);border-radius:10px;box-shadow:var(--shp);overflow:hidden;animation:fadein .16s ease-out">
+
+      <div style="flex:none;display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--ln);flex-wrap:wrap">
+        <div style="flex:1;min-width:200px">
+          <p style="margin:0 0 3px;font:500 10px var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--ac)">${esc(v.viewerEyebrow)}</p>
+          <h2 id="viewer-title" style="margin:0;font:600 17px/1.2 var(--fd)">${esc(v.viewerTitle)}</h2>
+        </div>
+        <button data-click="${H(v.viewerToggleCompare)}" aria-pressed="${v.viewerCompareAria}" class="hb-ls" style="${v.viewerCompareStyle}">${esc(v.viewerCompareLabel)}</button>
+        <button data-click="${H(v.viewerClose)}" data-ref="viewer" class="hb-ls-ink" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;font:600 12.5px var(--fd);color:var(--mu);white-space:nowrap">Close the viewer</button>
+      </div>
+
+      <div style="flex:none;padding:9px 14px;border-bottom:1px solid var(--ln);background:var(--p2);display:flex;flex-direction:column;gap:8px">
+        <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+          <div role="group" aria-label="Markup tool" style="display:flex;gap:5px;flex-wrap:wrap">
+            ${v.viewerTools.map((t) => `<button data-click="${H(t.pick)}" aria-pressed="${t.pressed}" aria-label="${esc(t.aria)}" title="${esc(t.aria)}" style="${t.style}">
+              <svg aria-hidden="true" viewBox="0 0 24 24" style="${t.iconStyle}"><path d="${t.icon}"></path></svg>
+              <span>${esc(t.label)}</span>
+            </button>`).join("")}
+          </div>
+          <span style="flex:1"></span>
+          <button data-click="${H(v.viewerUndoMark)}" class="hb-ac" style="min-height:34px;padding:6px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12px var(--fd);color:var(--mu);white-space:nowrap">Undo last mark</button>
+          <button data-click="${H(v.viewerClearPage)}" class="hb-er" style="min-height:34px;padding:6px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12px var(--fd);color:var(--mu);white-space:nowrap">Clear this page</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+          <div role="group" aria-label="Markup colour" style="display:flex;gap:5px;flex-wrap:wrap">
+            ${v.viewerInks.map((k) => `<button data-click="${H(k.pick)}" aria-pressed="${k.pressed}" aria-label="${esc(k.label)}" title="${esc(k.label)}" style="${k.style}"><span aria-hidden="true" style="${k.swatch}"></span>${esc(k.name)}</button>`).join("")}
+          </div>
+          <span aria-hidden="true" style="width:1px;height:22px;background:var(--ln)"></span>
+          <div role="group" aria-label="Line weight" style="display:flex;gap:5px;flex-wrap:wrap">
+            ${v.viewerWeights.map((w) => `<button data-click="${H(w.pick)}" aria-pressed="${w.pressed}" aria-label="${esc(w.label)}" title="${esc(w.label)}" style="${w.style}"><span aria-hidden="true" style="${w.rule}"></span></button>`).join("")}
+          </div>
+          <span aria-hidden="true" style="width:1px;height:22px;background:var(--ln)"></span>
+          <div role="group" aria-label="Zoom" style="display:flex;gap:5px;flex-wrap:wrap">
+            ${v.viewerZooms.map((z) => `<button data-click="${H(z.pick)}" aria-pressed="${z.pressed}" style="${z.style}">${esc(z.label)}</button>`).join("")}
+          </div>
+          ${v.viewerNeedsText ? `<span style="display:flex;align-items:center;gap:7px;flex:1;min-width:180px">
+            <label for="mark-text" style="font:11.5px var(--fm);color:var(--mu);white-space:nowrap">${esc(v.viewerTextLabel)}</label>
+            <input id="mark-text" type="text" value="${esc(v.viewerText)}" data-input="${H(v.setMarkText)}" placeholder="${esc(v.viewerTextHint)}" class="fi2" style="flex:1;min-width:110px;min-height:32px;padding:5px 9px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font-size:12.5px">
+          </span>` : ""}
+          <span style="flex:1"></span>
+          <p style="margin:0;font:11.5px var(--fm);color:var(--mu);white-space:nowrap" aria-live="polite">${esc(v.viewerHint)}</p>
+        </div>
+      </div>
+
+      <div style="flex:1;min-height:0;display:grid;grid-template-columns:172px minmax(0,1fr)">
+        <div style="border-right:1px solid var(--ln);overflow-y:auto;background:var(--p2);padding:10px">
+          <h3 style="margin:0 0 8px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">Pages</h3>
+          <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px">
+            ${v.viewerThumbs.map((p) => `<li>
+              <button data-click="${H(p.go)}" aria-current="${p.current}" aria-label="${esc(p.aria)}" style="${p.style}">
+                <span aria-hidden="true" style="display:block;position:relative;width:100%;background:#FFFFFF;border:1px solid var(--ls);overflow:hidden">
+                  <canvas id="${p.canvasId}" style="display:block;width:100%;height:auto"></canvas>
+                </span>
+                <span style="display:flex;align-items:center;gap:6px;margin-top:5px">
+                  <span style="font:600 11px var(--fm)">p${p.num}</span>
+                  <span style="flex:1"></span>
+                  ${p.marks ? `<span style="font:600 9.5px var(--fm);padding:2px 5px;border-radius:999px;background:var(--wns);color:var(--wn)">${esc(p.marks)}</span>` : ""}
+                  ${p.attached ? `<span style="font:600 9.5px var(--fm);padding:2px 5px;border-radius:999px;background:var(--oks);color:var(--ok)">Attached</span>` : ""}
+                </span>
+              </button>
+            </li>`).join("")}
+          </ul>
+        </div>
+
+        <div style="min-height:0;overflow:hidden;padding:12px 14px;background:var(--bg);display:grid;grid-template-columns:${v.viewerCols};gap:14px">
+          ${v.viewerPanes.map((pane) => `<div style="display:flex;flex-direction:column;min-height:0;min-width:0">
+            <div style="flex:none;display:flex;align-items:center;gap:9px;margin-bottom:7px;flex-wrap:wrap">
+              <p style="margin:0;font:600 12px var(--fd)">${esc(pane.caption)}</p>
+              <span style="flex:1"></span>
+              ${pane.isCompare ? `<label for="cmp-page" style="font:11.5px var(--fm);color:var(--mu)">Compare with</label>
+              <select id="cmp-page" data-change="${H(pane.onSelect)}" style="min-height:32px;padding:5px 9px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font-size:12.5px">
+                ${pane.options.map((o) => `<option value="${esc(o.value)}" ${o.value === pane.selectValue ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
+              </select>` : ""}
+            </div>
+            <div style="${pane.holderStyle}">
+              <div data-click="${H(pane.click)}" role="img" aria-label="${esc(pane.aria)}" style="${pane.sheetStyle}">
+                <canvas id="${pane.canvasId}" style="position:absolute;inset:0;width:100%;height:100%;display:block"></canvas>
+                ${pane.marks.map((m) => `<span aria-hidden="true" style="${m.style}">${esc(m.label)}</span>`).join("")}
+                ${pane.heads.map((h) => `<span aria-hidden="true" style="${h.style}"></span>`).join("")}
+              </div>
+            </div>
+            <p style="flex:none;margin:7px 0 0;font-size:12px;color:var(--mu);text-wrap:pretty">${esc(pane.note)}</p>
+          </div>`).join("")}
+        </div>
+      </div>
+
+      <div style="flex:none;padding:12px 18px;border-top:1px solid var(--ln);background:var(--p2);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <p style="margin:0;flex:1;min-width:240px;font-size:12px;color:var(--mu);text-wrap:pretty" aria-live="polite">${esc(v.viewerFootnote)}</p>
+        ${v.viewerIsPicker ? `<button data-click="${H(v.viewerToggleAttach)}" class="hb-ls" style="${v.viewerAttachStyle}">${esc(v.viewerAttachLabel)}</button>
+        <button data-click="${H(v.viewerClose)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">${esc(v.viewerDoneLabel)}</button>` : ""}
+        ${v.viewerIsPlain ? `<button data-click="${H(v.viewerClose)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">Done marking up</button>` : ""}
+      </div>
+    </div>
+  </div>`;
+}

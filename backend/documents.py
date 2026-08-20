@@ -24,6 +24,11 @@ from . import config, db
 _LAYER_RE = re.compile(r"^(internal|rfi:[A-Za-z0-9_-]+|submittal:[A-Za-z0-9_-]+)$")
 
 SHAPE_TYPES = {"pen", "rect", "ellipse", "arrow", "text"}
+# 2.0 mark vocabulary (the redesign's click-placed marks): {v: 2, tool, x, y,
+# ink, weight, text} with x/y as percentages of the page box. The 1.x kinds
+# above stay valid — old shapes render forever; new ones are simply a second
+# dialect of the same layer-scoped rows.
+MARK_TOOLS = {"Pin", "Box", "Cloud", "Line", "Arrow", "Text", "Highlight", "Dim"}
 
 
 class DocumentError(ValueError):
@@ -118,8 +123,20 @@ def _validate_layer(layer: str) -> str:
 
 
 def _validate_shape(shape: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(shape, dict) and shape.get("v") == 2:
+        if shape.get("tool") not in MARK_TOOLS:
+            raise DocumentError(f"Mark tool must be one of {sorted(MARK_TOOLS)}.")
+        for k in ("x", "y"):
+            try:
+                val = float(shape.get(k))
+            except (TypeError, ValueError):
+                raise DocumentError(f"Mark {k} must be a number (percent of the page box).") from None
+            if not 0 <= val <= 100:
+                raise DocumentError(f"Mark {k} must be between 0 and 100.")
+        return shape
     if not isinstance(shape, dict) or shape.get("type") not in SHAPE_TYPES:
-        raise DocumentError(f"Shape type must be one of {sorted(SHAPE_TYPES)}.")
+        raise DocumentError(f"Shape type must be one of {sorted(SHAPE_TYPES)} "
+                            "(or a v:2 mark).")
     return shape
 
 
@@ -165,7 +182,8 @@ def add_annotation(doc_id: str, page: int, layer: str, shape: dict[str, Any],
                  tuple(rec.values()))
     conn.commit()
     db.log_activity(actor, doc["job_number"], "annotation.add",
-                    f"{doc['name']} p{page} [{layer}] {shape['type']}")
+                    f"{doc['name']} p{page} [{layer}] "
+                    f"{shape.get('type') or shape.get('tool') or 'mark'}")
     rec["shape"] = json.loads(rec["shape"])
     return rec
 

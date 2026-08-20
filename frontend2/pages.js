@@ -16,6 +16,7 @@ function pageBody(page, v) {
     </section>`;
   }
   if (page === "pos" && typeof pagePos === "function") return pagePos(v);
+  if ((page === "rfis" || page === "subs") && v.threadOpen) return pageThread(v);
   return "";   // register pages render through uiRegister
 }
 
@@ -517,4 +518,207 @@ function pageLook(v) {
     </div>
     <p style="margin:0;padding:11px 16px;border-top:1px solid var(--ln);font-size:12px;color:var(--ft);text-wrap:pretty">Select an activity name to edit it. Customer requirements go out on the customer copy; tools, material and operational notes never do. Dropping to two weeks hides week three rather than deleting it — the ticks keep their days.</p>
   </section>`;
+}
+
+// ——— Record thread page (prototype isRecDetail, lines 516–601 — real
+// replies, real PM-confirm gate, sent-vs-returned files inline) ————————————
+function pageThread(v) {
+  return `<div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:14px;align-items:start">
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <section aria-labelledby="pkg-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+          <h2 id="pkg-heading" style="margin:0;font:600 15px var(--fd)">What went out</h2>
+          <span style="${v.threadStampStyle}">${esc(v.threadStatus)}</span>
+          <span style="flex:1"></span>
+          <a href="${v.threadPackageUrl}" target="_blank" style="font:600 12px var(--fm);color:var(--bp)">Download the package</a>
+        </div>
+        <dl style="margin:0">
+          ${v.threadFacts.map((t) => `<div style="display:flex;gap:14px;align-items:baseline;padding:10px 16px;border-bottom:1px solid var(--ln)">
+            <dt style="flex:0 0 40%;font-size:var(--fzs);color:var(--mu)">${esc(t.label)}</dt>
+            <dd style="margin:0;flex:1;font-size:var(--fzs)">${esc(t.value)}</dd>
+          </div>`).join("")}
+        </dl>
+        ${v.threadQuestion ? `<div style="padding:12px 16px;border-bottom:1px solid var(--ln)">
+          <h3 style="margin:0 0 6px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">${v.threadIsRfi ? "The question" : "The submittal"}</h3>
+          <p style="margin:0;font-size:var(--fzs);line-height:1.55;text-wrap:pretty">${esc(v.threadQuestion)}</p>
+        </div>` : ""}
+        <div style="padding:13px 16px">
+          <h3 style="margin:0 0 8px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">Pages in the package</h3>
+          ${v.threadPages.length ? `<ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px">
+            ${v.threadPages.map((p) => `<li style="display:flex;gap:11px;align-items:center;padding:11px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--p3)">
+              <span style="flex:1;min-width:0">
+                <span style="display:block;font:600 var(--fzs) var(--fd)">${esc(p.name)}</span>
+                <span style="display:block;font:11.5px var(--fm);color:var(--mu);margin-top:2px">${esc(p.detail)}</span>
+              </span>
+              <button data-click="${H(p.open)}" class="hb-ac" style="min-height:var(--tap);padding:7px 12px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 11.5px var(--fd);white-space:nowrap">Open the page</button>
+            </li>`).join("")}
+          </ul>` : `<p style="margin:0;font-size:var(--fzs);color:var(--mu)">No pages attached. The package is the email alone.</p>`}
+          <p style="margin:11px 0 0;padding:11px 13px;border:1px solid var(--ln);border-left:3px solid var(--bp);border-radius:0 6px 6px 0;background:var(--bps);font-size:12.5px;color:var(--mu);text-wrap:pretty">The package carries the original page plus this record's own layer. The internal team layer stayed in the building.</p>
+        </div>
+      </section>
+
+      ${v.threadIsDraft ? `<section style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);padding:14px 16px">
+        <h3 style="margin:0 0 8px;font:600 14px var(--fd)">The email that will go out</h3>
+        <label for="th-subj" style="display:block;font:600 11.5px var(--fd);margin:8px 0 4px;color:var(--mu)">Subject</label>
+        <input id="th-subj" type="text" value="${esc(v.threadDraftSubject)}" data-change="${H(v.threadSetDraft("subject"))}" class="fi2" style="width:100%;min-height:var(--tap);padding:7px 10px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
+        <label for="th-body" style="display:block;font:600 11.5px var(--fd);margin:10px 0 4px;color:var(--mu)">Body</label>
+        <textarea id="th-body" rows="6" data-change="${H(v.threadSetDraft("body"))}" class="fi2" style="width:100%;padding:8px 10px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs);line-height:1.55;resize:vertical">${esc(v.threadDraftBody)}</textarea>
+        <p style="margin:8px 0 0;font-size:11.5px;color:var(--ft);text-wrap:pretty">Edits save when you leave the field. Sending drafts this in your own Outlook — nothing leaves from a machine account.</p>
+      </section>` : ""}
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <section aria-labelledby="thread-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 id="thread-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Email thread</h2>
+          <p style="margin:0;font:11.5px var(--fm);color:var(--ft)">${esc(v.threadCount)} · matched from Outlook</p>
+          <button data-click="${H(v.threadCheckReplies)}" class="hb-ac" style="min-height:32px;padding:5px 11px;border:1px solid var(--ln);border-radius:6px;font:600 11.5px var(--fd);color:var(--mu)">Check for replies</button>
+        </div>
+        <ol style="list-style:none;margin:0;padding:0">
+          ${v.threadMessages.map((m) => `<li style="padding:13px 16px;border-bottom:1px solid var(--ln);background:${m.bg}">
+            <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+              <span style="font:600 var(--fzs) var(--fd)">${esc(m.from)}</span>
+              <span style="font:11.5px var(--fm);color:var(--ft)">to ${esc(m.to)}</span>
+              <span style="flex:1"></span>
+              <span style="font:11.5px var(--fm);color:var(--ft)">${esc(m.when)}</span>
+            </div>
+            <p style="margin:6px 0 0;font:600 var(--fzs) var(--fd);color:var(--mu)">${esc(m.subject)}</p>
+            <p style="margin:6px 0 0;font-size:var(--fzs);line-height:1.55;white-space:pre-wrap;text-wrap:pretty">${esc(m.body)}</p>
+            ${m.hasAttach ? `<p style="margin:8px 0 0;font:11.5px var(--fm);color:var(--bp)">${esc(m.attach)}${(m.attachments || []).map((a) => ` · <a href="${a.url}" target="_blank" style="color:var(--bp)">${esc(a.name)}</a>`).join("")}</p>` : ""}
+          </li>`).join("")}
+        </ol>
+        ${v.threadMessages.length === 0 ? `<p style="margin:0;padding:18px 16px;font-size:var(--fzs);color:var(--mu)">Nothing in the thread yet. Send the record and the conversation collects here.</p>` : ""}
+      </section>
+
+      ${v.threadUnconfirmed.map((u) => `<section style="background:var(--pn);border:1px solid var(--wn);border-left:3px solid var(--wn);border-radius:0 8px 8px 0;box-shadow:var(--sh)">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--ln)">
+          <h2 style="margin:0;font:600 15px var(--fd)">A reply from ${esc(u.from)} is waiting on you</h2>
+          <p style="margin:3px 0 0;font-size:12px;color:var(--mu);text-wrap:pretty">PlanWise proposed the status and answer below (${esc(u.source)}). Nothing reaches the field until you confirm — edit first if the proposal reads wrong.</p>
+        </div>
+        <div style="padding:13px 16px">
+          <label style="display:block;font:600 11.5px var(--fd);margin-bottom:4px;color:var(--mu)">Status</label>
+          <select data-change="${H(u.setStatus)}" style="min-height:var(--tap);padding:7px 10px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
+            ${u.statuses.map((st) => `<option value="${esc(st.value)}" ${st.value === u.proposedStatus ? "selected" : ""}>${esc(st.label)}</option>`).join("")}
+          </select>
+          <label style="display:block;font:600 11.5px var(--fd);margin:10px 0 4px;color:var(--mu)">The answer, as the field will read it</label>
+          <textarea rows="4" data-input="${H(u.setAnswer)}" class="fi2" style="width:100%;padding:8px 10px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs);line-height:1.55;resize:vertical">${esc(u.proposedAnswer)}</textarea>
+          <div style="display:flex;gap:9px;margin-top:11px;justify-content:flex-end">
+            <button data-click="${H(u.confirm)}" class="hb-ah" style="${btn("primary")}">Confirm and release to the field</button>
+          </div>
+        </div>
+      </section>`).join("")}
+
+      ${v.threadHasAnswer ? `<section aria-labelledby="confirm-heading2" style="background:var(--pn);border:1px solid var(--ls);border-left:3px solid var(--ok);border-radius:0 8px 8px 0;box-shadow:var(--sh)">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--ln)">
+          <h2 id="confirm-heading2" style="margin:0;font:600 15px var(--fd)">The confirmed answer</h2>
+          <p style="margin:3px 0 0;font-size:12px;color:var(--mu);text-wrap:pretty">A reply is matched automatically. It becomes the answer only when a project manager confirms it, and only the confirmed answer reaches the field.</p>
+        </div>
+        <div style="padding:13px 16px">
+          <p style="margin:0;padding:12px 14px;border:1px solid var(--ok);border-radius:6px;background:var(--oks);font-size:var(--fz);line-height:1.55;text-wrap:pretty">${esc(v.threadAnswer)}</p>
+          ${v.threadConfirmedBy ? `<dl style="margin:11px 0 0;display:flex;gap:22px;flex-wrap:wrap">
+            <div><dt style="font:500 var(--lbl) var(--fm);letter-spacing:.13em;text-transform:uppercase;color:var(--ft)">Confirmed by</dt><dd style="margin:3px 0 0;font-size:var(--fzs)">${esc(v.threadConfirmedBy)}</dd></div>
+          </dl>` : ""}
+        </div>
+      </section>` : ""}
+
+      <div style="display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap">
+        <button data-click="${H(v.threadBack)}" class="hb-ls" style="${btn("ghost")}">Back to the register</button>
+        ${v.threadIsDraft ? `<button data-click="${H(v.threadSend)}" class="hb-ah" style="${btn("primary")}">Send it from your Outlook</button>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ——— Weekly briefing (prototype lines 682–761; PM-editable proposals) ————————
+function pageBrief(v) {
+  if (!v.hasBrief) {
+    return `<section style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);padding:26px 20px">
+      <p style="margin:0;font-size:var(--fzs);color:var(--mu)">Loading this week's briefing…</p>
+    </section>`;
+  }
+  return `<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;align-items:start">
+    <section aria-labelledby="brief-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+      <div style="padding:14px 18px;border-bottom:1px solid var(--ln)">
+        <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
+          <h2 id="brief-heading" style="margin:0;flex:1;font:600 16px var(--fd);letter-spacing:.02em">${esc(v.briefWeekTitle)}</h2>
+          <span style="${v.briefStampStyle}">${esc(v.briefStatus)}</span>
+        </div>
+        <p style="margin:4px 0 0;font:11.5px var(--fm);color:var(--mu)">${esc(v.briefByline)}</p>
+        <div role="group" aria-label="Choose which copy of the briefing to read" style="display:flex;gap:8px;margin-top:11px;flex-wrap:wrap">
+          ${v.briefTabs.map((b) => `<button data-click="${H(b.pick)}" aria-pressed="${b.pressed}" style="${b.style}">${esc(b.label)}</button>`).join("")}
+        </div>
+        <p style="${v.briefNoticeStyle}">${esc(v.briefNotice)}</p>
+      </div>
+      ${v.briefBlocks.map((b) => `<section aria-labelledby="${b.id}" style="padding:14px 18px;border-bottom:1px solid var(--ln)">
+        <h3 id="${b.id}" style="margin:0 0 9px;display:flex;align-items:center;gap:9px;font:600 13px var(--fd);letter-spacing:.04em;text-transform:uppercase">
+          <span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;background:${b.color};box-shadow:0 0 0 3px ${b.soft}"></span>${esc(b.title)}
+        </h3>
+        <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:8px">
+          ${b.items.map((i) => `<li style="display:flex;gap:10px;align-items:center;font-size:var(--fz)">
+            <span aria-hidden="true" style="width:4px;height:4px;border-radius:50%;background:var(--ls);flex:none"></span>
+            <input id="${i.textId}" type="text" value="${esc(i.text)}" data-input="${H(i.setText)}" placeholder="What happened, in the words the reader needs" class="fi2" style="flex:1;min-width:0;min-height:32px;padding:5px 9px;border:1px solid transparent;border-radius:5px;background:transparent;font-size:var(--fz)">
+            <input type="text" value="${esc(i.tag)}" data-input="${H(i.setTag)}" placeholder="tag" aria-label="Tag for this line" class="fi2" style="width:110px;flex:none;min-height:32px;padding:5px 8px;border:1px solid transparent;border-radius:5px;background:transparent;font:11.5px var(--fm);color:var(--ft);text-align:right">
+            <button data-click="${H(i.remove)}" aria-label="Remove this line" class="ht-er" style="flex:none;width:18px;height:18px;display:grid;place-content:center;border:1px solid var(--ln);border-radius:4px;color:var(--ft);font:600 12px/1 var(--fm)">×</button>
+          </li>`).join("")}
+        </ul>
+        <button data-click="${H(b.add)}" class="hb-ac" style="margin-top:8px;min-height:32px;padding:5px 11px;border:1px dashed var(--ls);border-radius:6px;font:600 11.5px var(--fd);color:var(--mu)">Add a line</button>
+      </section>`).join("")}
+      <p style="margin:0;padding:13px 18px;font-size:12px;color:var(--ft);text-wrap:pretty">Every proposed line was read from the Vista extract or the registers in PlanWise — edit them into the words the reader needs. Nothing is typed twice.</p>
+    </section>
+
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <section aria-labelledby="brief-sig" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+        <h2 id="brief-sig" style="margin:0;padding:12px 16px;border-bottom:1px solid var(--ln);font:600 15px var(--fd)">Needs a signature</h2>
+        <ul style="list-style:none;margin:0;padding:0">
+          ${v.briefSign.map((s2) => `<li style="padding:13px 16px;border-bottom:1px solid var(--ln)">
+            <p style="margin:0;font:600 var(--fz) var(--fd)">${esc(s2.what)}</p>
+            <p style="margin:6px 0 0;font:600 11.5px var(--fm);color:${s2.color}">${esc(s2.state)}</p>
+          </li>`).join("")}
+        </ul>
+        ${v.briefSign.length === 0 ? `<p style="margin:0;padding:16px;font-size:var(--fzs);color:var(--mu)">Nothing awaiting a signature this week.</p>` : ""}
+      </section>
+
+      ${v.briefFinancials.length ? `<section aria-labelledby="brief-fin" style="background:var(--pn);border:1px solid var(--er);border-radius:8px;box-shadow:var(--sh)">
+        <h2 id="brief-fin" style="margin:0;padding:12px 16px;border-bottom:1px solid var(--ln);font:600 15px var(--fd)">Financial position <span style="font:500 9.5px var(--fm);letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:4px;background:var(--ers);color:var(--er);vertical-align:middle;margin-left:6px">Internal only</span></h2>
+        <dl style="margin:0;padding:6px 0">
+          ${v.briefFinancials.map((f) => `<div style="display:flex;gap:14px;align-items:baseline;padding:8px 16px">
+            <dt style="flex:1;font-size:var(--fzs);color:var(--mu)">${esc(f.label)}</dt>
+            <dd style="margin:0;font:600 var(--fz) var(--fd);font-variant-numeric:tabular-nums">${esc(f.value)}</dd>
+          </div>`).join("")}
+        </dl>
+      </section>` : ""}
+
+      <section aria-labelledby="brief-att" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+        <h2 id="brief-att" style="margin:0;padding:12px 16px;border-bottom:1px solid var(--ln);font:600 15px var(--fd)">Attached to the email</h2>
+        <ul style="list-style:none;margin:0;padding:11px 16px;display:flex;flex-direction:column;gap:9px">
+          ${v.briefAtt.map((a) => `<li style="display:flex;gap:9px;align-items:baseline;font-size:var(--fzs)">
+            <span style="font:500 9.5px var(--fm);letter-spacing:.1em;text-transform:uppercase;color:var(--ac);white-space:nowrap">${esc(a.kind)}</span>
+            <span style="flex:1;text-wrap:pretty">${esc(a.name)}</span>
+          </li>`).join("")}
+        </ul>
+      </section>
+
+      <section aria-labelledby="brief-rec" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 id="brief-rec" style="margin:0;flex:1;font:600 15px var(--fd)">Who is getting this</h2>
+        </div>
+        <ul style="list-style:none;margin:0;padding:0">
+          ${v.briefRecipients.map((r) => `<li style="display:flex;gap:10px;align-items:flex-start;padding:11px 16px;border-bottom:1px solid var(--ln)">
+            <span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;margin-top:6px;flex:none;background:${r.color};box-shadow:0 0 0 3px ${r.soft}"></span>
+            <span style="flex:1;min-width:0">
+              <span style="display:block;font:600 var(--fzs) var(--fd)">${esc(r.name)}</span>
+              <span style="display:block;font:11.5px var(--fm);color:var(--mu)">${esc(r.email)}</span>
+              <span style="display:block;font-size:12px;color:var(--ft);margin-top:2px">${esc(r.gets)}</span>
+            </span>
+          </li>`).join("")}
+        </ul>
+        ${v.noRecipients ? `<p style="margin:0;padding:16px;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">No customer contacts with an email yet. Add one on Job setup before this can go out.</p>` : ""}
+      </section>
+
+      <div style="display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap">
+        <button data-click="${H(v.briefReseed)}" class="hb-ls" style="${btn("ghost")}">Reseed from the registers</button>
+        <button data-click="${H(v.briefSend)}" class="hb-ah" style="${btn("primary")}">${esc(v.briefSendLabel)}</button>
+      </div>
+    </div>
+  </div>`;
 }

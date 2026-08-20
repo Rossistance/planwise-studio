@@ -50,6 +50,9 @@ const App = {
     // — schedule interactions
     schedCollapsed: {}, schedPeek: null, schedDrag: null,
     schedZoom: 1, schedStaged: null,
+    replyEdit: null,
+    tool: "Pin", ink: "#A9291D", weight: 2.5, zoom: 1, markText: "",
+    briefAudience: "customer",
 
     // — CO composer + PO import
     coPreview: true, coNewClar: "", poImport: null,
@@ -64,6 +67,7 @@ const App = {
     applyChrome();
     document.addEventListener("keydown", (e) => this.onKey(e));
     window.addEventListener("hashchange", () => this.route());
+    window.addEventListener("focus", () => App.detectSent());
 
     // Splash once per browser session: the prototype models app launch, not
     // every F5 — resolved decision #10 says the login screen is the skip, and
@@ -512,7 +516,12 @@ const App = {
   openSettings() { setState({ settingsOpen: true }, focusRef("settings")); },
   closeSettings() { setState({ settingsOpen: false }); },
 
+  openViewer: (docId, page, mode, ctx) => () => {
+    setState({ viewer: { docId, page: page || 1, mode: mode || "markup", ctx: ctx || {}, compare: null } });
+  },
+
   afterRender() {
+    if (this.state.viewer) this.paintViewerCanvases();
     // Rail hover-open: mouseenter/leave don't bubble, so they bind directly to
     // the persistent element (morphdom keeps it) rather than delegating.
     const rail = document.getElementById("pw-rail");
@@ -1292,6 +1301,9 @@ Object.assign(App, {
       ...this.buildCO(),
       ...this.buildSched(),
       ...this.buildLook(),
+      ...this.buildThread(),
+      ...this.buildViewer(),
+      ...this.buildBrief(),
       ...this.buildRegister(),
       ...this.buildDetail(),
       ...this.buildForm(),
@@ -1320,7 +1332,7 @@ Object.assign(App, {
           </div>
         </div>
       </div>`
-      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v);
+      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v);
   },
 });
 
@@ -1748,7 +1760,7 @@ Object.assign(App, {
         rows, total: ["All purchase orders · remaining counts open orders only", ["", "", money(all.reduce((t, p) => t + (p.orig || 0), 0)), money(all.reduce((t, p) => t + p.inv, 0)), money(remTotal), "", ""]] };
     }
 
-    if (s.page === "rfis" || s.page === "subs") {
+    if ((s.page === "rfis" || s.page === "subs") && !s.sub) {
       const isR = s.page === "rfis";
       const base2 = ((d.records || {}).records || []).filter((r) => isR ? r.kind === "rfi" : r.kind !== "rfi");
       const rows = base2.filter((r) => s.recFilter === "All" || r.status === s.recFilter).map((r) => {
@@ -2987,3 +2999,804 @@ Object.assign(App, {
     }
   };
 })();
+
+// ————— RFIs / submittals: detail, send ladder, thread, confirm ——————————————
+Object.assign(App, {
+  recById(id) {
+    return (((this.state.data.records || {}).records) || []).find((r) => r.id === id);
+  },
+
+  async loadRecordExtras(recId) {
+    // Draft + replies for the thread page; cached per record.
+    const key = "rec:" + recId;
+    if (this.state.data[key]) return;
+    try {
+      const [draft, replies] = await Promise.all([
+        api(`/api/records/${recId}/draft`).catch(() => ({})),
+        api(`/api/records/${recId}/replies`).catch(() => ({ replies: [] })),
+      ]);
+      this.state.data[key] = { draft, replies: replies.replies || [] };
+      setState({});
+    } catch (e) {}
+  },
+
+  sendRecord: (recId) => async () => {
+    const rec = App.recById(recId) || {};
+    try {
+      // Ensure a draft exists (AI-or-template; the pipeline works without spend).
+      let draft = await api(`/api/records/${recId}/draft`).catch(() => null);
+      if (!draft || !draft.subject) {
+        draft = await api(`/api/records/${recId}/draft`, { method: "POST", body: JSON.stringify({}) });
+      }
+      const pkgResp = await fetch(`/api/records/${recId}/package`, { credentials: "same-origin" });
+      let attachments = [];
+      if (pkgResp.ok) {
+        const buf = new Uint8Array(await pkgResp.arrayBuffer());
+        let bin = "";
+        for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+        attachments = [{ filename: (rec.number || "record") + " package.pdf", content_b64: btoa(bin) }];
+      }
+      const out = await companionFetch("/draft", { to: rec.to_email || "", subject: draft.subject,
+        body: draft.body, attachments, display: true });
+      setState({ live: (rec.number || "The record") + " is drafted in Outlook" +
+        (out.unresolved && out.unresolved.length ? ", but Outlook could not resolve " + out.unresolved.join(", ") + " — pick the address before sending." : ". Press Send there; PlanWise flips it to Sent when the companion sees it leave.") });
+    } catch (err) {
+      const eml = `/api/records/${recId}/share.eml`;
+      if (isNetErr(err)) {
+        setState({ live: "No Outlook companion on this machine — downloading the email file instead." });
+        downloadEmlUrl(eml, "Email file downloaded. Open it in Outlook and press Send.");
+      } else {
+        setState({ live: "The companion answered but refused: " + err.message });
+        downloadEmlUrl(eml);
+      }
+    }
+  },
+
+  // The natural moment to check: right after the PM alt-tabs back from
+  // pressing Send in Outlook (1.x behavior, kept).
+  detectSent: debounce(async () => {
+    const s = App.state;
+    if (s.page !== "rfis" && s.page !== "subs") return;
+    const rec = s.sub ? App.recById(s.sub) : null;
+    if (!rec || rec.status !== "Draft") return;
+    try {
+      const draft = await api(`/api/records/${rec.id}/draft`).catch(() => null);
+      if (!draft || !draft.subject) return;
+      const out = await companionFetch("/sent", { queries: [{ record_id: rec.id, subject: draft.subject }] });
+      if ((out.sent || []).length) App.refresh("records", "attention");
+    } catch (e) {}
+  }, 800),
+
+  checkReplies: (recId) => async () => {
+    const rec = App.recById(recId) || {};
+    try {
+      const draft = await api(`/api/records/${recId}/draft`).catch(() => ({}));
+      const out = await companionFetch("/scan", { queries: [{ record_id: recId,
+        subject: draft.subject || rec.title, since: rec.sent_at || undefined }] });
+      const replies = out.replies || [];
+      let fresh = 0;
+      for (const rep of replies) {
+        const posted = await api(`/api/records/${recId}/replies`, { method: "POST", body: JSON.stringify(rep) });
+        if (!posted.deduped) fresh++;
+      }
+      setState({ live: fresh ? fresh + (fresh === 1 ? " new reply filed from Outlook." : " new replies filed from Outlook.")
+        : "Nothing new — the thread in Outlook holds no reply PlanWise hasn't already filed." });
+      delete App.state.data["rec:" + recId];
+      App.loadRecordExtras(recId);
+      App.refresh("records");
+    } catch (err) {
+      setState({ live: isNetErr(err) ? "No Outlook companion on this machine — replies file themselves from any PC that has one." : err.message });
+    }
+  },
+
+  confirmReply: (replyId, recId) => async () => {
+    const bag = App.state.data["rec:" + recId] || {};
+    const rep = (bag.replies || []).find((r) => r.id === replyId) || {};
+    const proposed = App.state.replyEdit || {};
+    try {
+      await api(`/api/replies/${replyId}/confirm`, { method: "POST", body: JSON.stringify({
+        status: proposed.status !== undefined ? proposed.status : rep.proposed_status,
+        answer: proposed.answer !== undefined ? proposed.answer : rep.proposed_answer }) });
+      setState({ replyEdit: null, live: "Confirmed. Only the confirmed answer reaches the field." });
+      delete App.state.data["rec:" + recId];
+      App.loadRecordExtras(recId);
+      App.refresh("records");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  deleteRecord: (recId) => () => {
+    const rec = App.recById(recId) || {};
+    setState({
+      confirm: {
+        eyebrow: "Remove a record", title: (rec.number || "?") + (rec.title ? " · " + rec.title : ""),
+        body: "This removes the record, its attachments and its own markup layer.",
+        checks: [
+          [rec.status === "Draft" ? "pass" : "warn", "Status", rec.status === "Draft" ? "It is a draft — nothing has gone out." : "It shows as " + (rec.status || "?") + ". The email that went out stays in Outlook; only PlanWise's record goes."],
+          ["warn", "No undo", "Removing a record is not reversible — its replies and layer go with it."],
+        ],
+        blocked: false,
+        verdict: "The register updates the moment you confirm.",
+        label: "Remove this record",
+        run: async () => {
+          try {
+            await api(`/api/records/${recId}`, { method: "DELETE" });
+            setState({ confirm: null, detail: null, live: (rec.number || "The record") + " removed." });
+            if (App.state.sub === recId) App.go(App.state.page)();
+            App.refresh("records");
+          } catch (err) { setState({ confirm: null, live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  buildThread() {
+    const s = this.state;
+    if ((s.page !== "rfis" && s.page !== "subs") || !s.sub) return { threadOpen: "" };
+    const rec = this.recById(s.sub);
+    if (!rec) return { threadOpen: "" };
+    this.loadRecordExtras(rec.id);
+    const bag = s.data["rec:" + rec.id] || {};
+    const draft = bag.draft || {};
+    const replies = bag.replies || [];
+    const isR = rec.kind === "rfi";
+    const unconfirmed = replies.filter((r) => !r.confirmed_at);
+    const edit = s.replyEdit || {};
+    const statuses = isR ? ["Answered", "Closed", "Sent"] : ["Approved", "Approved as Noted", "Revise & Resubmit", "Rejected", "Sent"];
+
+    const messages = [];
+    if (rec.sent_at || draft.subject) {
+      messages.push({ from: rec.sent_by || rec.created_by || "PlanWise", to: rec.to_name || rec.to_email || "—",
+        when: rec.sent_at ? usDate(rec.sent_at) : "not sent yet",
+        subject: draft.subject || rec.title || "", body: draft.body || "",
+        attach: (rec.attachments || []).length ? (rec.attachments || []).length + " attached drawing page" + ((rec.attachments || []).length === 1 ? "" : "s") + " · package PDF" : "",
+        mine: true });
+    }
+    replies.forEach((r) => messages.push({
+      from: r.from_name || r.from_email || "reply", to: "us",
+      when: r.received_at ? usDate(r.received_at) : "", subject: "RE: " + (draft.subject || rec.title || ""),
+      body: r.body || "", attach: (r.attachments || []).length ? (r.attachments || []).length + " returned file" + ((r.attachments || []).length === 1 ? "" : "s") : "",
+      mine: false, replyId: r.id, confirmed: !!r.confirmed_at,
+      attachments: (r.attachments || []).map((a) => ({ name: a.filename, url: `/api/replies/${r.id}/attachments/${a.id}` })),
+    }));
+
+    return {
+      threadOpen: true,
+      threadRec: rec,
+      threadTitle: (rec.number || "?") + " · " + (rec.title || ""),
+      threadStatus: rec.status || "Draft",
+      threadStampStyle: stamp(STATUS_TONE[rec.status] || "nt"),
+      threadFacts: [
+        ["Sent", rec.sent_at ? usDate(rec.sent_at) : "not sent yet"],
+        ["Sent by", rec.sent_by || "—"],
+        ["Sent to", (rec.to_name || "—") + (rec.to_email ? " · " + rec.to_email : "")],
+        ["Reply received", replies.length ? usDate(replies[replies.length - 1].received_at) : "no reply yet"],
+        ["Due", rec.due_date || "—"],
+      ].map(([label, value]) => ({ label, value })),
+      threadQuestion: isR ? (rec.question || "") : (rec.spec_section ? "Spec section " + rec.spec_section : ""),
+      threadPages: (rec.attachments || []).map((a) => ({
+        name: (a.document_name || "Document") + ", page " + a.page,
+        detail: "Original page plus this record's own layer",
+        open: App.openViewer(a.document_id, a.page, "markup", { layer: (isR ? "rfi:" : "submittal:") + rec.id }),
+      })),
+      threadPackageUrl: `/api/records/${rec.id}/package`,
+      threadCount: messages.length + (messages.length === 1 ? " message" : " messages"),
+      threadMessages: messages.map((m) => ({ ...m, bg: m.mine ? "var(--pn)" : "var(--p2)", hasAttach: !!m.attach })),
+      threadAnswer: rec.answer || "",
+      threadHasAnswer: !!rec.answer,
+      threadConfirmedBy: (replies.find((r) => r.confirmed_at) || {}).confirmed_by || rec.sent_by || "",
+      threadUnconfirmed: unconfirmed.map((r) => ({
+        id: r.id, from: r.from_name || r.from_email || "the reply",
+        proposedStatus: edit.replyId === r.id && edit.status !== undefined ? edit.status : (r.proposed_status || rec.status),
+        proposedAnswer: edit.replyId === r.id && edit.answer !== undefined ? edit.answer : (r.proposed_answer || r.body || ""),
+        source: r.proposal_source || "heuristic",
+        statuses: statuses.map((st) => ({ value: st, label: st })),
+        setStatus: (e) => setState({ replyEdit: { ...(App.state.replyEdit || {}), replyId: r.id, status: e.target.value } }),
+        setAnswer: (e) => setState({ replyEdit: { ...(App.state.replyEdit || {}), replyId: r.id, answer: e.target.value } }),
+        confirm: App.confirmReply(r.id, rec.id),
+      })),
+      threadBack: App.go(s.page),
+      threadSend: App.sendRecord(rec.id),
+      threadCheckReplies: App.checkReplies(rec.id),
+      threadIsDraft: rec.status === "Draft",
+      threadIsRfi: isR,
+      threadDraftSubject: draft.subject || "",
+      threadDraftBody: draft.body || "",
+      threadSetDraft: (field) => async (e) => {
+        try {
+          await api(`/api/records/${rec.id}/draft`, { method: "PATCH",
+            body: JSON.stringify({ [field]: e.target.value }) });
+          const bag2 = App.state.data["rec:" + rec.id];
+          if (bag2 && bag2.draft) bag2.draft[field] = e.target.value;
+        } catch (err) {}
+      },
+    };
+  },
+});
+
+// records detail drawer branch
+(() => {
+  const base = App.buildDetail.bind(App);
+  App.buildDetail = function () {
+    const d = this.state.detail;
+    if (!d || (d.kind !== "rfi" && d.kind !== "sub")) return base();
+    const rec = App.recById(d.id);
+    if (!rec) return { detailOpen: "" };
+    const S = (id, title, rows) => ({ id: "ds-" + id, title, rows: rows.map(([label, value, note, style]) => ({ label, value, note: note || "", valueStyle: style || "" })) });
+    const A = (list) => list.map(([what, who, when], i) => ({ what, who, when: when || "", color: i === list.length - 1 ? "var(--ac)" : "var(--ls)" }));
+    const btn2 = (label, kind, click) => ({ label, style: btn(kind), hoverClass: kind === "primary" ? "hb-ah" : "hb-ls", click: click || (() => {}) });
+    const isR = rec.kind === "rfi";
+    const audit = (((this.state.data.activity || {}).activity) || []).filter((a) => a.object_id === rec.id).slice(0, 6).reverse()
+      .map((a) => [a.detail || a.action, a.actor || "PlanWise", usDate(a.ts)]);
+    const rows = [["Number", rec.number || "?"], ["Title", rec.title || ""], ["Status", rec.status || "Draft"]];
+    if (isR) rows.push(["Question", rec.question || "not reported", "", rec.question ? "" : "color:var(--ft);font-style:italic"]);
+    else rows.push(["Spec section", rec.spec_section || "not reported"]);
+    rows.push([isR ? "Answer" : "Reviewer response", rec.answer || "not reported", rec.answer ? "PM confirmed" : "", rec.answer ? "" : "color:var(--ft);font-style:italic"]);
+    return {
+      detailOpen: true, detailHasItems: (rec.attachments || []).length > 0, detailHasNotes: "",
+      detailNotes: [], detailKind: isR ? "Request for information" : "Submittal",
+      detailTitle: (rec.number || "?") + " · " + (rec.title || ""),
+      detailStatus: rec.status || "Draft", detailStampStyle: stamp(STATUS_TONE[rec.status] || "nt"),
+      detailMeta: (rec.status === "Draft" ? "Not sent" : "Sent " + usDate(rec.sent_at)) + " · due " + (rec.due_date || "—"),
+      detailSections: [
+        S("rec-body", isR ? "Question and answer" : "Submittal and response", rows),
+        S("rec-thread", "Thread", [["Sent to", rec.to_name || "not chosen yet", "", rec.to_name ? "" : "color:var(--ft);font-style:italic"],
+          ["Recipient email", rec.to_email || "not chosen yet", "", rec.to_email ? "" : "color:var(--ft);font-style:italic"],
+          ["Due date", rec.due_date || "—"],
+          ["Outlook thread", rec.status === "Draft" ? "No thread yet" : "Watched by the companion"]]),
+      ],
+      detailItems: (rec.attachments || []).map((a) => ({ label: (a.document_name || "Document") + " · page " + a.page, value: "On this record's layer", color: "var(--mu)" })),
+      detailItemsTitle: "Attached drawing pages and layers", detailItemsCol1: "Document page", detailItemsCol2: "On this record's layer",
+      detailItemsTotalLabel: "Pages in the outbound package", detailItemsTotal: String((rec.attachments || []).length),
+      detailAudit: A(audit.length ? audit : [["Draft created in PlanWise", rec.created_by || "—", usDate(rec.created_at)]]),
+      detailFootnote: isR ? "A reply is matched from the Outlook thread. The answer reaches the field only after a project manager confirms it." : "Submittal responses are recorded exactly as the reviewer returned them.",
+      detailActions: [
+        btn2("Close this panel", "ghost", App.closeDetail),
+        btn2("Remove " + (rec.number || "it"), "ghost", () => { App.closeDetail(); App.deleteRecord(rec.id)(); }),
+        btn2("Open the full thread", "primary", () => { App.closeDetail(); App.go(this.state.page, rec.id)(); }),
+      ],
+    };
+  };
+})();
+
+// ————— drawings: PDF.js rendering + layer-scoped marks (LOGIC-MERGE:
+// prototype chrome and click-place marks; the repo's immutable originals,
+// normalized coordinates and STRUCTURAL layer isolation stay) ————————————————
+if (typeof pdfjsLib !== "undefined") {
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdfjs/pdf.worker.min.js";
+}
+
+Object.assign(App, {
+  _pdfDocs: {},        // docId -> PDFDocumentProxy promise
+  _thumbCache: {},     // docId|page -> dataURL
+  _renderToken: {},    // canvasId -> token (serialise renders per canvas)
+
+  docById(id) {
+    return (((this.state.data.documents || {}).documents) || []).find((x) => x.id === id);
+  },
+
+  pdfDoc(docId) {
+    if (!this._pdfDocs[docId]) {
+      this._pdfDocs[docId] = pdfjsLib.getDocument({ url: `/api/documents/${docId}/file` }).promise;
+    }
+    return this._pdfDocs[docId];
+  },
+
+  async loadAnnotations(docId) {
+    const key = "ann:" + docId;
+    if (this.state.data[key]) return;
+    try {
+      const out = await api(`/api/documents/${docId}/annotations`);
+      this.state.data[key] = out.annotations || [];
+      setState({});
+    } catch (e) { this.state.data[key] = []; }
+  },
+
+  marksFor(docId, page, layer) {
+    const all = this.state.data["ann:" + docId] || [];
+    return all.filter((a) => a.page === page && (a.layer || "internal") === layer);
+  },
+
+  addMark: (pane) => async (e) => {
+    const s = App.state;
+    const vwr = s.viewer;
+    if (!vwr) return;
+    const page = pane === "compare" ? vwr.compare : vwr.page;
+    const box = e._el.getBoundingClientRect();
+    const x = ((e.clientX - box.left) / box.width) * 100;
+    const y = ((e.clientY - box.top) / box.height) * 100;
+    if (x < 0 || x > 100 || y < 0 || y > 100) return;
+    const layer = (vwr.ctx || {}).layer || "internal";
+    const shape = { v: 2, tool: s.tool, x, y, ink: s.ink, weight: s.weight,
+      text: (s.markText || "").trim() };
+    try {
+      const row = await api(`/api/documents/${vwr.docId}/annotations`, { method: "POST",
+        body: JSON.stringify({ page, layer, shape }) });
+      const key = "ann:" + vwr.docId;
+      App.state.data[key] = (App.state.data[key] || []).concat([{ ...row, shape }]);
+      const list = App.marksFor(vwr.docId, page, layer);
+      setState({ live: s.tool + " mark " + list.length + " added to page " + page + " on the " +
+        (layer === "internal" ? "internal team" : "this record's") + " layer." });
+      App.refresh("documents");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  viewerUndoMark: () => async () => {
+    const vwr = App.state.viewer;
+    const layer = (vwr.ctx || {}).layer || "internal";
+    const list = App.marksFor(vwr.docId, vwr.page, layer);
+    if (!list.length) { setState({ live: "There is nothing to remove on this page." }); return; }
+    const last = list[list.length - 1];
+    try {
+      await api(`/api/annotations/${last.id}`, { method: "DELETE" });
+      const key = "ann:" + vwr.docId;
+      App.state.data[key] = (App.state.data[key] || []).filter((a) => a.id !== last.id);
+      setState({ live: "Last mark removed from page " + vwr.page + "." });
+      App.refresh("documents");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  viewerClearPage: () => async () => {
+    const vwr = App.state.viewer;
+    const layer = (vwr.ctx || {}).layer || "internal";
+    const list = App.marksFor(vwr.docId, vwr.page, layer);
+    if (!list.length) { setState({ live: "This page carries no marks of yours." }); return; }
+    try {
+      for (const a of list) await api(`/api/annotations/${a.id}`, { method: "DELETE" });
+      const key = "ann:" + vwr.docId;
+      App.state.data[key] = (App.state.data[key] || []).filter((a) => !list.includes(a));
+      const kept = list.map((a) => ({ page: a.page, layer: a.layer, shape: a.shape }));
+      const msg = "Cleared " + list.length + (list.length === 1 ? " mark" : " marks") + " from page " + vwr.page + ".";
+      setState({ undo: { message: msg, revertFn: async () => {
+        for (const k2 of kept) {
+          const row = await api(`/api/documents/${vwr.docId}/annotations`, { method: "POST", body: JSON.stringify(k2) });
+          App.state.data[key] = (App.state.data[key] || []).concat([{ ...row, shape: k2.shape }]);
+        }
+        App.refresh("documents");
+      } }, live: msg });
+      App.refresh("documents");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  viewerToggleAttach: () => async () => {
+    const vwr = App.state.viewer;
+    const recId = (vwr.ctx || {}).recordId;
+    if (!recId) return;
+    const rec = App.recById(recId) || {};
+    const existing = (rec.attachments || []).find((a) => a.document_id === vwr.docId && a.page === vwr.page);
+    try {
+      if (existing) {
+        await api(`/api/records/${recId}/attachments/${existing.id}`, { method: "DELETE" });
+        setState({ live: "Page " + vwr.page + " removed from the package." });
+      } else {
+        await api(`/api/records/${recId}/attachments`, { method: "POST",
+          body: JSON.stringify({ document_id: vwr.docId, page: vwr.page }) });
+        setState({ live: "Page " + vwr.page + " attached." });
+      }
+      App.refresh("records");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  triggerDocUpload() {
+    let input = document.getElementById("doc-upload-input");
+    if (!input) {
+      input = document.createElement("input");
+      input.type = "file"; input.accept = ".pdf"; input.multiple = true;
+      input.id = "doc-upload-input"; input.style.display = "none";
+      document.body.appendChild(input);
+      input.addEventListener("change", async () => {
+        const files = [...(input.files || [])];
+        input.value = "";
+        for (const f of files) {
+          try {
+            const fd = new FormData();
+            fd.append("file", f);
+            fd.append("name", f.name.replace(/\.pdf$/i, ""));
+            const r = await fetch(`/api/jobs/${encodeURIComponent(App.state.job)}/documents`,
+              { method: "POST", body: fd, credentials: "same-origin" });
+            const b = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(b.detail || r.status);
+            setState({ live: "“" + (b.name || f.name) + "” added to the library. The original is immutable — redlines live on layers." });
+          } catch (err) {
+            setState({ live: f.name + ": " + err.message });
+          }
+        }
+        App.refresh("documents");
+      });
+    }
+    input.click();
+  },
+
+  deleteDocument: (docId) => () => {
+    const doc = App.docById(docId) || {};
+    setState({
+      confirm: {
+        eyebrow: "Remove a drawing set", title: doc.name || "?",
+        body: "This removes the set and every layer of markups on it.",
+        checks: [
+          [doc.annotation_count ? "warn" : "pass", "Markups", doc.annotation_count ? "It carries " + doc.annotation_count + " markups across its layers — they go with it." : "It carries no markups."],
+          ["warn", "Attached records", "Any RFI or submittal page attached from this set loses its page reference."],
+          ["warn", "No undo", "Removing a document is not reversible — the file itself is deleted."],
+        ],
+        blocked: false,
+        verdict: "The library updates the moment you confirm.",
+        label: "Remove this set",
+        run: async () => {
+          try {
+            await api(`/api/documents/${docId}`, { method: "DELETE" });
+            setState({ confirm: null, detail: null, viewer: null, live: "“" + (doc.name || "the set") + "” removed from the library." });
+            App.refresh("documents");
+          } catch (err) { setState({ confirm: null, live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  buildViewer() {
+    const s = this.state;
+    const vwr = s.viewer;
+    if (!vwr) return { viewerOpen: "" };
+    const doc = this.docById(vwr.docId);
+    if (!doc) return { viewerOpen: "" };
+    this.loadAnnotations(vwr.docId);
+    const layer = (vwr.ctx || {}).layer || "internal";
+    const picker = vwr.mode === "picker" && (vwr.ctx || {}).recordId;
+    const rec = picker ? this.recById(vwr.ctx.recordId) : null;
+    const layerName = layer === "internal" ? "internal team" : "this record's";
+    const all = s.data["ann:" + vwr.docId] || [];
+
+    const renderShape = (a, i) => {
+      const sh = typeof a.shape === "string" ? JSON.parse(a.shape) : a.shape;
+      if (sh && sh.v === 2) {
+        const m = { tool: sh.tool, x: sh.x, y: sh.y, ink: sh.ink, weight: sh.weight, text: sh.text };
+        return { style: MARK_STYLE(m, i), heads: MARK_HEADS(m, i) };
+      }
+      // Legacy 1.x shapes (normalized 0..1 geometry) render as a simple box
+      // outline at their extent — displayed, never lost, never edited here.
+      const x0 = (sh.x0 ?? sh.x ?? 0) * 100, y0 = (sh.y0 ?? sh.y ?? 0) * 100;
+      const x1 = (sh.x1 ?? sh.x ?? 0.05) * 100, y1 = (sh.y1 ?? sh.y ?? 0.05) * 100;
+      return { style: { label: sh.text || "", style: "position:absolute;left:" + Math.min(x0, x1) + "%;top:" + Math.min(y0, y1) + "%;width:" + Math.abs(x1 - x0) + "%;height:" + Math.abs(y1 - y0) + "%;border:2px solid " + (sh.color || "#A9291D") + ";pointer-events:none" }, heads: [] };
+    };
+
+    const pane = (page, isCompare) => {
+      const list = this.marksFor(vwr.docId, page, layer);
+      const shapes = list.map((a, i) => renderShape(a, i));
+      return {
+        caption: isCompare ? "Comparing page " + page : "Page " + page + " of " + (doc.page_count || "?"),
+        isCompare: !!isCompare,
+        selectValue: String(page),
+        onSelect: (e) => setState({ viewer: { ...App.state.viewer, compare: parseInt(e.target.value) } }),
+        options: Array.from({ length: doc.page_count || 1 }, (x, i) => ({ value: String(i + 1), label: "Page " + (i + 1) })),
+        canvasId: "dw-canvas-" + (isCompare ? "b" : "a"),
+        pageNum: page,
+        click: App.addMark(isCompare ? "compare" : "main"),
+        aria: doc.name + ", page " + page + ", " + (list.length ? list.length + (list.length === 1 ? " mark" : " marks") + " on it" : "no marks") + ". Select anywhere on the sheet to place a " + s.tool.toLowerCase() + ".",
+        holderStyle: "flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:" + (s.zoom > 1 ? "auto" : "hidden"),
+        sheetStyle: "position:relative;container-type:inline-size;flex:none;margin:auto;aspect-ratio:17/11;background:#FFFFFF;border:1px solid var(--ls);box-shadow:var(--sh);cursor:crosshair;overflow:hidden;" +
+          (s.zoom > 1
+            ? "height:" + (s.zoom * 100) + "%;width:auto;min-width:" + (s.zoom * 100) + "%"
+            : isCompare ? "width:100%;height:auto;max-height:100%" : "height:100%;width:auto;max-width:100%"),
+        marks: shapes.map((x) => x.style),
+        heads: shapes.reduce((out, x) => out.concat(x.heads), []),
+        note: isCompare
+          ? "Marks you place here land on the same layer as the left-hand sheet."
+          : "The whole sheet is on screen. Marks sit on a layer above the original and never alter the file.",
+      };
+    };
+
+    const panes = [pane(vwr.page, false)];
+    if (vwr.compare !== null && vwr.compare !== undefined) panes.push(pane(vwr.compare, true));
+
+    return {
+      viewerOpen: true,
+      viewerClose: () => setState({ viewer: null }),
+      viewerEyebrow: picker ? "Choose pages for " + ((rec || {}).number || "this record") : "Drawing viewer",
+      viewerTitle: doc.name,
+      viewerCompareAria: vwr.compare != null ? "true" : "false",
+      viewerCompareLabel: vwr.compare != null ? "Stop comparing" : "Compare two pages",
+      viewerCompareStyle: "min-height:var(--tap);padding:7px 13px;border-radius:6px;font:600 12.5px var(--fd);white-space:nowrap;border:1px solid " +
+        (vwr.compare != null ? "var(--ac)" : "var(--ln)") + ";background:" + (vwr.compare != null ? "var(--as)" : "var(--pn)") + ";color:" + (vwr.compare != null ? "var(--ac)" : "var(--mu)"),
+      viewerToggleCompare: () => {
+        const other = vwr.page < (doc.page_count || 1) ? vwr.page + 1 : Math.max(1, vwr.page - 1);
+        setState({ viewer: { ...vwr, compare: vwr.compare == null ? other : null } });
+      },
+      viewerCols: vwr.compare != null ? "minmax(0,1fr) minmax(0,1fr)" : "minmax(0,1fr)",
+      viewerPanes: panes,
+      viewerTools: TOOLS.map(([label, aria, icon]) => {
+        const on = s.tool === label;
+        return { label, aria: aria + " tool", icon, pressed: on ? "true" : "false",
+          pick: () => setState({ tool: label }),
+          iconStyle: "width:15px;height:15px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round",
+          style: "display:inline-flex;align-items:center;gap:6px;min-height:34px;padding:6px 10px;border-radius:6px;font:600 11.5px var(--fd);white-space:nowrap;border:1px solid " +
+            (on ? "var(--ac)" : "var(--ln)") + ";background:" + (on ? "var(--as)" : "var(--pn)") + ";color:" + (on ? "var(--ac)" : "var(--mu)") };
+      }),
+      viewerInks: Object.keys(INK_NAMES).map((hex) => {
+        const on = s.ink === hex;
+        return { name: INK_NAMES[hex], label: INK_NAMES[hex] + " ink", pressed: on ? "true" : "false",
+          pick: () => setState({ ink: hex }),
+          swatch: "width:11px;height:11px;border-radius:3px;background:" + hex + ";flex:none",
+          style: "display:inline-flex;align-items:center;gap:7px;min-height:34px;padding:6px 10px;border-radius:6px;font:600 11.5px var(--fd);border:1px solid " +
+            (on ? "var(--ac)" : "var(--ln)") + ";background:" + (on ? "var(--as)" : "var(--pn)") + ";color:" + (on ? "var(--ac)" : "var(--mu)") };
+      }),
+      viewerWeights: [["Thin", 1.5], ["Medium", 2.5], ["Thick", 4]].map(([label, wt]) => {
+        const on = s.weight === wt;
+        return { label: label + " line weight", pressed: on ? "true" : "false",
+          pick: () => setState({ weight: wt }),
+          rule: "display:block;width:17px;height:0;border-top:" + wt + "px solid currentColor",
+          style: "display:grid;place-content:center;min-height:34px;min-width:36px;padding:6px 8px;border-radius:6px;border:1px solid " +
+            (on ? "var(--ac)" : "var(--ln)") + ";background:" + (on ? "var(--as)" : "var(--pn)") + ";color:" + (on ? "var(--ac)" : "var(--mu)") };
+      }),
+      viewerZooms: [["Fit page", 1], ["150%", 1.5], ["200%", 2]].map(([label, z]) => {
+        const on = s.zoom === z;
+        return { label, pressed: on ? "true" : "false", pick: () => setState({ zoom: z }),
+          style: "min-height:34px;padding:6px 10px;border-radius:6px;font:600 11.5px var(--fd);white-space:nowrap;border:1px solid " +
+            (on ? "var(--ac)" : "var(--ln)") + ";background:" + (on ? "var(--as)" : "var(--pn)") + ";color:" + (on ? "var(--ac)" : "var(--mu)") };
+      }),
+      viewerNeedsText: s.tool === "Text" || s.tool === "Dim",
+      viewerTextLabel: s.tool === "Dim" ? "Dimension" : "Note text",
+      viewerTextHint: s.tool === "Dim" ? '18"' : "Verify in field",
+      viewerText: s.markText || "",
+      setMarkText: (e) => setState({ markText: e.target.value }),
+      viewerHint: "Places a " + s.tool.toLowerCase() + " in " + (INK_NAMES[s.ink] || "red").toLowerCase() + " on the " + layerName + " layer",
+      viewerUndoMark: App.viewerUndoMark(), viewerClearPage: App.viewerClearPage(),
+      viewerThumbs: Array.from({ length: doc.page_count || 1 }, (x, i) => {
+        const page = i + 1;
+        const on = page === vwr.page;
+        const cmp = page === vwr.compare;
+        const n = all.filter((a) => a.page === page && (a.layer || "internal") === layer).length;
+        const att = picker && rec && (rec.attachments || []).some((a) => a.document_id === vwr.docId && a.page === page);
+        return {
+          num: String(page), current: on ? "true" : "false",
+          go: () => setState({ viewer: { ...App.state.viewer, page } }),
+          marks: n ? n + (n === 1 ? " mark" : " marks") : "", attached: !!att,
+          aria: "Page " + page + (n ? ", " + n + (n === 1 ? " mark" : " marks") : ", no marks") + (att ? ", attached to this package" : "") + (on ? ", showing now" : ""),
+          canvasId: "dw-thumb-" + vwr.docId + "-" + page,
+          style: "width:100%;text-align:left;padding:7px;border-radius:7px;border:1px solid " + (on ? "var(--ac)" : cmp ? "var(--bp)" : "var(--ln)") +
+            ";background:" + (on ? "var(--as)" : "var(--pn)"),
+        };
+      }),
+      viewerIsPicker: !!picker, viewerIsPlain: !picker,
+      viewerToggleAttach: App.viewerToggleAttach(),
+      viewerAttachLabel: picker && rec && (rec.attachments || []).some((a) => a.document_id === vwr.docId && a.page === vwr.page)
+        ? "Remove page " + vwr.page + " from the package" : "Attach page " + vwr.page + " to the package",
+      viewerAttachStyle: "min-height:var(--tap);padding:9px 15px;border-radius:6px;font:600 13px var(--fd);border:1px solid " +
+        (picker && rec && (rec.attachments || []).some((a) => a.document_id === vwr.docId && a.page === vwr.page)
+          ? "var(--ok);background:var(--oks);color:var(--ok)" : "var(--ln);background:var(--pn);color:var(--ink)"),
+      viewerDoneLabel: (() => {
+        const n = picker && rec ? (rec.attachments || []).filter((a) => a.document_id === vwr.docId).length : 0;
+        return "Done · " + n + (n === 1 ? " page attached" : " pages attached");
+      })(),
+      viewerFootnote: picker
+        ? "Marks you place here go on this record's own layer and travel with the package. The internal team layer stays in the building."
+        : layer === "internal"
+          ? "Marks go on the internal team layer. They stay in the building until a page is attached to an RFI or submittal, which carries its own separate layer."
+          : "You are marking this record's own layer — exactly what its outbound package carries. The internal team layer is separate and stays in the building.",
+    };
+  },
+
+  // Draw the PDF pages into the viewer's canvases after each render. morphdom
+  // keeps the canvas nodes, so a page draws once and survives re-renders; the
+  // token serialises renders per canvas (PDF.js refuses two at once).
+  async paintViewerCanvases() {
+    const vwr = this.state.viewer;
+    if (!vwr || typeof pdfjsLib === "undefined") return;
+    const doc = this.docById(vwr.docId);
+    if (!doc) return;
+    const pdf = await this.pdfDoc(vwr.docId).catch(() => null);
+    if (!pdf || this.state.viewer !== vwr) return;
+
+    const paint = async (canvasId, pageNo, scaleTo) => {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const want = pageNo + "@" + scaleTo;
+      if (canvas.dataset.rendered === want) return;
+      const token = (this._renderToken[canvasId] || 0) + 1;
+      this._renderToken[canvasId] = token;
+      const page = await pdf.getPage(pageNo);
+      if (this._renderToken[canvasId] !== token) return;
+      const vp0 = page.getViewport({ scale: 1 });
+      const scale = scaleTo / vp0.width;
+      const vp = page.getViewport({ scale: scale * (window.devicePixelRatio || 1) });
+      canvas.width = vp.width; canvas.height = vp.height;
+      // The sheet keeps the aspect ratio of the real page, not 17/11.
+      const holder = canvas.parentElement;
+      if (holder && holder.style.aspectRatio !== `${vp0.width} / ${vp0.height}`) {
+        holder.style.aspectRatio = `${vp0.width} / ${vp0.height}`;
+      }
+      // intent "print": the display intent is rAF-paced and hangs in a
+      // backgrounded tab (1.x lesson, kept).
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp, intent: "print" }).promise.catch(() => {});
+      canvas.dataset.rendered = want;
+    };
+
+    await paint("dw-canvas-a", vwr.page, 1400);
+    if (vwr.compare != null) await paint("dw-canvas-b", vwr.compare, 1400);
+    for (let p2 = 1; p2 <= (doc.page_count || 1); p2++) {
+      await paint("dw-thumb-" + vwr.docId + "-" + p2, p2, 150);
+      if (this.state.viewer !== vwr) return;
+    }
+  },
+});
+
+// docs detail drawer branch + viewer open from register
+(() => {
+  const base = App.buildDetail.bind(App);
+  App.buildDetail = function () {
+    const d = this.state.detail;
+    if (!d || d.kind !== "doc") return base();
+    const doc = App.docById(d.id);
+    if (!doc) return { detailOpen: "" };
+    const S = (id, title, rows) => ({ id: "ds-" + id, title, rows: rows.map(([label, value, note, style]) => ({ label, value, note: note || "", valueStyle: style || "" })) });
+    const btn2 = (label, kind, click) => ({ label, style: btn(kind), hoverClass: kind === "primary" ? "hb-ah" : "hb-ls", click: click || (() => {}) });
+    return {
+      detailOpen: true, detailHasItems: "", detailHasNotes: "", detailNotes: [],
+      detailKind: "Drawing set", detailTitle: doc.name,
+      detailStatus: doc.annotation_count ? "Marked" : "Clean",
+      detailStampStyle: stamp(doc.annotation_count ? "wn" : "ok"),
+      detailMeta: (doc.page_count || 0) + " pages · uploaded " + usDate(doc.uploaded_at),
+      detailSections: [
+        S("doc-file", "File", [["Name", doc.name], ["Pages", String(doc.page_count || 0)],
+          ["Uploaded", (doc.uploaded_by || "—") + " · " + usDate(doc.uploaded_at)],
+          ["Original", "Immutable — annotations never touch the file"]]),
+        S("doc-layers", "Layers", [["Internal team layer", (doc.annotation_count || 0) + " markups, stays in the building"]]),
+      ],
+      detailAudit: [{ what: "Uploaded, " + (doc.page_count || 0) + " pages", who: doc.uploaded_by || "—", when: usDate(doc.uploaded_at), color: "var(--ac)" }],
+      detailFootnote: "Sending a page composites the original plus one record layer. Internal redlines are never in an outbound package.",
+      detailActions: [
+        btn2("Close this panel", "ghost", App.closeDetail),
+        btn2("Remove this set", "ghost", () => { App.closeDetail(); App.deleteDocument(doc.id)(); }),
+        btn2("Open and mark up this set", "primary", () => { App.closeDetail(); App.openViewer(doc.id, 1, "markup", {})(); }),
+      ],
+    };
+  };
+})();
+
+// ————— weekly briefing (gap-build: real rows, PM-owned proposals) ———————————
+Object.assign(App, {
+  briefRow() { return this.state.data.briefing || {}; },
+
+  briefPersist: debounce(async () => {
+    const b = App.briefRow();
+    if (!b.id) return;
+    try {
+      const out = await api(`/api/briefings/${b.id}`, { method: "PATCH",
+        body: JSON.stringify({ blocks: b.blocks }) });
+      App.state.data.briefing = out;
+      setState({});
+    } catch (err) { setState({ live: "Could not save the briefing: " + err.message }); }
+  }, 700),
+
+  briefSetItem: (block, i, field) => (e) => {
+    const b = App.briefRow();
+    b.blocks[block][i][field] = e.target.value;
+    setState({});
+    App.briefPersist();
+  },
+  briefAddItem: (block) => () => {
+    const b = App.briefRow();
+    b.blocks[block] = (b.blocks[block] || []).concat([{ text: "", tag: "" }]);
+    setState({});
+  },
+  briefRemoveItem: (block, i) => () => {
+    const b = App.briefRow();
+    b.blocks[block] = b.blocks[block].filter((x, n) => n !== i);
+    setState({});
+    App.briefPersist();
+  },
+  briefReseed() {
+    const b = App.briefRow();
+    setState({
+      confirm: {
+        eyebrow: "Reseed the briefing", title: "Replace the blocks with fresh proposals",
+        body: "PlanWise rereads the registers and writes new proposed lines for the week.",
+        checks: [
+          ["warn", "Your edits", "Everything typed into the blocks is replaced. The registers themselves are untouched."],
+          ["pass", "The source", "Every proposed line traces to a register row — nothing is invented."],
+        ],
+        blocked: false,
+        verdict: "Reseeding is undoable — the reversal restores the blocks as they stand now.",
+        label: "Reseed from the registers",
+        run: async () => {
+          try {
+            const out = await api(`/api/briefings/${b.id}/reseed`, { method: "POST" });
+            App.state.data.briefing = out;
+            setState({ confirm: null });
+            App.act("The briefing was reseeded from the registers.", out.activity_id, ["briefing"]);
+          } catch (err) { setState({ confirm: null, live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  briefShare: (audience) => async () => {
+    const b = App.briefRow();
+    if (!b.id) return;
+    try {
+      const payload = await api(`/api/briefings/${b.id}/share?audience=${audience}`);
+      // The look ahead rides along, in the same audience's rendering — one
+      // email rather than two (and the customer copy is the stripped sheet).
+      const attachments = [];
+      try {
+        const la = App.laPeriod().id ? App.laPeriod() : await api(`/api/jobs/${encodeURIComponent(App.state.job)}/lookahead`);
+        const laShare = await api(`/api/lookahead/${la.id}/share?audience=${audience === "team" ? "team" : "customer"}&weeks=${la.weeks || 2}`);
+        if (laShare.pdf_b64) attachments.push({ filename: laShare.filename || "look-ahead.pdf", content_b64: laShare.pdf_b64 });
+      } catch (e2) {}
+      await companionFetch("/draft", { to: payload.to || "", subject: payload.subject,
+        html: payload.html, attachments, display: true });
+      const upd = await api(`/api/briefings/${b.id}`, { method: "PATCH", body: JSON.stringify({ status: "Sent" }) });
+      App.state.data.briefing = upd;
+      App.act(audience === "team"
+        ? "The internal briefing is drafted in Outlook with the full financial position. Address it before sending."
+        : "The customer briefing is drafted in Outlook. It carries status and narrative only — no cost, billing or margin figures.",
+        upd.activity_id, ["briefing"]);
+    } catch (err) {
+      if (isNetErr(err)) {
+        setState({ live: "No Outlook companion on this machine. Queue it from a desk that has one, or copy the briefing text by hand — the .eml route for briefings lands in v2.x." });
+      } else {
+        setState({ live: "The companion refused: " + err.message });
+      }
+    }
+  },
+
+  buildBrief() {
+    const s = this.state;
+    if (s.page !== "brief") return {};
+    const b = this.briefRow();
+    if (!b.id) return { hasBrief: false };
+    const jd = s.data.job || {};
+    const job = jd.job || {};
+    const cust = (s.briefAudience || "customer") === "customer";
+    const contacts = ((jd.meta || {}).contacts || []).filter((c) => c.email);
+    const meta = [
+      { key: "progress", title: "Progress this week", color: "var(--ok)", soft: "var(--oks)" },
+      { key: "risks", title: "What could move the finish date", color: "var(--wn)", soft: "var(--wns)" },
+      { key: "asks", title: cust ? "What we need from you" : "What we need from the customer", color: "var(--ac)", soft: "var(--as)" },
+    ];
+    return {
+      hasBrief: true,
+      briefWeekTitle: "Briefing · week of " + usDate(b.week_start) + (job.job_name ? " · " + job.job_name : ""),
+      briefByline: "Prepared " + usDate(b.created_at) + " by " + (b.created_by || "—") +
+        (cust ? " · this is what the customer receives" : " · internal only, never sent outside the firm"),
+      briefStatus: b.status || "Draft",
+      briefStampStyle: stamp(STATUS_TONE[b.status] || "wn"),
+      briefTabs: [["Customer copy", "customer"], ["Internal copy", "internal"]].map(([label, key]) => ({
+        label, pressed: (s.briefAudience || "customer") === key ? "true" : "false",
+        pick: () => setState({ briefAudience: key }), style: chip((s.briefAudience || "customer") === key) })),
+      briefNotice: cust
+        ? "The customer copy carries no cost, billing or margin figures. It states progress, status and what we need from them, and names an amount only where that amount has already been submitted on a change order."
+        : "The internal copy carries the full financial position, including anything that would damage the firm's position if it reached the customer. Check the recipient list before this leaves your outbox.",
+      briefNoticeStyle: "margin:10px 0 0;padding:10px 12px;border-radius:6px;font-size:12.5px;text-wrap:pretty;border:1px solid " +
+        (cust ? "var(--ln)" : "var(--er)") + ";background:" + (cust ? "var(--p2)" : "var(--ers)") + ";color:" + (cust ? "var(--mu)" : "var(--er)"),
+      briefBlocks: meta.map((m) => ({
+        id: "bb-" + m.key, title: m.title, color: m.color, soft: m.soft,
+        items: (b.blocks[m.key] || []).map((it, i) => ({
+          text: it.text || "", tag: it.tag || "",
+          setText: App.briefSetItem(m.key, i, "text"),
+          setTag: App.briefSetItem(m.key, i, "tag"),
+          remove: App.briefRemoveItem(m.key, i),
+          textId: "bf-" + m.key + "-" + i,
+        })),
+        add: App.briefAddItem(m.key),
+      })),
+      briefSign: (b.blocks.signature || []).filter((it) => cust ? !/exposure/i.test(it.tag || "") : true)
+        .map((it) => ({ what: it.text || "", state: it.tag || "", color: /exposure|open/i.test(it.tag || "") ? "var(--er)" : "var(--bp)" })),
+      briefFinancials: !cust ? [
+        ["Current contract", money(job.current_contract)],
+        ["Billed to date", money(job.actual_billed)],
+        ["Cost to date", money(job.actual_cost)],
+        ["Projected at completion", money(job.projected_cost)],
+      ].map(([label, value]) => ({ label, value })) : [],
+      briefAtt: [
+        { kind: "PDF", name: "Look ahead (" + (cust ? "customer copy" : "internal, with tools and material") + ").pdf" },
+      ],
+      briefRecipients: cust
+        ? contacts.map((c) => ({ name: c.name || c.email, email: c.email,
+            gets: "Customer copy — no cost or margin figures", color: "var(--bp)", soft: "var(--bps)" }))
+        : [{ name: "Addressed in Outlook", email: "The internal copy opens unaddressed — you choose the team it goes to.",
+            gets: "Internal copy — full financial position", color: "var(--ac)", soft: "var(--as)" }],
+      noRecipients: cust && contacts.length === 0,
+      briefReseed: () => App.briefReseed(),
+      briefSend: App.briefShare(cust ? "customer" : "team"),
+      briefSendLabel: cust ? "Draft the customer email in Outlook" : "Draft the internal email in Outlook",
+    };
+  },
+});

@@ -279,6 +279,107 @@ def outlook_is_open() -> bool:
     return bool(found)
 
 
+def _outlook_window_pid() -> int | None:
+    """PID of the visible Outlook window, or None. Same enum as
+    outlook_is_open(), kept separate so that hot path stays a bool."""
+    try:
+        user32 = ctypes.windll.user32
+    except Exception:  # noqa: BLE001
+        return None
+    user32.IsWindowVisible.argtypes = [ctypes.c_void_p]
+    user32.IsWindowVisible.restype = ctypes.c_bool
+    user32.GetClassNameW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_int]
+    user32.GetClassNameW.restype = ctypes.c_int
+    user32.EnumWindows.argtypes = [_ENUM_PROC, ctypes.c_void_p]
+    user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
+
+    pids: list[int] = []
+    name = ctypes.create_unicode_buffer(64)
+
+    def visit(hwnd, _lparam):
+        if user32.IsWindowVisible(hwnd):
+            user32.GetClassNameW(hwnd, name, 64)
+            if name.value == _OUTLOOK_WINDOW_CLASS:
+                pid = ctypes.c_ulong()
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                pids.append(pid.value)
+                return False
+        return True
+
+    try:
+        user32.EnumWindows(_ENUM_PROC(visit), None)
+    except Exception:  # noqa: BLE001
+        return None
+    return pids[0] if pids else None
+
+
+def _process_is_elevated(pid: int | None) -> bool | None:
+    """True/False for the process's admin elevation, None when unknowable.
+
+    Why the companion cares: COM cannot cross the elevation boundary. When
+    Outlook runs "as administrator" and the companion does not, Dispatch
+    cannot attach to it — Windows tries to START a second, normal-level
+    Outlook instead, and Outlook's single-instance rule answers with the
+    modal "Only one version of Outlook can run at a time". Seen live
+    2026-08-20: Outlook open on Drafts, dialog on every draft attempt.
+    Detecting the mismatch FIRST means the user gets a sentence naming the
+    fix, and the OS dialog is never provoked.
+
+    An access-denied on the token read is itself the answer: a normal
+    process can read a normal same-user process's token; being refused is
+    the elevated case wearing its uniform.
+    """
+    if pid is None:
+        return None
+    try:
+        kernel32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
+    except Exception:  # noqa: BLE001
+        return None
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    TOKEN_QUERY, TokenElevation = 0x0008, 20
+    h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not h:
+        return True  # cannot even open with the limited right: elevated
+    try:
+        tok = ctypes.c_void_p()
+        if not advapi32.OpenProcessToken(h, TOKEN_QUERY, ctypes.byref(tok)):
+            return True  # token refused to a same-user caller: elevated
+        try:
+            info = ctypes.c_ulong()
+            ret = ctypes.c_ulong()
+            if not advapi32.GetTokenInformation(tok, TokenElevation,
+                                                ctypes.byref(info), 4,
+                                                ctypes.byref(ret)):
+                return None
+            return bool(info.value)
+        finally:
+            kernel32.CloseHandle(tok)
+    finally:
+        kernel32.CloseHandle(h)
+
+
+def _self_is_elevated() -> bool:
+    try:
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _outlook_process_exists() -> bool:
+    """Any OUTLOOK.EXE process, window or not — the starting/closing states
+    a window probe cannot see."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq OUTLOOK.EXE", "/NH"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return "OUTLOOK.EXE" in (out.stdout or "")
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _make_visible(app_) -> None:
     """Never leave a headless Outlook behind.
 
@@ -338,12 +439,40 @@ def _outlook(start_if_needed: bool = False):
             "Outlook isn't open on this PC. Open Outlook and PlanWise will "
             "pick up from there."))
 
+    if running and not _self_is_elevated() \
+            and _process_is_elevated(_outlook_window_pid()) is True:
+        # Dispatching here would not attach — it would provoke the OS's
+        # "Only one version of Outlook can run at a time" dialog. Refuse
+        # with the fix instead (see _process_is_elevated).
+        raise HTTPException(status_code=503, detail=(
+            "Outlook is open but running as administrator, and Windows "
+            "blocks the companion from reaching an elevated program. Close "
+            "Outlook and reopen it normally — from the Start menu or "
+            "taskbar, without 'Run as administrator'."))
+
+    if not running and _outlook_process_exists():
+        # Outlook's process exists with no visible window: it is starting
+        # up or shutting down. Dispatching NOW races that transition and
+        # loses (a second OUTLOOK.EXE, refused by the single-instance
+        # rule — seen live 2026-08-20, a draft clicked 47 seconds into
+        # Outlook's start). The state is short; wait for the window.
+        for _ in range(10):
+            time.sleep(2)
+            if outlook_is_open():
+                running = True
+                break
+
     try:
         app_ = win32com.client.Dispatch("Outlook.Application")
     except Exception as exc:  # noqa: BLE001 — surfaced honestly to the UI
+        hint = ("An Outlook process exists but would not take the "
+                "connection — it may be mid-start, mid-exit, or running "
+                "as administrator. Give it a few seconds, or close and "
+                "reopen Outlook normally, then try again."
+                if _outlook_process_exists()
+                else "Open classic Outlook and try again.")
         raise HTTPException(status_code=503, detail=(
-            f"Desktop Outlook is not reachable via COM: {exc}. "
-            "Open classic Outlook and try again.")) from exc
+            f"Desktop Outlook is not reachable via COM: {exc}. {hint}")) from exc
 
     if not running:
         _make_visible(app_)

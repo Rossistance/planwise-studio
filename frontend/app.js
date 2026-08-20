@@ -27,7 +27,8 @@ const App = {
     loading: {},
 
     // — rail
-    railPin: "open", railHover: false,
+    railPin: (() => { try { const v = localStorage.getItem("pw.railPin"); return v === "open" || v === "closed" || v === "auto" ? v : "open"; } catch (e) { return "open"; } })(),
+    railHover: false,
     jobsOpen: false, jobQuery: "", jobHits: [],
 
     // — header / search
@@ -349,19 +350,24 @@ const App = {
     if (App.state.railPin !== "auto") return;
     App._railT = setTimeout(() => setState({ railHover: false, jobsOpen: false }), 380);
   },
-  toggleRail() {
+  pinRail: (next) => () => {
     clearTimeout(App._railT);
-    const s = App.state;
-    if (s.railPin === "auto") {
-      const railPin = s.railHover ? "open" : "closed";
-      try { localStorage.setItem("pw.railPin", railPin); } catch (e) {}
-      setState({ railPin, railHover: false, jobsOpen: false,
-        live: railPin === "open" ? "Rail pinned open." : "Rail pinned closed. It stays as icons until you unpin it." });
-      return;
+    try { localStorage.setItem("pw.railPin", next); } catch (e) {}
+    setState({ railPin: next, jobsOpen: false,
+      railHover: next === "auto" ? App.state.railPin === "open" : false,
+      live: next === "open" ? "Rail pinned open."
+        : next === "closed" ? "Rail pinned closed. It stays as icons until you unpin it."
+        : "Rail unpinned. It opens when you point at it and closes when you leave." });
+  },
+
+  // The collapsed job button: open the rail to switch jobs, without leaving
+  // it stuck open — a closed pin softens to auto so it tucks away after.
+  expandRail() {
+    clearTimeout(App._railT);
+    if (App.state.railPin === "closed") {
+      try { localStorage.setItem("pw.railPin", "auto"); } catch (e) {}
     }
-    try { localStorage.setItem("pw.railPin", "auto"); } catch (e) {}
-    setState({ railPin: "auto", railHover: s.railPin === "open", jobsOpen: false,
-      live: "Rail unpinned. It opens when you point at it and closes when you leave." });
+    setState({ railPin: App.state.railPin === "open" ? "open" : "auto", railHover: true });
   },
 
   openJobs() { setState({ jobsOpen: true }); App.searchJobs(App.state.jobQuery); },
@@ -581,9 +587,9 @@ Object.assign(App, {
       const openTotal = tot("open_committed"), uncTotal = tot("approved_no_po");
       const estTotal = tot("current_estimate"), actTotal = tot("actual_cost");
       return { title: "Cost by type", source: "Source: Vista, as of " + usDate(jd.as_of), kind: "cost",
-        caption: "Estimate, month to date, actual cost, open committed cost, approved work with no purchase order, committed total, share committed, projection and variance for each cost type on job " + s.job + ". Select a cost type to audit its phase codes and commitments.",
+        caption: "Estimate, cost this month, actual cost, open purchase order commitments, approved work with no purchase order, committed total, share of estimate committed, projection and variance for each cost type on job " + s.job + ". Select a cost type to audit its phase codes and commitments.",
         footnote: "Estimate, month to date, actual and projected come from the nightly Vista extract. Open committed is recalculated from this job's purchase order register — the remaining amount on every open order, grouped by cost type — so the two screens can never disagree. Approved work with no purchase order is counted separately because it is exposure, not a commitment: nothing has been ordered against it yet.",
-        columns: [["Cost type", 0, 1], ["Estimate", 1, 1], ["Month to date", 1, 1], ["Actual to date", 1, 1], ["Open committed", 1, 1], ["Approved, no PO", 1, 1], ["Committed total", 1, 1], ["Committed of estimate", 0, 1], ["Projected", 1, 1], ["Variance", 1, 1]],
+        columns: [["Cost type", 0, 1], ["Estimate", 1, 1], ["This month", 1, 1], ["Actual", 1, 1], ["Open PO", 1, 1], ["No PO", 1, 1], ["Committed", 1, 1], ["Of estimate", 0, 1], ["Projected", 1, 1], ["Variance", 1, 1]],
         rows, total: ["All cost types", [money(estTotal), money(tot("mtd_cost")), money(actTotal), money(openTotal), uncTotal ? money(uncTotal) : "none", money(actTotal + openTotal),
           estTotal ? ((actTotal + openTotal) / estTotal * 100).toFixed(1) + "% committed" : "",
           money(tot("projected_cost")), signed(estTotal - actTotal === 0 ? 0 : tot("variance"))]] };
@@ -635,7 +641,7 @@ Object.assign(App, {
     if (!spec) return { hasRegister: "" };
     const s = this.state;
     const align = (right) => right ? ";text-align:right;font-variant-numeric:tabular-nums" : "";
-    const colStyle = (right) => "padding:10px 16px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ln);white-space:nowrap;text-align:" + (right ? "right" : "left");
+    const colStyle = (right) => "padding:9px 10px;font:500 var(--lbl) var(--fm);letter-spacing:.09em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ln);white-space:nowrap;text-align:" + (right ? "right" : "left");
 
     let rows = spec.rows.slice();
     const si = s.regSort.col;
@@ -670,14 +676,14 @@ Object.assign(App, {
       regRows: rows.map((r) => Object.assign({ hasSched: "", schedIdx: "", peekOpen: "" }, r.sched || {}, {
         rowStyle: (r.sched && s.schedDrag && s.schedDrag.kind === "row" && String(s.schedDrag.over) === r.sched.schedIdx && String(s.schedDrag.index) !== r.sched.schedIdx ? "background:var(--bps);box-shadow:inset 0 2px 0 var(--bp)" : "") +
           (r.sched && s.schedDrag && s.schedDrag.kind === "row" && String(s.schedDrag.index) === r.sched.schedIdx ? "opacity:.55;background:var(--p2)" : ""),
-        headStyle: "text-align:left;font-weight:600;padding:var(--cellY) 16px;border-bottom:1px solid var(--ln);max-width:320px" +
+        headStyle: "text-align:left;font-weight:600;padding:var(--cellY) 10px;border-bottom:1px solid var(--ln);max-width:320px" +
           (r.edge ? ";border-left:3px solid " + r.edge : ""),
         key: r.key, keySub: r.keySub, open: App.openDetail(spec.kind, r.id),
         cells: r.cells.map((c) => ({
           isStamp: c.kind === "stamp", isBar: c.kind === "bar", isPlain: c.kind === "plain",
           text: c.text, stampStyle: c.kind === "stamp" ? stamp(STATUS_TONE[c.text] || "nt") : "",
           barW: (c.w || 0).toFixed(0) + "%", barColor: c.color || "var(--bp)",
-          style: "padding:var(--cellY) 16px;border-bottom:1px solid var(--ln)" + align(c.right) +
+          style: "padding:var(--cellY) 10px;border-bottom:1px solid var(--ln)" + align(c.right) +
             (c.color && c.kind === "plain" ? ";color:" + c.color : "") + (c.muted ? ";color:var(--ft);font-style:italic" : ""),
         })),
       })),
@@ -688,7 +694,7 @@ Object.assign(App, {
       // The prototype's totals-row alignment was off by one (its arrays
       // skipped column 0 but aligned from column 1); here the cells align to
       // the columns they actually sit under.
-      regTotalCells: spec.total ? spec.total[1].map((t, i) => ({ text: t, style: "padding:12px 16px;font:600 var(--fz) var(--fd);border-top:1px solid var(--ls);font-variant-numeric:tabular-nums;text-align:" + (spec.columns[i + 1] && spec.columns[i + 1][1] ? "right" : "left") })) : [],
+      regTotalCells: spec.total ? spec.total[1].map((t, i) => ({ text: t, style: "padding:12px 10px;font:600 var(--fz) var(--fd);border-top:1px solid var(--ls);font-variant-numeric:tabular-nums;text-align:" + (spec.columns[i + 1] && spec.columns[i + 1][1] ? "right" : "left") })) : [],
     };
   },
 
@@ -1090,7 +1096,7 @@ Object.assign(App, {
     const navGroups = NAV.map(([label, ab, items], gi) => ({
       id: "nav-group-" + gi,
       label: wide ? label : ab,
-      groupStyle: wide ? "margin-bottom:8px" : "margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--ln)",
+      groupStyle: wide ? "margin-bottom:6px" : "margin-bottom:4px;padding-bottom:4px;border-bottom:1px solid var(--ln)",
       headStyle: wide
         ? "margin:0;padding:4px 10px 2px;font:500 var(--lbl) var(--fm);letter-spacing:.18em;text-transform:uppercase;color:var(--ft);text-align:left"
         : "margin:0;padding:0 0 4px;font:600 8px var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft);text-align:center",
@@ -1098,20 +1104,20 @@ Object.assign(App, {
         const on = key === s.page;
         const badge = badgeCounts[badgeKey] !== undefined ? badgeCounts[badgeKey] : badgeKey;
         return {
-          label: lbl, icon: ICONS[key], showLabel: wide, showIcon: !wide,
+          label: lbl, icon: ICONS[key], showLabel: wide, showIcon: true,
           badge: badge || "",
           aria: badge ? lbl + ", " + badge + " needing attention" : lbl,
           current: on ? "page" : "false",
           go: App.go(key),
           style: wide
-            ? "width:100%;min-height:30px;display:flex;align-items:center;gap:9px;padding:5px 10px;border-radius:6px;font:600 13px var(--fd);letter-spacing:.02em;text-align:left;position:relative;color:" +
+            ? "width:100%;min-height:30px;display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;font:600 13px var(--fd);letter-spacing:.02em;text-align:left;position:relative;color:" +
               (on ? "var(--ink)" : "var(--mu)") + ";background:" + (on ? "var(--as)" : "transparent")
-            : "width:100%;min-height:34px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:4px 2px;border-radius:7px;position:relative;color:" +
+            : "width:100%;min-height:30px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;padding:3px 2px;border-radius:7px;position:relative;color:" +
               (on ? "var(--ac)" : "var(--mu)") + ";background:" + (on ? "var(--as)" : "transparent") + ";border:1px solid " + (on ? "var(--ac)" : "transparent"),
           edge: wide
             ? "width:3px;height:16px;border-radius:2px;flex:none;background:" + (on ? "var(--ac)" : "transparent")
             : "display:none",
-          iconStyle: "width:19px;height:19px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round",
+          iconStyle: "width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round",
           badgeStyle: wide
             ? "font:600 10px var(--fm);min-width:19px;text-align:center;padding:3px 6px;border-radius:999px;background:var(--er);color:#fff"
             : "position:absolute;top:1px;right:3px;font:700 9px var(--fm);min-width:15px;text-align:center;padding:1px 4px;border-radius:999px;background:var(--er);color:#fff;box-shadow:0 0 0 2px var(--pn)",
@@ -1153,16 +1159,23 @@ Object.assign(App, {
       railStyle: "border-right:1px solid var(--ln);background:var(--pn);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:40;overflow:hidden;transition:width .36s " +
         (wide ? "cubic-bezier(.3,1.36,.4,1)" : "cubic-bezier(.4,.08,.16,1)") + ",box-shadow .32s ease" +
         (s.railPin === "open" ? ";width:" + RAIL_W + "px" : ";width:" + (wide ? RAIL_W : RAIL_N) + "px;box-shadow:" + (wide ? "var(--shp)" : "none")),
-      toggleRail: App.toggleRail,
-      brandRowStyle: "height:50px;display:flex;align-items:center;gap:" + (wide ? "8px" : "0") + ";padding:0 " + (wide ? "8px 0 6px" : "0") +
-        ";border-bottom:1px solid var(--ln);flex:none;position:relative;justify-content:" + (wide ? "flex-start" : "center"),
+      railPinGo: wide
+        ? App.pinRail(s.railPin === "open" ? "closed" : "open")
+        : App.pinRail(s.railPin === "closed" ? "auto" : "closed"),
+      expandRail: () => App.expandRail(),
+      brandRowStyle: wide
+        ? "height:50px;display:flex;align-items:center;gap:8px;padding:0 8px 0 6px;border-bottom:1px solid var(--ln);flex:none;position:relative;justify-content:flex-start"
+        : "display:flex;flex-direction:column;align-items:center;gap:3px;padding:6px 0 5px;border-bottom:1px solid var(--ln);flex:none;position:relative",
       railPinnedAria: s.railPin !== "auto" ? "true" : "false",
-      railPinAria: s.railPin === "open"
-        ? "Rail pinned open. Select to unpin it, so it opens when you point at it and closes when you leave."
-        : s.railPin === "closed"
-        ? "Rail pinned closed. Select to unpin it, so it opens when you point at it."
-        : "Rail unpinned. Select to pin it open.",
-      railPinStyle: "margin-left:auto;margin-right:2px;flex:none;width:22px;height:22px;display:grid;place-content:center;border-radius:5px;border:1px solid " +
+      railPinAria: wide
+        ? (s.railPin === "open"
+          ? "Rail pinned open. Select to pin it closed — icons only, no opening as you point at it."
+          : "Rail unpinned. Select to pin it open.")
+        : (s.railPin === "closed"
+          ? "Rail pinned closed. Select to unpin it, so it opens when you point at it."
+          : "Select to pin the rail closed — icons only."),
+      railPinStyle: (wide ? "margin-left:auto;margin-right:2px;width:22px;height:22px;" : "width:20px;height:20px;") +
+        "flex:none;display:grid;place-content:center;border-radius:5px;border:1px solid " +
         (s.railPin === "auto" ? "transparent" : "var(--ac)") + ";background:" + (s.railPin === "auto" ? "transparent" : "var(--as)") +
         ";color:" + (s.railPin === "auto" ? "var(--ft)" : "var(--ac)"),
       railPinIconStyle: "width:15px;height:15px;display:block;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round",

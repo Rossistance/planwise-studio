@@ -867,14 +867,24 @@ def get_job(job_number: str):
 
 
 def _capture_history(snap) -> None:
-    """One vista_history row per job per extract date, idempotent.
+    """vista_history rows per job per extract, idempotent.
 
     The Vista snapshot has no time axis; the dashboard's cost curve must plot
-    real history or nothing. Each push appends today's figures, and UNIQUE
-    (job_number, as_of) makes a re-push of the same extract a no-op rather
+    real history or nothing. Each load appends today's figures, and UNIQUE
+    (job_number, as_of) makes a re-read of the same extract a no-op rather
     than a duplicate point.
+
+    One more point is DERIVED, not invented: the extract carries month-to-date
+    figures, so JTD minus MTD is Vista's own number for where the job stood at
+    the start of the extract's month. That row is stored against the first of
+    the month with projected/estimate left NULL (those are today's views, not
+    that day's), which is also how the chart tells a derived point from a
+    landed extract. Every month boundary the extract crosses accrues another
+    real point this way.
     """
     as_of = snap.as_of.isoformat() if snap.as_of else db.now()[:10]
+    month_start = (snap.as_of.date() if hasattr(snap.as_of, "date") else None)
+    month_start = month_start.replace(day=1).isoformat() if month_start else as_of[:8] + "01"
     conn = db.connect()
     for num, rec in snap.jobs.items():
         conn.execute(
@@ -884,6 +894,18 @@ def _capture_history(snap) -> None:
             (as_of, num, rec.get("actual_cost"), rec.get("projected_cost"),
              rec.get("current_estimate"), rec.get("actual_billed"),
              rec.get("pct_complete"), db.now()))
+        mtd = rec.get("mtd_cost")
+        jtd = rec.get("actual_cost")
+        if mtd is None or jtd is None or month_start >= as_of[:10]:
+            continue
+        billed, mtd_billed = rec.get("actual_billed"), rec.get("mtd_billed")
+        conn.execute(
+            "INSERT OR IGNORE INTO vista_history (as_of, job_number, actual_cost,"
+            " projected_cost, current_estimate, actual_billed, pct_complete, captured_at)"
+            " VALUES (?,?,?,NULL,NULL,?,NULL,?)",
+            (month_start, num, jtd - mtd,
+             billed - mtd_billed if billed is not None and mtd_billed is not None else None,
+             db.now()))
     conn.commit()
 
 

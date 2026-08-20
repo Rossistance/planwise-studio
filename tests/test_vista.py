@@ -16,8 +16,11 @@ from backend import vista
 def isolate(tmp_path, monkeypatch):
     monkeypatch.setenv("PLANWISE_DATA_DIR", str(tmp_path / "data"))
     vista._cached = None
+    from backend import db
+    db.reset_for_tests()
     yield
     vista._cached = None
+    db.reset_for_tests()
 
 
 def build_workbook(path, *, jobs=None, phases=None, as_of="2026-08-08T07:17:23-04:00",
@@ -239,3 +242,48 @@ def test_job_numbers_sort_naturally(tmp_path, monkeypatch):
     p = build_workbook(tmp_path / "sort.xlsx", jobs=rows)
     monkeypatch.setenv("PLANWISE_VISTA_WORKBOOK", str(p))
     assert vista.job_numbers(vista.load()) == ["1", "2", "2-017", "10", "24-003"]
+
+
+def test_the_forecast_backfills_month_start_from_vistas_own_mtd(tmp_path, monkeypatch):
+    """JTD minus MTD is Vista's own number for where the job stood at the
+    start of the extract's month — a derived point, never an invented one.
+    It is stored with projected/estimate NULL (today's views, not that
+    day's), which is also how the chart tells it apart."""
+    p = build_workbook(tmp_path / "v2.xlsx", v2=True,
+                       v2_job_extra=[125877.8, 2951.5, 300000.0, 0],
+                       as_of="2026-08-18T06:30:00-04:00")
+    monkeypatch.setenv("PLANWISE_VISTA_WORKBOOK", str(p))
+    from backend import app as app_module
+    from backend import db
+
+    snap = vista.load()
+    app_module._capture_history(snap)
+    conn = db.connect()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM vista_history WHERE job_number = '24-003' ORDER BY as_of")]
+    assert len(rows) == 2, rows
+    first, last = rows
+    assert first["as_of"] == "2026-08-01"
+    assert first["actual_cost"] == pytest.approx(4897552.64 - 125877.8)
+    assert first["actual_billed"] == pytest.approx(5859364 - 300000.0)
+    assert first["projected_cost"] is None and first["current_estimate"] is None
+    assert last["as_of"].startswith("2026-08-18")
+    assert last["actual_cost"] == pytest.approx(4897552.64)
+
+    # Re-reading the same extract adds nothing — both rows are idempotent.
+    app_module._capture_history(snap)
+    n = conn.execute("SELECT COUNT(*) AS c FROM vista_history").fetchone()["c"]
+    assert n == 2
+
+
+def test_a_v1_workbook_with_no_mtd_backfills_nothing(workbook):
+    """A stale schema-v1 extract has no month-to-date figures; the curve gets
+    only the landed point — never a guess."""
+    from backend import app as app_module
+    from backend import db
+
+    snap = vista.load()
+    app_module._capture_history(snap)
+    conn = db.connect()
+    n = conn.execute("SELECT COUNT(*) AS c FROM vista_history").fetchone()["c"]
+    assert n == 1

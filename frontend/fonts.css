@@ -1,11 +1,15 @@
-/* Self-hosted webfonts — vendored from Google Fonts (latin subset), same policy as vendor/pdfjs:
-   the app must carry no runtime font dependency behind the corporate proxy. Families and weights
-   are exactly the prototype's <link>: Barlow Semi Condensed 500/600/700 (static files — Google
-   serves this family as per-weight statics), Archivo 400–700 and JetBrains Mono 400–700 (one
-   variable file each — Google served the same variable woff2 for every requested weight, verified
-   by identical hashes). unicode-range matches Google's latin subset so fallbacks cover the rest. */
-@font-face{font-family:'Barlow Semi Condensed';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/BarlowSemiCondensed-500.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
-@font-face{font-family:'Barlow Semi Condensed';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/BarlowSemiCondensed-600.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
-@font-face{font-family:'Barlow Semi Condensed';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/BarlowSemiCondensed-700.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
-@font-face{font-family:'Archivo';font-style:normal;font-weight:400 700;font-display:swap;src:url('fonts/Archivo-var.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
-@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400 700;font-display:swap;src:url('fonts/JetBrainsMono-var.woff2') format('woff2');unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;}
+/* PlanWise Sans — the product's own face, built 2026-08-20 to the owner's
+   verdict ("too thin, looks techy like code; smooth, not pixelated").
+   Derived from Rubik (SIL OFL 1.1, fonts/OFL.txt): each CSS weight is a
+   static instance cut ~50 units HEAVIER than convention (400→470, 500→570,
+   600→650, 700→770), renamed as the OFL provides for modified versions.
+   Rounded terminals give the smoothness; the extra weight kills the
+   thinness; it replaces the mono face everywhere, so nothing reads as code.
+   Digits are TABULAR BY CONSTRUCTION — the build remaps the digit
+   codepoints to the tnum glyphs — because the app styles through the font:
+   shorthand, which resets any CSS-level feature toggle. Money columns align
+   with no CSS at all. */
+@font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/PlanWiseSans-400.woff2') format('woff2');}
+@font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/PlanWiseSans-500.woff2') format('woff2');}
+@font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/PlanWiseSans-600.woff2') format('woff2');}
+@font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/PlanWiseSans-700.woff2') format('woff2');}

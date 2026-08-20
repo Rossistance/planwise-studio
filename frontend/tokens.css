@@ -16,18 +16,17 @@
   --ok:#1B6B3D; --oks:#E4F0E8; --wn:#7A5100; --wns:#F7EEDA;
   --er:#A9291D; --ers:#F9E8E5; --nt:#5C636A; --nts:#EDECE7;
   --vi:#5B3A8E; --vis:#EDE7F5;
-  /* Typography verdict overturned by the product owner on seeing it live
-     (2026-08-19): the design canvas never actually loaded the spec'd
-     webfonts — its sandbox blocked Google Fonts — so the "prototype look"
-     Ross approved was the FALLBACK stack: Segoe UI Semibold display,
-     Segoe UI body, Cascadia Mono data. Measured proof: canvas metrics for
-     Archivo/Barlow/JetBrains were identical in the prototype tab and the
-     app tab, yet he read the webfonts as "typewriter" against what he
-     remembered. The families below are what he saw and signed off. The
-     spec'd webfonts remain vendored in fonts/ should the verdict change. */
-  --fd:'Segoe UI Semibold','Bahnschrift','Segoe UI',system-ui,sans-serif;
-  --fb:'Segoe UI',system-ui,-apple-system,sans-serif;
-  --fm:'Cascadia Mono',Consolas,'SF Mono',monospace;
+  /* Type history, three verdicts deep:
+     (2.0.0) spec'd webfonts (Barlow/Archivo/JetBrains) — read as
+     "typewriter, robotic". (2026-08-19) system stack — the fallback the
+     design canvas had really shown; read as "too thin, techy like code".
+     (2026-08-20) PlanWise Sans — the product's own face, cut from Rubik
+     ~50 units heavier per weight (fonts.css has the build note). One family
+     fills all three roles: the mono face is gone on purpose, that was the
+     "code" look. Digits are tabular in the font itself, not via a mono face. */
+  --fd:'PlanWise Sans','Segoe UI Semibold','Segoe UI',system-ui,sans-serif;
+  --fb:'PlanWise Sans','Segoe UI',system-ui,-apple-system,sans-serif;
+  --fm:'PlanWise Sans','Segoe UI',system-ui,sans-serif;
   --sh:0 1px 2px rgba(24,27,30,.05),0 8px 24px rgba(24,27,30,.06);
   --shp:0 18px 50px rgba(24,27,30,.20);
   --rowY:12px; --cellY:11px; --tap:36px; --fz:13.5px; --fzs:12.5px; --lbl:9.5px; --h1:21px;
@@ -48,6 +47,9 @@
 [data-mode="field"]{ --rowY:17px; --cellY:16px; --tap:48px; --fz:16px; --fzs:15px; --lbl:11px; --h1:25px; --mu:#33393F; --ft:#4A5158; }
 [data-theme="dark"][data-mode="field"]{ --mu:#D2D7DC; --ft:#B4BBC1; }
 *,*::before,*::after{box-sizing:border-box}
+/* Tabular figures need no CSS: PlanWise Sans carries them by construction
+   (digit codepoints remapped to the tabular glyphs at build) because the
+   templates' font: shorthand resets every CSS feature toggle. */
 html,body{height:100%}
 input,select,textarea{max-width:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:var(--fz)/1.5 var(--fb);-webkit-font-smoothing:antialiased}

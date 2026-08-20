@@ -128,15 +128,15 @@ function uiLogin(v) {
 function uiRail(v) {
   return `<div id="pw-rail" style="${v.railStyle}">
     <div style="${v.brandRowStyle}">
-      ${logoSvg(26)}
+      ${logoSvg(v.railWide ? 26 : 22)}
       ${v.railWide ? wordmark(19) : ""}
-      ${v.railWide ? `<button data-click="${H(v.toggleRail)}" aria-pressed="${v.railPinnedAria}" aria-label="${esc(v.railPinAria)}" title="${esc(v.railPinAria)}" class="ht-ac" style="${v.railPinStyle}">
-          <svg aria-hidden="true" viewBox="0 0 24 24" style="${v.railPinIconStyle}">
-            <path d="M9.5 3.5h5l-1 5.5 3.2 3.2H6.3L9.5 9z" fill="${v.railPinFill}"></path>
-            <path d="M12 12.2V20.5" fill="none"></path>
-            <path d="${v.railPinSlash}" fill="none" stroke-width="2.1"></path>
-          </svg>
-        </button>` : ""}
+      <button data-click="${H(v.railPinGo)}" aria-pressed="${v.railPinnedAria}" aria-label="${esc(v.railPinAria)}" title="${esc(v.railPinAria)}" class="ht-ac" style="${v.railPinStyle}">
+        <svg aria-hidden="true" viewBox="0 0 24 24" style="${v.railPinIconStyle}">
+          <path d="M9.5 3.5h5l-1 5.5 3.2 3.2H6.3L9.5 9z" fill="${v.railPinFill}"></path>
+          <path d="M12 12.2V20.5" fill="none"></path>
+          <path d="${v.railPinSlash}" fill="none" stroke-width="2.1"></path>
+        </svg>
+      </button>
     </div>
 
     <div style="${v.jobCardWrap}">
@@ -148,7 +148,7 @@ function uiRail(v) {
             <input id="job-picker" type="text" data-ref="job" value="${esc(v.jobQuery)}" data-input="${H(v.onJobQuery)}" data-focus="${H(v.openJobs)}" aria-expanded="${v.jobsExpanded}" aria-controls="job-list" aria-describedby="job-picker-hint" autocomplete="off" placeholder="${esc(v.jobPlaceholder)}" class="fj" style="${v.jobInputStyle}">
             <span id="job-picker-hint" class="sr">Type a job number or name to search your recent jobs, or leave it empty to see them all.</span>
           </div>
-        </div>` : `<button data-click="${H(v.toggleRail)}" aria-label="Current job ${esc(v.jobCurrentNum)}, ${esc(v.jobCurrentName)}. Expand the rail to switch jobs." title="Job ${esc(v.jobCurrentNum)} · ${esc(v.jobCurrentName)}" class="hb-as" style="width:100%;min-height:38px;border:1px solid var(--ln);border-radius:7px;background:var(--p2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 0">
+        </div>` : `<button data-click="${H(v.expandRail)}" aria-label="Current job ${esc(v.jobCurrentNum)}, ${esc(v.jobCurrentName)}. Expand the rail to switch jobs." title="Job ${esc(v.jobCurrentNum)} · ${esc(v.jobCurrentName)}" class="hb-as" style="width:100%;min-height:38px;border:1px solid var(--ln);border-radius:7px;background:var(--p2);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px 0">
           <span aria-hidden="true" style="font:500 8px var(--fm);letter-spacing:.1em;text-transform:uppercase;color:var(--ft);white-space:nowrap">Job</span>
           <span aria-hidden="true" style="font:700 11px var(--fm);letter-spacing:0;color:var(--ac);white-space:nowrap">${esc(v.jobCurrentNum.split(" ")[0])}</span>
         </button>`}

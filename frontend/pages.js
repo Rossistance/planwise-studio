@@ -59,6 +59,7 @@ function pageDash(v) {
         <div style="padding:16px 16px 10px">
           ${v.forecastSvg}
         </div>
+        ${v.fcDerivedNote ? `<p style="margin:0;padding:0 16px 10px;font-size:11.5px;color:var(--ft);text-wrap:pretty">${esc(v.fcDerivedNote)}</p>` : ""}
         <dl style="margin:0;display:flex;border-top:1px solid var(--ln)">
           <div style="flex:1;padding:11px 16px;border-right:1px solid var(--ln)">
             <dt style="font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">Projected at completion</dt>
@@ -268,6 +269,9 @@ function buildPageVals(app) {
     out.fcAgainst = signed(against);
     out.fcAgainstColor = against !== null && against < 0 ? "var(--er)" : "var(--ok)";
     out.fcBurn = money(job.mtd_cost);
+    out.fcDerivedNote = hist.length >= 2 && hist.some((h) => h.projected_cost === null || h.projected_cost === undefined)
+      ? "The month-start point is Vista's own arithmetic — cost to date minus this month's cost. Every later point is a landed extract."
+      : "";
     if (hist.length >= 2) {
       const xs = hist.map((h) => new Date(h.as_of).getTime());
       const ys = hist.map((h) => h.actual_cost || 0);

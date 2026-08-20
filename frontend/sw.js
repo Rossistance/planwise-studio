@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v7";      // 2.0 shell, PlanWise Sans
+const VERSION = "planwise-shell-v8";      // PlanWise Sans, hinted for Windows
 const SHELL = [
   "/",
   "/index.html",

@@ -8,7 +8,10 @@
    Digits are TABULAR BY CONSTRUCTION — the build remaps the digit
    codepoints to the tnum glyphs — because the app styles through the font:
    shorthand, which resets any CSS-level feature toggle. Money columns align
-   with no CSS at all. */
+   with no CSS at all. Hinted with ttfautohint (8-50px, symmetric-smoothing
+   gasp): unhinted instances read as sharp-edged and pixelated next to
+   Windows' hand-hinted system faces at 100% scaling — the owner saw exactly
+   that and said so (2026-08-20). */
 @font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/PlanWiseSans-400.woff2') format('woff2');}
 @font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/PlanWiseSans-500.woff2') format('woff2');}
 @font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/PlanWiseSans-600.woff2') format('woff2');}

@@ -111,6 +111,7 @@ function uiLogin(v) {
         ${logoSvg(40)}
         ${wordmark(27)}
       </div>
+      ${v.devBanner ? `<p style="margin:0 0 14px;padding:10px 13px;border:1px solid var(--wn);border-radius:8px;background:var(--wns);color:var(--wn);font:600 12.5px var(--fd);text-wrap:pretty">${esc(v.devBanner)}</p>` : ""}
       <form data-submit="${H(v.signIn)}" style="background:var(--pn);border:1px solid var(--ln);border-radius:10px;box-shadow:var(--sh);padding:22px 24px 24px">
         <h1 id="login-title" style="margin:0;font:600 21px/1.2 var(--fd);letter-spacing:.01em">${title}</h1>
         <p style="margin:7px 0 20px;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">${blurb}</p>
@@ -194,6 +195,7 @@ function uiRail(v) {
             <svg aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3q0-.6-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 2h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6q.1-.6.1-1.2Z"></path></svg>
           </button>` : ""}
       </div>
+      ${v.devBanner ? `<p title="${esc(v.devBanner)}" style="margin:0 0 7px;padding:5px 9px;border:1px solid var(--wn);border-radius:6px;background:var(--wns);color:var(--wn);font:600 10px var(--fm);letter-spacing:.1em;text-transform:uppercase;text-align:center">${v.railWide ? "Sandbox — practice data" : "SBX"}</p>` : ""}
       ${v.railWide ? `<button data-click="${H(v.toggleVista)}" aria-expanded="${v.vistaExpandedAria}" aria-label="${esc(v.vistaFull)}" title="${esc(v.vistaFull)}" class="hb-ls" style="${v.vistaStyle}">
           <span aria-hidden="true" style="${v.vistaDotStyle}"></span>
           <span aria-hidden="true" style="${v.vistaTextStyle}">${esc(v.vistaText)}</span>

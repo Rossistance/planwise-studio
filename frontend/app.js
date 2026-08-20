@@ -316,6 +316,7 @@ const App = {
     try {
       const h = await api("/api/health");
       this.state.data.health = h;
+      if (h.banner && document.title.indexOf("sandbox") < 0) document.title = "PlanWise — sandbox";
       setState({});
     } catch (e) {}
   },
@@ -1233,6 +1234,7 @@ Object.assign(App, {
       liveMessage: s.live,
 
       // stage
+      devBanner: ((d.health || {}).banner) || "",
       splashOn: s.stage === "splash",
       loginOn: s.stage === "login",
       auth: s.auth,

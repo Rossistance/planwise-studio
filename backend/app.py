@@ -9,6 +9,7 @@ identity is now only a local-development fallback — the session wins.
 from __future__ import annotations
 
 import io
+import os
 import re
 import secrets
 from contextvars import ContextVar
@@ -187,6 +188,9 @@ def health():
     mpp_ok, mpp_detail = schedule.mpp_available()
     out = {
         "app": config.APP_NAME,
+        # Set only by scripts/dev-server.py: a sentence the UI must show so a
+        # sandbox is never mistaken for the real instance.
+        "banner": os.environ.get("PLANWISE_DEV_BANNER") or None,
         "data_dir": str(config.data_dir()),
         "workbook": str(wb) if wb else None,
         "workbook_found": wb is not None,

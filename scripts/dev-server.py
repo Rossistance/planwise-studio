@@ -18,6 +18,9 @@ DATA_DIR = os.environ.get("PLANWISE_DEV_DATA") or str(
     "fc8e1591-fe2e-49dd-8b6b-fa78f5db85ab" / "scratchpad" / "devdata")
 
 os.environ["PLANWISE_DATA_DIR"] = DATA_DIR
+# Stamped onto the login card and the rail so this instance can never be
+# mistaken for the real one (it was, twice, on 2026-08-19).
+os.environ["PLANWISE_DEV_BANNER"] = "Sandbox copy — practice data and separate sign-ins. Your real PlanWise is the desktop app."
 os.environ["PLANWISE_VISTA_WORKBOOK"] = str(Path(DATA_DIR) / "vista" / "Vista Model DEV - Data.xlsx")
 
 import uvicorn  # noqa: E402

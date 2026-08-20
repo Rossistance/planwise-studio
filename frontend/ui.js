@@ -26,7 +26,7 @@ function uiSplash(v) {
       ? '<span aria-hidden="true" style="display:inline-block;width:.6em"></span>'
       : `<span aria-hidden="true" style="display:inline-block;animation:letterset .5s cubic-bezier(.3,1.2,.4,1) ${at}s both">${ch}</span>`)
     .join("");
-  return `<div role="img" aria-label="PlanWise is starting" style="position:fixed;inset:0;z-index:420;background:var(--pn);display:grid;place-items:center;overflow:hidden;animation:splashout .45s ease-in 4.05s both">
+  return `<div role="img" aria-label="PlanWise is starting" style="position:fixed;inset:0;z-index:420;background:var(--pn);display:grid;place-items:center;overflow:hidden;animation:splashout .45s ease-in 5.65s both">
     <div style="display:flex;flex-direction:column;align-items:center;gap:26px">
       <svg viewBox="0 0 170 210" aria-hidden="true" style="width:150px;height:auto;overflow:visible">
         <g stroke="var(--ln)" stroke-width="1.2" fill="none" stroke-dasharray="200" style="animation:gridin 1s ease-out both">
@@ -126,7 +126,7 @@ function uiLogin(v) {
 
 // ——— Rail (lines 100–223) ————————————————————————————————————————————————
 function uiRail(v) {
-  return `<div id="pw-rail" style="${v.railStyle}">
+  return `${v.railScrim ? `<div data-click="${H(v.closeMobileNav)}" style="position:fixed;inset:0;z-index:125;background:rgba(24,27,30,.45);animation:fadein .2s ease-out"></div>` : ""}<div id="pw-rail" style="${v.railStyle}">
     <div style="${v.brandRowStyle}">
       ${logoSvg(v.railWide ? 26 : 22)}
       ${v.railWide ? wordmark(19) : ""}
@@ -206,7 +206,10 @@ function uiRail(v) {
 
 // ——— Header + search results (lines 227–254) ————————————————————————————
 function uiHeader(v) {
-  return `<header style="height:50px;display:flex;align-items:center;gap:12px;padding:7px 18px;border-bottom:1px solid var(--ln);background:var(--pn);position:sticky;top:0;z-index:30;flex-wrap:nowrap">
+  return `<header style="height:50px;display:flex;align-items:center;gap:12px;padding:7px 12px 7px ${v.mobileMenu ? "8px" : "18px"};border-bottom:1px solid var(--ln);background:var(--pn);position:sticky;top:0;z-index:30;flex-wrap:nowrap">
+      ${v.mobileMenu ? `<button data-click="${H(v.toggleMobileNav)}" aria-label="Menu" aria-expanded="${v.mobileNavOpen ? "true" : "false"}" class="hb-ac" style="flex:none;min-height:var(--tap);min-width:var(--tap);display:grid;place-content:center;border:1px solid var(--ln);border-radius:6px;color:var(--mu)">
+        <svg aria-hidden="true" viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+      </button>` : ""}
       <search style="position:relative;flex:1 1 180px;min-width:150px;max-width:400px">
         <label for="job-search" class="sr">Search job ${esc(v.jobNumber)} for change orders, purchase orders, RFIs, submittals, drawings and tasks</label>
         <input id="job-search" type="search" data-ref="search" value="${esc(v.query)}" data-input="${H(v.onQuery)}" data-focus="${H(v.onSearchFocus)}" autocomplete="off" aria-describedby="search-hint" placeholder="Search this job — press / to jump here" class="fi" style="width:100%;min-height:var(--tap);padding:7px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
@@ -262,7 +265,7 @@ function uiScaffold(v) {
 // ——— Attention panel (lines 970–1010) ————————————————————————————————————
 function uiAttention(v) {
   if (!v.attnOpen) return "";
-  return `<aside id="attention-panel" aria-labelledby="attn-heading" style="width:308px;border-left:1px solid var(--ln);background:var(--pn);position:sticky;top:50px;height:calc(100vh - 50px);overflow-y:auto;animation:fadein .18s ease-out">
+  return `<aside id="attention-panel" aria-labelledby="attn-heading" style="${v.attnPanelStyle}">
     <div style="padding:14px 16px 11px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:8px">
       <h2 id="attn-heading" style="margin:0;font:600 14px var(--fd);letter-spacing:.04em;text-transform:uppercase">Needs attention</h2>
       <span style="flex:1"></span>
@@ -431,7 +434,7 @@ function uiRegister(v) {
       ${v.regFilters.map((f) => `<button data-click="${H(f.pick)}" aria-pressed="${f.pressed}" class="hb-ls" style="${f.style}">${esc(f.label)}<span style="${f.countStyle}">${f.count}</span></button>`).join("")}
     </div>` : ""}
     <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:var(--fz)">
+      <table class="reflow" style="width:100%;border-collapse:collapse;font-size:var(--fz)">
         <caption class="sr">${esc(v.regCaption)}</caption>
         <thead><tr>
           ${v.regColumns.map((c) => `<th scope="col" aria-sort="${c.sort}" style="${c.style}">
@@ -450,7 +453,7 @@ function uiRegister(v) {
                 ${r.hasSched ? `<button data-click="${H(r.togglePeek)}" aria-expanded="${r.peekOpen ? "true" : "false"}" aria-label="${esc(r.peekAria)}" class="hb-ac" style="flex:none;width:18px;height:18px;display:grid;place-content:center;border:1px solid var(--ln);border-radius:4px;color:var(--mu);font:600 11px var(--fm)">${r.peekChevron}</button>` : ""}
               </span>
             </th>
-            ${r.cells.map((c) => `<td style="${c.style}">
+            ${r.cells.map((c, ci) => `<td data-label="${esc(((v.regColumns[ci + 1] || {}).label) || "")}" style="${c.style}">
               ${c.isStamp ? `<span style="${c.stampStyle}">${esc(c.text)}</span>` : ""}
               ${c.isBar ? `<span style="display:flex;align-items:center;gap:9px">
                 <span aria-hidden="true" style="height:6px;border-radius:3px;background:var(--ln);flex:1;min-width:54px;overflow:hidden"><span style="display:block;height:100%;width:${c.barW};background:${c.barColor};border-radius:3px"></span></span>

@@ -29,6 +29,7 @@ const App = {
     // — rail
     railPin: (() => { try { const v = localStorage.getItem("pw.railPin"); return v === "open" || v === "closed" || v === "auto" ? v : "open"; } catch (e) { return "open"; } })(),
     railHover: false,
+    isMobile: false, mobileNav: false,
     jobsOpen: false, jobQuery: "", jobHits: [],
 
     // — header / search
@@ -75,12 +76,24 @@ const App = {
     // every F5 — resolved decision #10 says the login screen is the skip, and
     // a working tool must not cost 4.4 seconds per refresh. Recorded in
     // LOGIC-MERGE.md.
+    // Phones get the drawer shell; coarse pointers with no saved preference
+    // get field mode (bigger targets) without being asked.
+    const mq = matchMedia("(max-width: 860px)");
+    this.state.isMobile = mq.matches;
+    const onMq = (e) => setState({ isMobile: e.matches, mobileNav: false });
+    if (mq.addEventListener) mq.addEventListener("change", onMq); else mq.addListener(onMq);
+    try {
+      const prefs = JSON.parse(localStorage.getItem("pw.prefs") || "{}");
+      if (!prefs.mode && matchMedia("(pointer: coarse)").matches)
+        document.documentElement.dataset.mode = "field";
+    } catch (e) {}
+
     let splashed = false;
     try { splashed = sessionStorage.getItem("pw.splashed") === "1"; } catch (e) {}
     if (!splashed) {
       try { sessionStorage.setItem("pw.splashed", "1"); } catch (e) {}
       this.state.stage = "splash";
-      this._splashT = setTimeout(() => this.afterSplash(), 4400);
+      this._splashT = setTimeout(() => this.afterSplash(), 6200);
     }
 
     let status = {};
@@ -255,6 +268,7 @@ const App = {
   },
 
   go: (page, sub) => () => {
+    if (App.state.mobileNav) App.state.mobileNav = false;
     const job = App.state.job;
     if (!job) return;
     location.hash = "#/job/" + encodeURIComponent(job) + "/" + page + (sub ? "/" + sub : "");
@@ -1092,7 +1106,8 @@ Object.assign(App, {
       rfi: badgeFor.rfis ? String(badgeFor.rfis) : "",
       sub: badgeFor.subs ? String(badgeFor.subs) : "" };
 
-    const wide = s.railPin === "open" || (s.railPin === "auto" && s.railHover);
+    // The phone drawer is always the full rail — labels, job card, groups.
+    const wide = s.isMobile || s.railPin === "open" || (s.railPin === "auto" && s.railHover);
     const navGroups = NAV.map(([label, ab, items], gi) => ({
       id: "nav-group-" + gi,
       label: wide ? label : ab,
@@ -1154,11 +1169,19 @@ Object.assign(App, {
       // rail
       navGroups,
       navStyle: "flex:1;overflow-y:auto;overflow-x:hidden;padding:" + (wide ? "6px 8px 8px" : "6px 7px 8px"),
-      railCol: s.railPin === "open" ? RAIL_W + "px" : RAIL_N + "px",
+      railCol: s.isMobile ? "0px" : (s.railPin === "open" ? RAIL_W + "px" : RAIL_N + "px"),
       railWide: wide, railNarrow: !wide,
-      railStyle: "border-right:1px solid var(--ln);background:var(--pn);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:40;overflow:hidden;transition:width .36s " +
+      railStyle: s.isMobile
+        ? "position:fixed;left:0;top:0;bottom:0;width:min(280px,84vw);z-index:126;background:var(--pn);border-right:1px solid var(--ls);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shp);transition:transform .3s cubic-bezier(.3,1,.4,1);transform:" +
+          (s.mobileNav ? "translateX(0)" : "translateX(-105%)")
+        : "border-right:1px solid var(--ln);background:var(--pn);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:40;overflow:hidden;transition:width .36s " +
         (wide ? "cubic-bezier(.3,1.36,.4,1)" : "cubic-bezier(.4,.08,.16,1)") + ",box-shadow .32s ease" +
         (s.railPin === "open" ? ";width:" + RAIL_W + "px" : ";width:" + (wide ? RAIL_W : RAIL_N) + "px;box-shadow:" + (wide ? "var(--shp)" : "none")),
+      railScrim: s.isMobile && s.mobileNav,
+      mobileMenu: s.isMobile,
+      mobileNavOpen: s.mobileNav,
+      toggleMobileNav: () => setState({ mobileNav: !App.state.mobileNav }),
+      closeMobileNav: () => setState({ mobileNav: false }),
       railPinGo: wide
         ? App.pinRail(s.railPin === "open" ? "closed" : "open")
         : App.pinRail(s.railPin === "closed" ? "auto" : "closed"),
@@ -1231,6 +1254,10 @@ Object.assign(App, {
       attnControls: "attention-panel",
       attnHasAny: attnItems.length > 0,
       attnOpen: s.attnOpen, attnExpanded: s.attnOpen ? "true" : "false",
+      attnMobile: s.isMobile,
+      attnPanelStyle: s.isMobile
+        ? "position:fixed;inset:50px 0 0 0;width:auto;z-index:118;background:var(--pn);overflow-y:auto;animation:fadein .18s ease-out"
+        : "width:308px;border-left:1px solid var(--ln);background:var(--pn);position:sticky;top:50px;height:calc(100vh - 50px);overflow-y:auto;animation:fadein .18s ease-out",
       attnCol: s.attnOpen ? "308px" : "0px",
       attnCount: attnItems.length, attnItems, attnEmpty: attnItems.length === 0,
       attnCountStyle: "background:" + (attnItems.length ? "var(--er)" : "var(--ok)") + ";color:#fff;border-radius:999px;font:700 10px var(--fm);padding:3px 7px;letter-spacing:.02em",
@@ -1365,7 +1392,7 @@ Object.assign(App, {
         ${uiRail(v)}
         <div style="display:flex;flex-direction:column;min-width:0">
           ${uiHeader(v)}
-          <div style="display:grid;grid-template-columns:minmax(0,1fr) ${v.attnCol};align-items:start">
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) ${v.attnMobile ? "0px" : v.attnCol};align-items:start">
             <main id="main-content" style="min-width:0;padding:0 0 80px">
               ${uiScaffold(v)}
               <div style="padding:16px 20px 0">

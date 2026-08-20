@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v10";     // PlanWise Sans is the Nunito cut
+const VERSION = "planwise-shell-v11";     // mobile shell, real icons, longer splash
 const SHELL = [
   "/",
   "/index.html",

@@ -99,6 +99,12 @@ const App = {
 
     this.refreshHealth();
     setInterval(() => this.refreshHealth(), 90000);
+    this.initOffline();
+    // The service worker registers only once 2.0 IS the root app — at /v2
+    // (the dev mount) a root-scoped worker would hijack the 1.x shell.
+    if ("serviceWorker" in navigator && !location.pathname.startsWith("/v2")) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    }
   },
 
   afterSplash() {
@@ -908,8 +914,8 @@ Object.assign(App, {
         const [id, label, type, o0] = fd; const o = o0 || {};
         const bad = f.submitted && invalidIds[id];
         return {
-          id: "ff-" + id, label, type: type === "textarea" || type === "select" ? "text" : type,
-          isInput: type === "text" || type === "date", isArea: type === "textarea", isSelect: type === "select",
+          id: "ff-" + id, label, type: type === "textarea" || type === "select" ? "text" : type,  // password passes through
+          isInput: type === "text" || type === "date" || type === "password", isArea: type === "textarea", isSelect: type === "select",
           rows: o.rows || 3, value: f.values[id] || "", set: o.readOnly ? () => {} : App.setField(id),
           placeholder: o.placeholder || "", hint: bad ? label + " is required." : (o.hint || ""),
           hintId: "ff-" + id + "-hint", hintColor: bad ? "var(--er)" : "var(--ft)",
@@ -1277,7 +1283,29 @@ Object.assign(App, {
           icon: "M9 21H5V3h4M16 17l5-5-5-5M21 12H9",
           click: () => App.signOut() },
       ],
-      settingsExtra: "",
+      settingsExtra: this.buildSettingsExtra(),
+
+      // Offline + outbox bars (1.x surfaces, token-styled)
+      netBar: (() => {
+        const net = s.net || {};
+        if (net.online === false) return { tone: "var(--er)", soft: "var(--ers)",
+          text: "Offline. Reads come from the last copy this device held" +
+            (net.pending ? "; " + net.pending + (net.pending === 1 ? " change is queued" : " changes are queued") + " to send when the connection returns." : "."),
+          retry: null };
+        if (net.servedAt) return { tone: "var(--wn)", soft: "var(--wns)",
+          text: "Showing data from " + daysAgo(net.servedAt) + " — the server could not be reached.",
+          retry: () => location.reload() };
+        return null;
+      })(),
+      outboxBar: (() => {
+        const items = (s.data.outbox || []).filter((i) => !i.drafted_at);
+        if (!items.length) return null;
+        return {
+          text: items.length + (items.length === 1 ? " send queued from the field is waiting for a desk with Outlook." : " sends queued from the field are waiting for a desk with Outlook."),
+          drain: () => App.drainOutbox(),
+          emlOne: items.length === 1 ? App.outboxEml(items[0].id) : null,
+        };
+      })(),
 
       // POs page: exposure + import review view models
       poImport: s.poImport ? {
@@ -1332,7 +1360,7 @@ Object.assign(App, {
           </div>
         </div>
       </div>`
-      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v);
+      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v) + uiBars(v);
   },
 });
 
@@ -3043,7 +3071,9 @@ Object.assign(App, {
     } catch (err) {
       const eml = `/api/records/${recId}/share.eml`;
       if (isNetErr(err)) {
-        setState({ live: "No Outlook companion on this machine — downloading the email file instead." });
+        // No companion here (normal on a phone): queue for the desk AND offer
+        // the email file — both 1.x rungs of the ladder, kept.
+        App.queueForDesk("record", recId)();
         downloadEmlUrl(eml, "Email file downloaded. Open it in Outlook and press Send.");
       } else {
         setState({ live: "The companion answered but refused: " + err.message });
@@ -3800,3 +3830,290 @@ Object.assign(App, {
     };
   },
 });
+
+// ————— settings: AI, companion, users, account (1.x panes, sheet chrome) ————
+Object.assign(App, {
+  async loadSettingsData() {
+    if (this._settingsLoading) return;
+    this._settingsLoading = true;
+    try { this.state.data.settings = await api("/api/settings"); } catch (e) { this.state.data.settings = {}; }
+    if ((this.state.user || {}).is_admin) {
+      try { this.state.data.users = await api("/api/users"); } catch (e) {}
+    }
+    try {
+      const r = await fetch(COMPANION + "/health").then((x) => x.json());
+      this.state.data.companion = r;
+    } catch (e) { this.state.data.companion = { unreachable: true }; }
+    this._settingsLoading = false;
+    setState({});
+  },
+
+  patchSetting: (key, label) => async (e) => {
+    const value = e.target ? e.target.value : e;
+    try {
+      const out = await api("/api/settings", { method: "PATCH", body: JSON.stringify({ [key]: value }) });
+      App.state.data.settings = out;
+      setState({ live: (label || key) + " saved." });
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  userAction: (name, action, body, phrase) => async () => {
+    try {
+      if (action === "remove") await api(`/api/users/${encodeURIComponent(name)}`, { method: "DELETE" });
+      else await api(`/api/users/${encodeURIComponent(name)}/${action}`, { method: "POST", body: JSON.stringify(body || {}) });
+      setState({ live: phrase });
+      App.loadSettingsData();
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  confirmRemoveUser: (name, pending) => () => {
+    setState({
+      confirm: {
+        eyebrow: pending ? "Deny a request" : "Remove an account",
+        title: name,
+        body: pending ? "The request is denied and the account removed. They can register again." : "The account and its sessions are removed. Their name stays on everything they did — attribution is history, not access.",
+        checks: [
+          ["pass", "Attribution", "Activity entries keep the name. Nothing they wrote is deleted."],
+          [pending ? "pass" : "warn", "Access", pending ? "They never had access to job data." : "Any signed-in session ends immediately."],
+        ],
+        blocked: false,
+        verdict: "Removing an account is not reversible from here; they can be re-invited.",
+        label: pending ? "Deny and remove" : "Remove the account",
+        run: async () => {
+          setState({ confirm: null });
+          await App.userAction(name, "remove", null, name + (pending ? "'s request denied." : " removed."))();
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  resetUserPassword: (name) => () => {
+    // A generated temp password shown ONCE — never typed through a native
+    // prompt (the 1.x unmasked-prompt hazard is retired).
+    const temp = "pw-" + Math.random().toString(36).slice(2, 8) + "-" + Math.random().toString(36).slice(2, 6);
+    setState({
+      confirm: {
+        eyebrow: "Reset a password", title: name,
+        body: "PlanWise generates a temporary password. They must change it at their next sign-in.",
+        checks: [
+          ["pass", "The temporary password", temp + " — copy it now; it is shown only here."],
+          ["pass", "First sign-in", "They are forced onto a password of their own before anything else."],
+        ],
+        blocked: false,
+        verdict: "Their current sessions end when the reset applies.",
+        label: "Reset the password",
+        run: async () => {
+          setState({ confirm: null });
+          await App.userAction(name, "password", { password: temp },
+            name + "'s password reset. The temporary password was shown in the dialog.")();
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  changeOwnPassword() {
+    App.openForm("password")();
+  },
+
+  buildSettingsExtra(v) {
+    const s = this.state;
+    if (!s.settingsOpen) return "";
+    if (!s.data.settings) this.loadSettingsData();
+    const st = s.data.settings || {};
+    const spend = st.spend || {};
+    const comp = s.data.companion || {};
+    const usersData = s.data.users || {};
+    const users = usersData.users || [];
+    const isAdmin = (s.user || {}).is_admin;
+    const input = (id, label, key, value, hint, type) => `<div style="min-width:0">
+      <label for="${id}" style="display:block;font:600 12px var(--fd);letter-spacing:.03em;margin-bottom:5px">${esc(label)}</label>
+      <input id="${id}" type="${type || "text"}" value="${esc(value || "")}" data-change="${H(App.patchSetting(key, label))}" class="fi" style="width:100%;min-height:var(--tap);padding:8px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
+      ${hint ? `<p style="margin:4px 0 0;font-size:11.5px;color:var(--ft);text-wrap:pretty">${esc(hint)}</p>` : ""}
+    </div>`;
+
+    let compLine, compTone;
+    if (comp.unreachable) { compLine = "Not running on this machine. Records still share by email file; replies file themselves from any PC that has the companion."; compTone = "nt"; }
+    else if (!comp.paired) { compLine = "Running but not paired. Open http://127.0.0.1:8772/pair and sign in with your PlanWise email."; compTone = "wn"; }
+    else if (comp.paired_user && s.user && comp.paired_user !== s.user.name) { compLine = "Paired to " + comp.paired_user + " — drafting from this PC would use their mailbox."; compTone = "er"; }
+    else if (comp.outlook === false) { compLine = "Paired as " + (comp.paired_user || "you") + ", but Outlook isn't open on this PC. Open Outlook and PlanWise picks up from there."; compTone = "wn"; }
+    else { compLine = "Healthy — paired as " + (comp.paired_user || "you") + (comp.watch && comp.watch.running ? ", live watch on Inbox and Sent Items" : ", backstop sweep only") + ((comp.poll || {}).interval_seconds ? " · sweep every " + comp.poll.interval_seconds + "s" : ""); compTone = "ok"; }
+
+    return `
+      <section aria-labelledby="set-ai" style="padding:16px 20px 4px;border-top:1px solid var(--ln)">
+        <h3 id="set-ai" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Drafting help and spend</h3>
+        <p style="margin:5px 0 0;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">AI drafts emails and proposes reply dispositions — it never sends anything and never gates the pipeline. The cap is a budget backstop for the whole team, not an invoice.</p>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:13px;margin-top:13px">
+          <div style="min-width:0">
+            <label for="set-provider" style="display:block;font:600 12px var(--fd);letter-spacing:.03em;margin-bottom:5px">Provider</label>
+            <select id="set-provider" data-change="${H(App.patchSetting("ai_provider", "Provider"))}" style="width:100%;min-height:var(--tap);padding:8px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
+              ${["anthropic", "openai"].map((p) => `<option value="${p}" ${st.ai_provider === p ? "selected" : ""}>${p === "anthropic" ? "Anthropic" : "OpenAI"}</option>`).join("")}
+            </select>
+          </div>
+          ${input("set-akey", "Anthropic API key", "anthropic_api_key", st.anthropic_api_key, "Masked once saved; a masked value is never written back.")}
+          ${input("set-okey", "OpenAI API key", "openai_api_key", st.openai_api_key, "")}
+          ${input("set-cap", "Monthly spend cap, USD", "ai_spend_cap_monthly", st.ai_spend_cap_monthly, spend.month ? "Spent " + money(spend.spent) + " of " + money(spend.cap) + " this month · " + (spend.days_left ?? "—") + " days left." : "")}
+        </div>
+      </section>
+
+      <section aria-labelledby="set-comp" style="padding:16px 20px 4px">
+        <h3 id="set-comp" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Outlook companion</h3>
+        <p style="margin:9px 0 0;padding:10px 12px;border-radius:6px;border:1px solid ${tone(compTone)};background:${toneSoft(compTone)};color:${tone(compTone)};font-size:var(--fzs);text-wrap:pretty">${esc(compLine)}</p>
+        <p style="margin:8px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">The companion runs beside Outlook on each PC and drafts into that person's own mailbox — mail never leaves from a machine account. Without it, every send falls back to a downloadable email file.</p>
+      </section>
+
+      ${isAdmin ? `<section aria-labelledby="set-users" style="padding:16px 20px 4px">
+        <h3 id="set-users" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">People</h3>
+        <p style="margin:5px 0 0;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">Sign-ups wait here for approval. Attribution is history — removing an account never removes what they did.</p>
+        <ul style="list-style:none;margin:13px 0 0;padding:0;display:flex;flex-direction:column;gap:8px">
+          ${users.map((u) => {
+            const pending = !!u.pending;
+            const self = s.user && u.name === s.user.name;
+            return `<li style="display:flex;gap:11px;align-items:center;padding:11px 13px;border:1px solid ${pending ? "var(--ac)" : "var(--ln)"};border-radius:7px;background:${pending ? "var(--as)" : "var(--p3)"};flex-wrap:wrap">
+              <span style="flex:1;min-width:160px">
+                <span style="display:block;font:600 var(--fzs) var(--fd)">${esc(u.name)}${u.is_admin ? ` <span style="${stamp("bp")}">Admin</span>` : ""}${u.disabled ? ` <span style="${stamp("er")}">Disabled</span>` : ""}${pending ? ` <span style="${stamp("wn")}">Awaiting approval</span>` : ""}</span>
+                <span style="display:block;font:11.5px var(--fm);color:var(--mu)">${esc(u.email || "no email — bootstrap account")}</span>
+              </span>
+              ${pending ? `<button data-click="${H(App.userAction(u.name, "approved", { approved: true }, u.name + " approved."))}" class="hb-ah" style="min-height:34px;padding:6px 12px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 12px var(--fd)">Approve</button>
+              <button data-click="${H(App.confirmRemoveUser(u.name, true))}" class="hb-er" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Deny</button>` : self ? "" : `
+              <button data-click="${H(App.userAction(u.name, "admin", { admin: !u.is_admin }, u.name + (u.is_admin ? " is no longer an administrator." : " is now an administrator.")))}" class="hb-ac" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">${u.is_admin ? "Revoke admin" : "Make admin"}</button>
+              <button data-click="${H(App.resetUserPassword(u.name))}" class="hb-ac" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Reset password</button>
+              <button data-click="${H(App.userAction(u.name, "disabled", { disabled: !u.disabled }, u.name + (u.disabled ? " re-enabled." : " disabled — their sessions ended.")))}" class="hb-ac" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">${u.disabled ? "Enable" : "Disable"}</button>
+              <button data-click="${H(App.confirmRemoveUser(u.name, false))}" class="hb-er" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Remove</button>`}
+            </li>`;
+          }).join("")}
+        </ul>
+      </section>` : ""}
+
+      <section aria-labelledby="set-account" style="padding:16px 20px 20px">
+        <h3 id="set-account" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Account</h3>
+        <div style="display:flex;gap:9px;margin-top:11px;flex-wrap:wrap">
+          <button data-click="${H(() => { setState({ settingsOpen: false }); App.changeOwnPassword(); })}" class="hb-ls" style="${btn("ghost")}">Change my password</button>
+        </div>
+      </section>`;
+  },
+});
+
+// password form kind
+(() => {
+  const baseSpec = App.formSpec.bind(App);
+  App.formSpec = function (kind, ctx) {
+    if (kind !== "password") return baseSpec(kind, ctx);
+    return {
+      eyebrow: "Your account", title: "Change your password", submit: "Change it",
+      intro: "Changing your password signs out every other session; this one stays.",
+      fields: [
+        ["current", "Current password", "password", { req: true, hint: "" }],
+        ["next", "New password", "password", { req: true, hint: "At least 8 characters." }],
+      ],
+      review: "The change applies immediately. There is no email round-trip — this instance is the authority.",
+    };
+  };
+  const baseSubmit = App.submitForm.bind(App);
+  App.submitForm = async function () {
+    const f = App.state.form;
+    if (!f || f.kind !== "password") return baseSubmit();
+    const spec = App.formSpec(f.kind, f.ctx);
+    const errs = App.formErrors(spec, f);
+    if (errs.length) { f.submitted = true; setState({ live: errs.join(" ") }); return; }
+    try {
+      await api("/api/auth/password", { method: "POST", body: JSON.stringify({
+        current_password: f.values.current, new_password: f.values.next }) });
+      setState({ form: null, live: "Password changed. Every other session was signed out." });
+    } catch (err) { setState({ live: err.message }); }
+  };
+})();
+
+// password inputs need type=password in the form renderer: the generic form
+// treats unknown types as text; extend the field template via type passthrough
+// (uiForm already emits type="${f.type}"). formSpec used type "password" —
+// the builder maps textarea/select specially and passes others through, so
+// nothing more to do; this comment records the contract.
+
+// ————— offline + outbox surfaces (1.x logic, kept; token-styled bars) ———————
+Object.assign(App, {
+  initOffline() {
+    if (typeof OFFLINE === "undefined") return;
+    OFFLINE.subscribe((st) => { App.state.net = st; setState({}); });
+    OFFLINE.onFlush((out) => {
+      const bits = [];
+      if (out.sent) bits.push(out.sent + (out.sent === 1 ? " queued change reached the server" : " queued changes reached the server"));
+      out.rejected.forEach((r) => bits.push("one was refused: " + r));
+      setState({ live: "Back online. " + bits.join("; ") + "." });
+      App.refresh("job", "records", "lookahead", "schedule", "documents");
+    });
+    this.loadOutbox();
+    setInterval(() => this.loadOutbox(), 120000);
+  },
+
+  async loadOutbox() {
+    try {
+      const out = await api("/api/outbox");
+      this.state.data.outbox = out.items || out.outbox || [];
+      setState({});
+    } catch (e) {}
+  },
+
+  queueForDesk: (kind, targetId, audience, weeks) => async () => {
+    try {
+      await api("/api/outbox", { method: "POST", body: JSON.stringify({
+        job_number: App.state.job, kind, target_id: targetId,
+        audience: audience || null, weeks: weeks || null }) });
+      setState({ live: "Queued for your desk. It drafts from the next PC you open PlanWise on that has Outlook — what goes out reflects the sheet at drafting time, not a snapshot from the field." });
+      App.loadOutbox();
+      App.refresh("attention");
+    } catch (err) { setState({ live: err.message }); }
+  },
+
+  async drainOutbox() {
+    const items = this.state.data.outbox || [];
+    if (!items.length) return;
+    let drafted = 0;
+    for (const item of items) {
+      try {
+        // Rendered at DRAIN time, not queue time — what goes out reflects the
+        // current sheet rather than a snapshot from the van (1.x, kept).
+        const doc = await api(`/api/outbox/${item.id}/document`);
+        await companionFetch("/draft", { to: doc.to || "", subject: doc.subject,
+          body: doc.body, html: doc.html,
+          attachments: doc.pdf_b64 ? [{ filename: doc.filename || "planwise.pdf", content_b64: doc.pdf_b64 }] : [],
+          display: false });
+        await api(`/api/outbox/${item.id}/drafted`, { method: "POST" });
+        drafted++;
+      } catch (err) {
+        // Refresh FIRST so the failure message isn't repainted away (1.x lesson).
+        await this.loadOutbox();
+        setState({ live: (drafted ? drafted + " drafted, then " : "") + "one failed: " + err.message +
+          (isNetErr(err) ? " — no companion on this machine." : "") });
+        return;
+      }
+    }
+    try { await companionFetch("/show-drafts", {}); } catch (e) {}
+    await this.loadOutbox();
+    setState({ live: drafted + (drafted === 1 ? " field send drafted in your Outlook." : " field sends drafted in your Outlook.") + " They are in your Drafts folder — read and send each one." });
+    App.refresh("attention");
+  },
+
+  outboxEml: (itemId) => () => {
+    downloadEmlUrl(`/api/outbox/${itemId}/eml`, "Email file downloaded. Open it in Outlook and press Send.");
+  },
+});
+
+// Bars rendered under the app grid: netbar (offline/stale) + outbox.
+function uiBars(v) {
+  let out = "";
+  if (v.netBar) {
+    out += `<div role="status" aria-live="polite" style="position:fixed;left:18px;bottom:18px;z-index:118;display:flex;align-items:center;gap:9px;padding:9px 13px;border-radius:8px;border:1px solid ${v.netBar.tone};background:${v.netBar.soft};color:${v.netBar.tone};font:600 12px var(--fd);box-shadow:var(--sh);max-width:min(84vw,460px)">
+      <span aria-hidden="true" style="width:7px;height:7px;border-radius:50%;background:${v.netBar.tone};flex:none"></span>
+      <span style="text-wrap:pretty">${esc(v.netBar.text)}</span>
+      ${v.netBar.retry ? `<button data-click="${H(v.netBar.retry)}" class="ho-1" style="font:600 11.5px var(--fd);text-decoration:underline;text-underline-offset:2px;opacity:.85">Retry now</button>` : ""}
+    </div>`;
+  }
+  if (v.outboxBar) {
+    out += `<div role="status" style="position:fixed;right:18px;bottom:18px;z-index:118;display:flex;align-items:center;gap:11px;padding:10px 14px;border-radius:8px;border:1px solid var(--bp);background:var(--bps);color:var(--bp);font:600 12.5px var(--fd);box-shadow:var(--sh);max-width:min(84vw,520px);flex-wrap:wrap">
+      <span style="text-wrap:pretty">${esc(v.outboxBar.text)}</span>
+      <button data-click="${H(v.outboxBar.drain)}" class="hb-ah" style="min-height:34px;padding:6px 13px;border:1px solid var(--bp);border-radius:6px;background:var(--bp);color:#fff;font:600 12px var(--fd)">Draft them in Outlook</button>
+      ${v.outboxBar.emlOne ? `<button data-click="${H(v.outboxBar.emlOne)}" class="ht-ac" style="font:600 11.5px var(--fm);text-decoration:underline;text-underline-offset:2px">or download the email file</button>` : ""}
+    </div>`;
+  }
+  return out;
+}

@@ -109,3 +109,24 @@ Verdict vocabulary:
 7 confirm-for-gestures / immediate-undoable-for-typed-edits ✓ · 8 collapsed rail navigation-only ✓ ·
 9 pin tack placement/behavior ✓ · 10 splash ~4.4s, no skip button ✓ · 11 section names = Option A
 (signed off in the 2.0 task) ✓ · 12 undo/confirm on every outbound or destructive verb ✓.
+
+## Verdicts discovered during the build (appended per phase, as the plan required)
+
+| Element | Verdict | Why |
+|---|---|---|
+| Splash frequency | Once per browser SESSION, not per page load | The prototype models app launch; resolved decision #10 says the login screen is the skip. A working tool cannot cost 4.4s per F5. `sessionStorage["pw.splashed"]`. |
+| Composer creation | "Compose a change order" CREATES the row first, then opens the composer | A real id from the first keystroke is what lets the preview pane show the actual letter PDF. A CO abandoned untouched is deleted quietly on close. |
+| CO letter preview | Real PDF iframe inside the prototype's preview pane | The prototype simulated the letter in HTML; the generator that produces what the customer receives wins (debounced save → cache-busted reload). |
+| CO send status | "Awaiting Outlook" is set on drafting and stays until the PM advances it | The companion's send-detection watches pipeline records, not COs. `TODO(v2.x)`: companion CO-thread watch. |
+| PO invoices | Detail-drawer list + Record-an-invoice form (prototype interaction model) replaces 1.x inline sub-rows | Same data, prototype presentation; the sort-grouping hack dies with the sub-rows. |
+| Gantt bar geometry | Bars draw from the ENGINE's early dates, stored dates stay floors | Stored dates are push-only floors (D43); the bar the field sees must be where the network actually puts the work. Verified: an edit answered "4 dependent tasks moved with it" while stored starts held. |
+| Gantt zoom | Kept (a 1.x feature Ross asked for by name); per-column drag dropped | The prototype's fixed 280px task column wins; the register carries the data columns, so column widths lost their purpose. |
+| Clear schedule | Checked confirm replaces 1.x's typed-DELETE native prompt | Same stakes, the 2.0 confirm idiom; still explicitly not undoable. |
+| Native prompts | ALL eliminated (`prompt()`/`confirm()` zero uses — pinned by test) | Includes 1.x's unmasked admin password prompt; resets now generate a temp password shown once in the checked confirm. |
+| Annotation marks | v2 dialect ({v:2, tool, x%, y%}) joins the 1.x shapes on the same layer-scoped rows | Old shapes render forever (read-only box extent); new marks are the prototype's click-placed vocabulary. Server validates both; junk still refused. |
+| Viewer layer display | The viewer shows the ACTIVE layer only, named in the footnote | The prototype drew all layers and told the isolation story through copy; production scopes the display to match the structural isolation that already governs packages. |
+| Briefing attachments | The matching-audience look-ahead PDF rides along | One email instead of two, real generator, audience-correct. `TODO(v2.x)`: register PDFs as selectable attachments + a briefing .eml route. |
+| Record send fallback | No companion → queue to outbox AND download the .eml | Both 1.x rungs kept; the outbox bar drains at a desk, rendering at DRAIN time (1.x lesson: never a snapshot from the van). |
+| Service worker | Registers only when 2.0 is the root app | At /v2 (the dev mount) a root-scoped worker would hijack the 1.x shell. |
+| Job switcher landing | No job in the hash → last job, else the first the registry offers | A dashboard about nothing helps nobody. |
+| Legacy hash keys | 1.x page keys (dashboard/overview/changeorders/…) resolve to 2.0 pages | Old deep links and bookmarks keep working. |

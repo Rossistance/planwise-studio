@@ -91,6 +91,24 @@ _root.addEventListener("input", _dispatch("data-input"));
 _root.addEventListener("change", _dispatch("data-change"));
 _root.addEventListener("pointerdown", _dispatch("data-pointerdown"));
 _root.addEventListener("focusin", _dispatch("data-focus"));
+// Focus trap: Tab cycles inside the topmost open dialog. The Esc stack lives
+// in App.onKey; this is the other half of the dialog contract the prototype
+// promised ("Tab moves through the rail, the header, the page and then the
+// attention panel" — and never OUT of an open dialog).
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab") return;
+  const dialogs = document.querySelectorAll('[role="dialog"],[role="alertdialog"]');
+  if (!dialogs.length) return;
+  const top = dialogs[dialogs.length - 1];
+  const focusables = top.querySelectorAll(
+    'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])');
+  if (!focusables.length) return;
+  const first = focusables[0], last = focusables[focusables.length - 1];
+  if (!top.contains(document.activeElement)) { e.preventDefault(); first.focus(); return; }
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+});
+
 _root.addEventListener("submit", (e) => {
   const el = e.target.closest("[data-submit]");
   if (!el) return;

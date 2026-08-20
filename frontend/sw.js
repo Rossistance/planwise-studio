@@ -20,18 +20,30 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v4";
+const VERSION = "planwise-shell-v5";      // 2.0 shell
 const SHELL = [
   "/",
   "/index.html",
-  "/app.js",
-  "/drawings.js",
+  "/copy.js",
   "/offline.js",
-  "/styles.css",
+  "/api.js",
+  "/core.js",
+  "/ui.js",
+  "/pages.js",
+  "/app.js",
+  "/tokens.css",
+  "/fonts.css",
+  "/app.css",
+  "/fonts/BarlowSemiCondensed-500.woff2",
+  "/fonts/BarlowSemiCondensed-600.woff2",
+  "/fonts/BarlowSemiCondensed-700.woff2",
+  "/fonts/Archivo-var.woff2",
+  "/fonts/JetBrainsMono-var.woff2",
   "/manifest.webmanifest",
-  "/favicon.ico",
+  "/favicon.svg",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
+  "/vendor/morphdom-umd.min.js",
   "/vendor/pdfjs/pdf.min.js",
   "/vendor/pdfjs/pdf.worker.min.js",
 ];

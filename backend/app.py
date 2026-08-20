@@ -1961,18 +1961,6 @@ def global_activity(limit: int = 150):
     return {"activity": store.list_activity(None, limit)}
 
 
-# 2.0 development mount: while the redesign is built in frontend2/, both UIs
-# run against this one backend — 1.x at /, 2.0 at /v2. The cutover (plan
-# Phase 12) moves frontend2/ over frontend/ and deletes this block.
-FRONTEND2 = FRONTEND.parent / "frontend2"
-if FRONTEND2.is_dir():
-    @app.get("/v2")
-    @app.get("/v2/")
-    def index_v2():
-        return FileResponse(FRONTEND2 / "index.html")
-
-    app.mount("/v2", StaticFiles(directory=FRONTEND2), name="frontend2")
-
 # Frontend last so /api/* wins.
 if FRONTEND.is_dir():
     @app.get("/")

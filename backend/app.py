@@ -79,7 +79,7 @@ _CURRENT_USER: "ContextVar[dict | None]" = ContextVar("planwise_user", default=N
 _OPEN_PATHS = {"/api/health", "/api/auth/login", "/api/auth/logout",
                "/api/auth/register", "/api/auth/companion-pair",
                "/api/auth/bootstrap", "/api/auth/status", "/api/companion/poll",
-               "/api/vista/workbook"}
+               "/api/vista/workbook", "/api/vista/monthly"}
 _OPEN_PREFIXES = ()
 
 # What a PENDING account may still do while it waits on the approval screen:

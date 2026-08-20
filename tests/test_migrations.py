@@ -106,22 +106,25 @@ def test_monthly_history_merges_real_grains_in_order():
     assert c.post("/api/auth/login",
                   json={"name": "Ross Hixon", "password": "a-good-password"}).status_code == 200
 
+    # The pusher has a token, never a session - a separate, signed-OUT client.
+    pusher = TestClient(app_module.app)
     os.environ["PLANWISE_INGEST_TOKEN"] = "t-0"
     try:
-        r = c.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "wrong"},
-                   json={"rows": []})
-        assert r.status_code == 401
+        r = pusher.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "wrong"},
+                        json={"rows": []})
+        assert r.status_code == 401 and "ingest" in r.json()["detail"].lower(), (
+            "the token check must answer, not the sign-in wall")
 
         rows = [{"job": "24-003", "month": "2026-05", "cost": 100.0, "billed": 50.0},
                 {"job": "24-003", "month": "2026-06", "cost": 200.0, "billed": 150.0},
                 {"job": "24-003", "month": "bad", "cost": 1},
                 {"job": "", "month": "2026-06", "cost": 1}]
-        r = c.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "t-0"},
-                   json={"rows": rows})
+        r = pusher.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "t-0"},
+                        json={"rows": rows})
         assert r.status_code == 200 and r.json()["rows"] == 2
         # idempotent upsert
-        r = c.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "t-0"},
-                   json={"rows": rows[:2]})
+        r = pusher.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "t-0"},
+                        json={"rows": rows[:2]})
         assert r.json()["rows"] == 2
 
         conn = db.connect()

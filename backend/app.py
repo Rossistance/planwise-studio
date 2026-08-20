@@ -909,16 +909,69 @@ def _capture_history(snap) -> None:
     conn.commit()
 
 
+@app.post("/api/vista/monthly")
+def ingest_vista_monthly(body: dict = Body(...),
+                         x_planwise_ingest: str | None = Header(default=None)):
+    """Monthly cost history rows from the Power BI backfill (the owner's
+    2026-08-20 call: pull the past straight from the source once; the daily
+    workbook carries everything after). Same shared-secret guard as the
+    workbook push; upserts, so re-running a backfill is safe."""
+    expected = config.ingest_token()
+    if not expected:
+        raise HTTPException(status_code=503,
+                            detail="Workbook ingest is not configured on this server.")
+    if not x_planwise_ingest or not secrets.compare_digest(x_planwise_ingest, expected):
+        raise HTTPException(status_code=401, detail="Bad ingest token.")
+    rows = body.get("rows") or []
+    conn = db.connect()
+    n = 0
+    for r in rows:
+        job, month = str(r.get("job") or "").strip(), str(r.get("month") or "").strip()
+        if not job or len(month) != 7 or month[4] != "-":
+            continue
+        conn.execute(
+            "INSERT INTO vista_monthly (job_number, month, cost, billed, hours,"
+            " captured_at) VALUES (?,?,?,?,?,?) ON CONFLICT(job_number, month)"
+            " DO UPDATE SET cost=excluded.cost, billed=excluded.billed,"
+            " hours=excluded.hours, captured_at=excluded.captured_at",
+            (job, month, r.get("cost"), r.get("billed"), r.get("hours"), db.now()))
+        n += 1
+    conn.commit()
+    return {"ok": True, "rows": n}
+
+
+def _month_end(month: str) -> str:
+    import calendar
+    y, m = int(month[:4]), int(month[5:7])
+    return f"{y:04d}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
+
+
 @app.get("/api/jobs/{job_number}/history")
 def job_history(job_number: str):
-    """Accrued Vista extract history for the forecast chart. Two points make
-    a line; fewer make an honest empty state."""
+    """The forecast chart's series: real monthly history from the backfilled
+    fact rows (cumulative, one point per month-end), then the daily extract
+    points from after the last backfilled month. Every point is recorded —
+    monthly rows are dated cost transactions, daily rows are landed extracts."""
     conn = db.connect()
-    rows = [dict(r) for r in conn.execute(
+    monthly = [dict(r) for r in conn.execute(
+        "SELECT month, cost, billed FROM vista_monthly WHERE job_number = ?"
+        " ORDER BY month", (job_number,))]
+    merged: list[dict] = []
+    cum_cost = cum_billed = 0.0
+    for m in monthly:
+        cum_cost += m["cost"] or 0
+        cum_billed += m["billed"] or 0
+        merged.append({"as_of": _month_end(m["month"]), "actual_cost": round(cum_cost, 2),
+                       "actual_billed": round(cum_billed, 2), "grain": "month"})
+    horizon = merged[-1]["as_of"] if merged else ""
+    dailies = [dict(r) for r in conn.execute(
         "SELECT as_of, actual_cost, projected_cost, current_estimate,"
         " actual_billed, pct_complete FROM vista_history WHERE job_number = ?"
         " ORDER BY as_of", (job_number,))]
-    return {"history": rows}
+    for r in dailies:
+        if r["as_of"][:10] > horizon:
+            merged.append({**r, "grain": "extract"})
+    return {"history": merged, "monthly_rows": len(monthly)}
 
 
 @app.get("/api/jobs/{job_number}/attention")

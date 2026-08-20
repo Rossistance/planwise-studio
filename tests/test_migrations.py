@@ -89,3 +89,55 @@ def test_two_point_oh_tables_and_activity_columns_exist():
     # And a plain 1.x-era insert (no new columns) still works.
     conn.execute("INSERT INTO activity (ts, actor, action) VALUES ('t', 'a', 'x')")
     conn.commit()
+
+
+def test_monthly_history_merges_real_grains_in_order():
+    """Backfilled months become cumulative month-end points; daily extract
+    points only join AFTER the last backfilled month — never interleaved,
+    never double-counted."""
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from backend import app as app_module, auth, db
+
+    c = TestClient(app_module.app)
+    auth.bootstrap_admin(auth.setup_token(), "Ross Hixon", "a-good-password")
+    assert c.post("/api/auth/login",
+                  json={"name": "Ross Hixon", "password": "a-good-password"}).status_code == 200
+
+    os.environ["PLANWISE_INGEST_TOKEN"] = "t-0"
+    try:
+        r = c.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "wrong"},
+                   json={"rows": []})
+        assert r.status_code == 401
+
+        rows = [{"job": "24-003", "month": "2026-05", "cost": 100.0, "billed": 50.0},
+                {"job": "24-003", "month": "2026-06", "cost": 200.0, "billed": 150.0},
+                {"job": "24-003", "month": "bad", "cost": 1},
+                {"job": "", "month": "2026-06", "cost": 1}]
+        r = c.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "t-0"},
+                   json={"rows": rows})
+        assert r.status_code == 200 and r.json()["rows"] == 2
+        # idempotent upsert
+        r = c.post("/api/vista/monthly", headers={"X-PlanWise-Ingest": "t-0"},
+                   json={"rows": rows[:2]})
+        assert r.json()["rows"] == 2
+
+        conn = db.connect()
+        conn.execute(
+            "INSERT INTO vista_history (as_of, job_number, actual_cost, captured_at)"
+            " VALUES (?,?,?,?)", ("2026-05-15T06:30:00", "24-003", 999.0, db.now()))
+        conn.execute(
+            "INSERT INTO vista_history (as_of, job_number, actual_cost, captured_at)"
+            " VALUES (?,?,?,?)", ("2026-07-03T06:30:00", "24-003", 320.0, db.now()))
+        conn.commit()
+
+        h = c.get("/api/jobs/24-003/history").json()
+        assert h["monthly_rows"] == 2
+        pts = h["history"]
+        assert [p["as_of"] for p in pts] == ["2026-05-31", "2026-06-30", "2026-07-03T06:30:00"]
+        assert [p["actual_cost"] for p in pts] == [100.0, 300.0, 320.0], \
+            "months are cumulative; the mid-May daily is swallowed by the month that contains it"
+    finally:
+        os.environ.pop("PLANWISE_INGEST_TOKEN", None)

@@ -261,7 +261,9 @@ function buildPageVals(app) {
     out.costTotVar = signed(tEst - tAct === 0 ? 0 : cts.reduce((t, r) => t + (r.variance || 0), 0));
     out.costTotVarColor = cts.reduce((t, r) => t + (r.variance || 0), 0) < 0 ? "var(--er)" : "var(--ok)";
 
-    // Forecast: REAL history only (vista_history accrues per extract). Two
+    // Forecast: REAL history only — monthly points are dated cost postings
+    // backfilled from the Power BI source (owner's 2026-08-20 call), daily
+    // points are landed extracts after the last backfilled month. Two
     // points make a line; fewer make an honest empty state, never a curve.
     const hist = ((d.history || {}).history) || [];
     out.fcProjected = money(job.projected_cost);
@@ -281,7 +283,7 @@ function buildPageVals(app) {
       const py = (yv) => (165 - yv / top * 155).toFixed(1);
       const pts = hist.map((h) => px(new Date(h.as_of).getTime()) + "," + py(h.actual_cost || 0)).join(" L");
       const lastX = px(x1), lastY = py(ys[ys.length - 1]);
-      out.forecastSvg = `<svg viewBox="0 0 660 200" role="img" aria-label="Cost curve from the accrued Vista extracts. The forecast reaches ${money(job.projected_cost)} at completion." style="width:100%;height:auto;display:block;overflow:visible">
+      out.forecastSvg = `<svg viewBox="0 0 660 200" role="img" aria-label="Cost curve from recorded monthly postings and landed Vista extracts, job inception to now. The forecast reaches ${money(job.projected_cost)} at completion." style="width:100%;height:auto;display:block;overflow:visible">
         <g stroke="var(--ln)" stroke-width="1"><line x1="0" y1="10" x2="640" y2="10"></line><line x1="0" y1="60" x2="640" y2="60"></line><line x1="0" y1="110" x2="640" y2="110"></line><line x1="0" y1="160" x2="640" y2="160"></line></g>
         ${est ? `<line x1="0" y1="165" x2="639" y2="${py(est)}" stroke="var(--ls)" stroke-width="1.5" stroke-dasharray="5 4"></line>` : ""}
         <path d="M${pts}" fill="none" stroke="var(--ac)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"></path>
@@ -297,7 +299,7 @@ function buildPageVals(app) {
       </svg>`;
     } else {
       out.forecastSvg = `<div style="min-height:180px;display:grid;place-items:center;border:1px dashed var(--ls);border-radius:6px;background:var(--p2)">
-        <p style="margin:0;max-width:44ch;text-align:center;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">The curve draws itself from the nightly Vista extracts. ${hist.length === 1 ? "One extract has landed — one more and the line appears." : "History starts accruing with the next extract; nothing here is invented."}</p>
+        <p style="margin:0;max-width:44ch;text-align:center;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">The curve draws from recorded history — backfilled monthly postings plus the nightly extracts. ${hist.length === 1 ? "One point so far — one more and the line appears." : "This job has no recorded postings yet; the line starts with its first."}</p>
       </div>`;
     }
   }

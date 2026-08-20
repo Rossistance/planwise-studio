@@ -253,6 +253,24 @@ def main() -> int:
     conn.commit()
 
     print("seeded:", data_dir)
+    # Monthly cost history for the forecast chart — a believable S-curve of
+    # PERIOD amounts, 14 months of it, like the Power BI backfill writes.
+    import math
+    conn2 = db.connect()
+    total, months = 1_842_000.0, 14
+    prev = 0.0
+    for i in range(months):
+        y, m = 2025 + (7 + i) // 12, (7 + i) % 12 + 1
+        frac = 1 / (1 + math.exp(-((i + 1) / months * 12 - 6) / 1.6))
+        cum = total * frac
+        conn2.execute(
+            "INSERT OR REPLACE INTO vista_monthly (job_number, month, cost, billed,"
+            " hours, captured_at) VALUES (?,?,?,?,?,?)",
+            ("26-101", f"{y:04d}-{m:02d}", round(cum - prev, 2),
+             round((cum - prev) * 0.92, 2), round((cum - prev) / 88, 1), db.now()))
+        prev = cum
+    conn2.commit()
+
     print("sign in: dev@planwise.local / planwise-dev")
     return 0
 

@@ -447,6 +447,19 @@ CREATE TABLE IF NOT EXISTS vista_history (
 );
 CREATE INDEX IF NOT EXISTS ix_vh_job ON vista_history(job_number, as_of);
 
+-- True monthly cost history per job, backfilled once from the Power BI
+-- semantic model's dated fact rows (Job Cost Details[JCDateSKey]) and
+-- append-only after that. PERIOD amounts, not cumulative — the reader sums.
+CREATE TABLE IF NOT EXISTS vista_monthly (
+    job_number    TEXT NOT NULL,
+    month         TEXT NOT NULL,             -- 'YYYY-MM'
+    cost          REAL,
+    billed        REAL,
+    hours         REAL,
+    captured_at   TEXT NOT NULL,
+    PRIMARY KEY (job_number, month)
+);
+
 -- 2.0: the weekly briefing. One row per job per week; `blocks` is the PM's
 -- editable JSON {progress:[], risks:[], asks:[], signature:[]} — seeded from
 -- the live registers as proposals, then owned by the PM. Two renderings come

@@ -204,17 +204,6 @@ function uiRail(v) {
   </div>`;
 }
 
-// TEMPORARY type tryout bar — three candidate faces one click apart, in the
-// real UI. Removed the moment the owner picks; the winner ships as
-// PlanWise Sans.
-function uiTypeTry(v) {
-  if (!v.typeTryOptions) return "";
-  return `<div role="group" aria-label="Typeface tryout" style="position:fixed;right:14px;bottom:14px;z-index:118;display:flex;align-items:center;gap:5px;padding:6px 8px;border:1px solid var(--ls);border-radius:999px;background:var(--pn);box-shadow:var(--shp)">
-    <span style="font:600 9.5px var(--fm);letter-spacing:.12em;text-transform:uppercase;color:var(--ft);padding:0 3px">Type</span>
-    ${v.typeTryOptions.map((o) => `<button data-click="${H(o.pick)}" aria-pressed="${o.on ? "true" : "false"}" style="min-height:26px;padding:4px 10px;border-radius:999px;border:1px solid ${o.on ? "var(--ac)" : "var(--ln)"};background:${o.on ? "var(--as)" : "var(--p2)"};color:${o.on ? "var(--ac)" : "var(--mu)"};font:600 11.5px var(--fd)">${esc(o.label)}</button>`).join("")}
-  </div>`;
-}
-
 // ——— Header + search results (lines 227–254) ————————————————————————————
 function uiHeader(v) {
   return `<header style="height:50px;display:flex;align-items:center;gap:12px;padding:7px 18px;border-bottom:1px solid var(--ln);background:var(--pn);position:sticky;top:0;z-index:30;flex-wrap:nowrap">

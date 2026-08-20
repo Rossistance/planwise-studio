@@ -132,3 +132,9 @@ These three re-run on Ross's PC after deploy — the ladder's fallback rungs
   ("Nothing was reworded … The blocks are untouched.").
 - [x] Look-ahead row add/remove now reversible server-side
   (`laitem.delete` / `laitem.recreate`), downstream check included.
+- [x] Typeface verdict (2026-08-20): the owner judged three candidate cuts
+  live (Nunito Sans / Asap / Figtree, identical pipeline) and picked
+  Nunito Sans. PlanWise Sans is now that cut — wdth 100 / opsz 12 /
+  YTLC 500, weights +~50, equal-width digits, ttfautohint — OFL notice
+  swapped to Nunito Sans; tryout bar, candidates css, and losing faces
+  deleted; shell cache v10.

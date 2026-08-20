@@ -1,17 +1,17 @@
-/* PlanWise Sans — the product's own face, built 2026-08-20 to the owner's
-   verdict ("too thin, looks techy like code; smooth, not pixelated").
-   Derived from Rubik (SIL OFL 1.1, fonts/OFL.txt): each CSS weight is a
-   static instance cut ~50 units HEAVIER than convention (400→470, 500→570,
-   600→650, 700→770), renamed as the OFL provides for modified versions.
-   Rounded terminals give the smoothness; the extra weight kills the
-   thinness; it replaces the mono face everywhere, so nothing reads as code.
-   Digits are TABULAR BY CONSTRUCTION — the build remaps the digit
-   codepoints to the tnum glyphs — because the app styles through the font:
-   shorthand, which resets any CSS-level feature toggle. Money columns align
-   with no CSS at all. Hinted with ttfautohint (8-50px, symmetric-smoothing
-   gasp): unhinted instances read as sharp-edged and pixelated next to
-   Windows' hand-hinted system faces at 100% scaling — the owner saw exactly
-   that and said so (2026-08-20). */
+/* PlanWise Sans — the product's own face. The owner judged three candidate
+   cuts side-by-side in the live UI (2026-08-20) and picked the Nunito Sans
+   one; this is that build, verbatim. Derived from Nunito Sans (SIL OFL 1.1,
+   fonts/OFL.txt; renamed as the OFL provides for modified versions): each
+   CSS weight is a static instance pinned at wdth 100 / opsz 12 / YTLC 500
+   and cut ~50 units HEAVIER than convention (400→470, 500→570, 600→650,
+   700→770) — the owner's earlier "too thin" verdict, kept. Fully rounded
+   terminals carry the smoothness; one face replaces the mono face
+   everywhere, so nothing reads as code. Digits are equal-width in the
+   source design, so money columns align with no CSS at all (the app styles
+   through the font: shorthand, which would reset any CSS feature toggle).
+   Hinted with ttfautohint (8-50px, symmetric-smoothing gasp): unhinted
+   instances read as sharp-edged and pixelated next to Windows' hand-hinted
+   system faces at 100% scaling. */
 @font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/PlanWiseSans-400.woff2') format('woff2');}
 @font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/PlanWiseSans-500.woff2') format('woff2');}
 @font-face{font-family:'PlanWise Sans';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/PlanWiseSans-600.woff2') format('woff2');}

@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v9";      // type tryout bar
+const VERSION = "planwise-shell-v10";     // PlanWise Sans is the Nunito cut
 const SHELL = [
   "/",
   "/index.html",

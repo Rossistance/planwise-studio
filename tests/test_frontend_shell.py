@@ -72,6 +72,17 @@ def test_doctrine_microcopy_is_verbatim():
         assert phrase in everything, f"verbatim microcopy lost: {phrase!r}"
 
 
+def test_the_login_card_carries_the_owners_wording():
+    """2026-08-19 owner verdicts: email is the identity users are told to
+    use, and the Vista-permissions sentence is gone. The input must stay
+    type="text" so a pre-email account is refused by the server's answer,
+    never by the browser's @-validation."""
+    ui = read("ui.js")
+    assert '"Use your White Electrical account."' in ui
+    assert "follow your Vista permissions" not in ui
+    assert '"login-email", "Work email", "text"' in ui
+
+
 def test_no_native_prompts_survive():
     """1.x used prompt()/confirm() — including an unmasked password prompt.
     2.0's checked confirm replaces every one of them."""

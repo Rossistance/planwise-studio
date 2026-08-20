@@ -65,7 +65,7 @@ function uiLogin(v) {
       <input id="${id}" type="${type}" ${id === "login-email" ? 'data-ref="login"' : ""} value="${esc(value)}" data-input="${oninput}" ${auto ? `autocomplete="${auto}"` : ""} class="fi" style="width:100%;min-height:var(--tap);padding:9px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
       ${hint ? `<p style="margin:4px 0 0;font-size:11.5px;color:var(--ft)">${hint}</p>` : ""}
     </div>`;
-  let title = "Sign in", blurb = "Use your White Electrical account. Jobs, cost and drawings follow your Vista permissions.",
+  let title = "Sign in", blurb = "Use your White Electrical account.",
       fields = "", submitLabel = "Sign in", foot = "";
   const a = v.auth;
   if (a.mode === "pending") {
@@ -97,10 +97,11 @@ function uiLogin(v) {
     submitLabel = "Create account";
     foot = `<p style="margin:15px 0 0;font-size:12px;color:var(--ft)">Already have an account? <button type="button" data-click="${H(v.switchAuthMode("login"))}" style="font:inherit;color:var(--bp);text-decoration:underline;text-underline-offset:2px">Sign in</button></p>`;
   } else {
-    // The server signs you in by email OR by name ("Ross Hixon" predates
-    // email on this instance). type="text", not "email" — the browser's
-    // @-validation must not reject a name the server would accept.
-    fields = f("login-email", "Work email or name", "text", a.email || "", H(v.setAuthField("email")), "username", "Your sign-in email, or your name if your account predates email.")
+    // Email is the identity users are told to use (owner's call). The type
+    // stays "text", not "email": the server still accepts a bare name for
+    // any account that predates email, and the browser's @-validation must
+    // not lock such an account out before the server is even asked.
+    fields = f("login-email", "Work email", "text", a.email || "", H(v.setAuthField("email")), "username", "")
       + f("login-pass", "Password", "password", a.pass || "", H(v.setAuthField("pass")), "current-password", "");
     foot = `<p style="margin:15px 0 0;font-size:12px;color:var(--ft)">New here? <button type="button" data-click="${H(v.switchAuthMode("register"))}" style="font:inherit;color:var(--bp);text-decoration:underline;text-underline-offset:2px">Create your account</button></p>`;
   }

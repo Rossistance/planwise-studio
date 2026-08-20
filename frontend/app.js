@@ -3902,6 +3902,11 @@ Object.assign(App, {
     App.openForm("password")();
   },
 
+  setUserEmail: (name, current) => () => {
+    setState({ settingsOpen: false });
+    App.openForm("useremail", { name, current })();
+  },
+
   buildSettingsExtra(v) {
     const s = this.state;
     if (!s.settingsOpen) return "";
@@ -3961,7 +3966,9 @@ Object.assign(App, {
                 <span style="display:block;font:11.5px var(--fm);color:var(--mu)">${esc(u.email || "no email — bootstrap account")}</span>
               </span>
               ${pending ? `<button data-click="${H(App.userAction(u.name, "approved", { approved: true }, u.name + " approved."))}" class="hb-ah" style="min-height:34px;padding:6px 12px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 12px var(--fd)">Approve</button>
-              <button data-click="${H(App.confirmRemoveUser(u.name, true))}" class="hb-er" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Deny</button>` : self ? "" : `
+              <button data-click="${H(App.confirmRemoveUser(u.name, true))}" class="hb-er" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Deny</button>` : self ? `
+              <button data-click="${H(App.setUserEmail(u.name, u.email))}" class="hb-ac" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Set email</button>` : `
+              <button data-click="${H(App.setUserEmail(u.name, u.email))}" class="hb-ac" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Set email</button>
               <button data-click="${H(App.userAction(u.name, "admin", { admin: !u.is_admin }, u.name + (u.is_admin ? " is no longer an administrator." : " is now an administrator.")))}" class="hb-ac" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">${u.is_admin ? "Revoke admin" : "Make admin"}</button>
               <button data-click="${H(App.resetUserPassword(u.name))}" class="hb-ac" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Reset password</button>
               <button data-click="${H(App.userAction(u.name, "disabled", { disabled: !u.disabled }, u.name + (u.disabled ? " re-enabled." : " disabled — their sessions ended.")))}" class="hb-ac" style="min-height:34px;padding:6px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">${u.disabled ? "Enable" : "Disable"}</button>
@@ -3984,6 +3991,16 @@ Object.assign(App, {
 (() => {
   const baseSpec = App.formSpec.bind(App);
   App.formSpec = function (kind, ctx) {
+    if (kind === "useremail") {
+      return {
+        eyebrow: "Sign-in address", title: (ctx || {}).name || "Set email", submit: "Set the email",
+        intro: (ctx || {}).current
+          ? "Currently " + ctx.current + ". The new address is what they sign in with."
+          : "This account predates email sign-in. Give it the address it signs in with.",
+        fields: [["email", "Work email", "text", { req: true, hint: "" }]],
+        review: "Sign-in by this address works immediately. Their password does not change.",
+      };
+    }
     if (kind !== "password") return baseSpec(kind, ctx);
     return {
       eyebrow: "Your account", title: "Change your password", submit: "Change it",
@@ -3998,6 +4015,19 @@ Object.assign(App, {
   const baseSubmit = App.submitForm.bind(App);
   App.submitForm = async function () {
     const f = App.state.form;
+    if (f && f.kind === "useremail") {
+      const spec = App.formSpec(f.kind, f.ctx);
+      const errs = App.formErrors(spec, f);
+      if (errs.length) { f.submitted = true; setState({ live: errs.join(" ") }); return; }
+      try {
+        await api(`/api/users/${encodeURIComponent(f.ctx.name)}/email`, {
+          method: "POST", body: JSON.stringify({ email: f.values.email }) });
+        setState({ form: null, settingsOpen: true,
+          live: f.ctx.name + " signs in as " + f.values.email + " from now on." });
+        App.loadSettingsData();
+      } catch (err) { setState({ live: err.message }); }
+      return;
+    }
     if (!f || f.kind !== "password") return baseSubmit();
     const spec = App.formSpec(f.kind, f.ctx);
     const errs = App.formErrors(spec, f);

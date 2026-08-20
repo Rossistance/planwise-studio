@@ -763,6 +763,18 @@ def set_user_disabled(name: str, body: dict = Body(...)):
 
 # --- jobs (Vista) -----------------------------------------------------------
 
+@app.get("/api/personnel")
+def personnel():
+    """Approved teammates' names and emails — the internal half of the share
+    sheet's recipient list. Deliberately NOT the admin user list: no pending
+    strangers, no flags, just who a document can be routed to in-house."""
+    rows = auth.list_accounts()
+    return {"personnel": [
+        {"name": u["name"], "email": u.get("email") or "", "is_admin": bool(u.get("is_admin"))}
+        for u in rows
+        if not u.get("disabled") and not u.get("pending") and u.get("email")]}
+
+
 @app.get("/api/jobs")
 def list_jobs(q: str | None = None, limit: int = 50):
     """Type-ahead over every job. Job-number prefix matches rank first."""
@@ -959,6 +971,36 @@ def reseed_briefing(briefing_id: str):
                           actor=me.get("name"))
 
 
+@app.post("/api/briefings/{briefing_id}/refine")
+def refine_briefing(briefing_id: str):
+    """Reword the blocks with AI — a proposal applied like any edit
+    (undoable through the reversal engine). Facts stay the registers'; on any
+    AI failure the blocks come back unchanged and the response says so."""
+    me = _CURRENT_USER.get() or {}
+    conn = db.connect()
+    row = conn.execute("SELECT * FROM briefings WHERE id = ?", (briefing_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="No such briefing.")
+    b = dict(row)
+    import json as _json
+    b["blocks"] = _json.loads(b["blocks"] or "{}") or {}
+    job = None
+    try:
+        job = _snapshot().jobs.get(b["job_number"])
+    except HTTPException:
+        pass
+    refined = briefing.refine_blocks(b, job, actor=me.get("name"))
+    changed = refined != b["blocks"]
+    if not changed:
+        return {"changed": False,
+                "detail": "Nothing was reworded — no AI key, the spend cap is "
+                          "reached, or the provider was unreachable. The blocks "
+                          "are untouched."}
+    out = briefing.patch(briefing_id, {"blocks": refined}, actor=me.get("name"))
+    out["changed"] = True
+    return out
+
+
 @app.get("/api/briefings/{briefing_id}/share")
 def share_briefing(briefing_id: str, audience: str = "customer"):
     """Outlook payload for one audience: subject + HTML body + contacts.
@@ -985,6 +1027,39 @@ def share_briefing(briefing_id: str, audience: str = "customer"):
             "to": "" if internal else "; ".join(
                 c.get("email") for c in contacts if c.get("email")),
             "contacts": contacts, "audience": audience}
+
+
+@app.get("/api/briefings/{briefing_id}/share.eml")
+def briefing_share_eml(briefing_id: str, audience: str = "customer"):
+    """The briefing as a ready-to-send email file — the same escape hatch
+    every other share has (D41), for a PC with no companion. The matching
+    audience's look-ahead sheet rides along, exactly as the companion draft
+    would carry it."""
+    payload = share_briefing(briefing_id, audience)
+    attachments: list[tuple[str, bytes]] = []
+    conn = db.connect()
+    row = conn.execute("SELECT job_number, week_start FROM briefings WHERE id = ?",
+                       (briefing_id,)).fetchone()
+    if row:
+        period = lookahead.get_or_create_period(row["job_number"])
+        try:
+            la_aud = "team" if audience == "team" else "customer"
+            # The one assembler every look-ahead share uses — audience rules
+            # cannot fork (see _lookahead_doc).
+            out, pdf = _lookahead_doc(period, audience=la_aud,
+                                      weeks=period.get("weeks") or 2)
+            attachments.append((out["filename"], pdf))
+        except Exception:  # noqa: BLE001 — a briefing without its sheet still sends
+            pass
+    data = eml.build_eml(payload["subject"], payload.get("to") or "",
+                         html=payload["html"], attachments=attachments)
+    # Headers are latin-1: build the filename from ASCII facts, not the
+    # em-dashed subject line.
+    week = row["week_start"] if row else briefing_id
+    job_part = row["job_number"] if row else "briefing"
+    safe = f"briefing-{job_part}-{week}-{'internal' if audience == 'team' else 'customer'}"
+    return Response(content=data, media_type="message/rfc822", headers={
+        "Content-Disposition": f'attachment; filename="{safe}.eml"'})
 
 
 @app.get("/api/jobs/{job_number}/activity")

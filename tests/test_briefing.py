@@ -80,3 +80,27 @@ def test_sending_stamps_the_row_and_is_reversible():
     back = briefing.get_or_create("24-003", "2026-08-16", actor="pm")
     assert back["status"] == "Draft" and not back["sent_at"], \
         "undoing a send restores the row's state; the email itself is Outlook's"
+
+
+def test_the_email_file_downloads_with_a_header_safe_name():
+    """The subject line carries an em-dash; HTTP headers are latin-1. The
+    filename must be built from ASCII facts, or the escape hatch 500s on the
+    exact machines it exists for."""
+    from fastapi.testclient import TestClient
+
+    from backend import app as app_module
+    from backend import auth
+
+    c = TestClient(app_module.app)
+    auth.bootstrap_admin(auth.setup_token(), "Ross Hixon", "a-good-password")
+    assert c.post("/api/auth/login",
+                  json={"name": "Ross Hixon", "password": "a-good-password"}).status_code == 200
+
+    b = briefing.get_or_create("24-003", "2026-08-16", actor="pm")
+    for audience in ("customer", "team"):
+        r = c.get(f"/api/briefings/{b['id']}/share.eml?audience={audience}")
+        assert r.status_code == 200, r.text
+        cd = r.headers["content-disposition"]
+        cd.encode("latin-1")  # the exact constraint that broke
+        assert "briefing-24-003-2026-08-16" in cd
+        assert ("internal" if audience == "team" else "customer") in cd

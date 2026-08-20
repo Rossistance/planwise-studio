@@ -35,7 +35,7 @@ def test_the_token_block_is_the_prototypes():
     css = read("tokens.css")
     # Spot values lifted from the prototype — if any drifts, the port drifted.
     for token in ("--bg:#EFEDE6", "--ac:#C7420A", "--er:#A9291D",
-                  "--fd:'Barlow Semi Condensed'", "--tap:36px", "--lbl:9.5px"):
+                  "--fd:'Segoe UI Semibold'", "--tap:36px", "--lbl:9.5px"):
         assert token in css, f"token {token} missing or changed"
     # Dark palette and the fixed --wn. The Devanagari-digit typo must not
     # return to a DECLARATION — the comment documenting it may name it, so

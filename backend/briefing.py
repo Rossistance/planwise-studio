@@ -12,8 +12,10 @@ had no backing code. The model here is deliberately small and real:
   submitted change order; the internal copy appends the financial position.
   Doctrine 5, same shape as the look ahead's audience split.
 
-TODO(v2.x): AI-refined narrative via ai.py (draft, never gate), and PDF
-attachments assembled from the other generators.
+AI refinement (refine_blocks) rewords the PM's lines on request — a
+proposal, never a gate. The matching-audience look-ahead PDF rides along on
+every share. TODO(v2.x): further register PDFs (cost breakdown, PO register)
+as selectable attachments once their generators exist.
 """
 from __future__ import annotations
 
@@ -159,6 +161,49 @@ def patch(briefing_id: str, fields: dict[str, Any],
     out["blocks"] = json.loads(out["blocks"] or "{}") or _blank_blocks()
     out["activity_id"] = activity_id
     return out
+
+
+def refine_blocks(briefing_row: dict[str, Any], job: dict[str, Any] | None,
+                  actor: str | None = None) -> dict[str, Any]:
+    """AI-polished wording for the PM's blocks — a PROPOSAL, like every AI
+    output in this app. The lines' FACTS are the register's; the model may
+    only reword them for a reader. On any failure (no key, cap reached,
+    provider down) the blocks come back unchanged — AI refines, never gates.
+    """
+    import json as _json
+
+    from . import ai
+
+    blocks = briefing_row["blocks"]
+    flat = []
+    for key in BLOCK_KEYS:
+        for i, item in enumerate(blocks.get(key) or []):
+            flat.append({"block": key, "i": i, "text": item.get("text") or ""})
+    if not flat:
+        return blocks
+    name = (job or {}).get("job_name") or briefing_row["job_number"]
+    prompt = (
+        "You are polishing lines for a construction weekly briefing on the job "
+        f"{name}. Reword each line to read cleanly for a customer or executive: "
+        "plain, factual, past tense for what happened, no new facts, no numbers "
+        "that are not already in the line, keep every number and identifier "
+        "(CO-04, RFI-015) exactly. Return ONLY a JSON array of objects "
+        '{"block", "i", "text"} matching the input keys.\n\nInput:\n'
+        + _json.dumps(flat))
+    try:
+        raw = ai._complete(prompt, purpose="briefing.refine", max_tokens=1800)
+        start, end = raw.find("["), raw.rfind("]")
+        rows = _json.loads(raw[start:end + 1])
+        out = {k: [dict(x) for x in (blocks.get(k) or [])] for k in BLOCK_KEYS}
+        for r in rows:
+            k, i, text = r.get("block"), r.get("i"), (r.get("text") or "").strip()
+            # Whitelist-validated, like every AI output here: only known slots,
+            # only non-empty rewordings, land.
+            if k in BLOCK_KEYS and isinstance(i, int) and 0 <= i < len(out[k]) and text:
+                out[k][i]["text"] = text
+        return out
+    except Exception:  # noqa: BLE001 — refinement is optional by design
+        return blocks
 
 
 def render_html(briefing: dict[str, Any], job: dict[str, Any] | None,

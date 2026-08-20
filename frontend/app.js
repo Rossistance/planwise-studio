@@ -41,7 +41,7 @@ const App = {
 
     // — overlays
     settingsOpen: false, keysOpen: false, tour: 0,
-    confirm: null, detail: null, form: null, co: null, shareOpen: false,
+    confirm: null, detail: null, form: null, co: null,
     viewer: null,
 
     // — registers
@@ -53,6 +53,7 @@ const App = {
     replyEdit: null,
     tool: "Pin", ink: "#A9291D", weight: 2.5, zoom: 1, markText: "",
     briefAudience: "customer",
+    shareOpen: false, recipients: {}, shareItems: {},
 
     // — CO composer + PO import
     coPreview: true, coNewClar: "", poImport: null,
@@ -1034,7 +1035,7 @@ Object.assign(App, {
     const todo = (what) => () => setState({ live: what + " lands in v2.x." });
     switch (s.page) {
       case "dash": return [mk("Open the weekly briefing", "primary", App.go("brief")), mk("Export a snapshot", "ghost", todo("Snapshot export"))];
-      case "brief": return [mk("Choose recipients and send", "primary", () => App.openShare && App.openShare()), mk("Preview the PDF", "ghost", todo("The briefing PDF"))];
+      case "brief": return [mk("Choose recipients and send", "primary", App.openShareWith(this.state.briefAudience === "team" ? { "brief-int": true } : { "brief-cust": true })), mk("Preview the PDF", "ghost", todo("The briefing PDF"))];
       case "setup": return [mk("Add a contact", "primary", App.openForm("contact"))];
       case "costs": return [mk("Reconcile committed cost", "primary", App.go("pos")), mk("Export to Excel", "ghost", todo("Excel export"))];
       case "cos": {
@@ -1053,7 +1054,7 @@ Object.assign(App, {
         return acts;
       }
       case "sched": return [mk("Add a task", "primary", App.openForm("task")), mk("Import an updated schedule", "ghost", () => App.triggerSchedImport ? App.triggerSchedImport() : null)];
-      case "look": return [mk("Share the look ahead", "primary", () => App.openShare && App.openShare()), mk("Seed it from the schedule", "ghost", () => App.seedLook ? App.seedLook() : null)];
+      case "look": return [mk("Share the look ahead", "primary", App.openShareWith({ "look-cust": true })), mk("Seed it from the schedule", "ghost", () => App.seedLook ? App.seedLook() : null)];
       case "docs": return [mk("Upload a PDF set", "primary", () => App.triggerDocUpload ? App.triggerDocUpload() : null)];
       case "rfis": {
         const draft = attn.find((i) => i.page === "rfis" && i.text.includes("draft"));
@@ -1331,6 +1332,7 @@ Object.assign(App, {
       ...this.buildLook(),
       ...this.buildThread(),
       ...this.buildViewer(),
+      ...this.buildShare(),
       ...this.buildBrief(),
       ...this.buildRegister(),
       ...this.buildDetail(),
@@ -1360,7 +1362,7 @@ Object.assign(App, {
           </div>
         </div>
       </div>`
-      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v) + uiBars(v);
+      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiShare(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v) + uiBars(v);
   },
 });
 
@@ -2940,8 +2942,8 @@ Object.assign(App, {
       openNewArea: App.openForm("area"),
       openNewLook: App.openForm("look"),
       seedLook: () => App.seedLook(),
-      shareLookCust: App.shareLook("customer"),
-      shareLookInt: App.shareLook("team"),
+      shareLookCust: App.openShareWith({ "look-cust": true }),
+      shareLookInt: App.openShareWith({ "look-int": true }),
       lookWeekCount: weeks === 2 ? "Two-week look ahead" : "Three-week look ahead",
     };
   },
@@ -3017,8 +3019,10 @@ Object.assign(App, {
           setState({ form: null, live: "“" + f.values.name + "” updated on the look ahead." });
         } else {
           const la = App.laPeriod();
-          await api(`/api/lookahead/${la.id}/items`, { method: "POST", body: JSON.stringify(body) });
-          setState({ form: null, live: "“" + f.values.name + "” added to the look ahead. Tick its days on the grid." });
+          const out = await api(`/api/lookahead/${la.id}/items`, { method: "POST", body: JSON.stringify(body) });
+          setState({ form: null });
+          App.act("“" + f.values.name + "” added to the look ahead. Tick its days on the grid.",
+            out.activity_id, ["lookahead"]);
         }
         App.refresh("lookahead");
       }
@@ -3737,34 +3741,16 @@ Object.assign(App, {
     }, focusRef("confirm"));
   },
 
-  briefShare: (audience) => async () => {
+  async briefRefine() {
     const b = App.briefRow();
     if (!b.id) return;
+    setState({ live: "Asking the drafting help to reword the lines…" });
     try {
-      const payload = await api(`/api/briefings/${b.id}/share?audience=${audience}`);
-      // The look ahead rides along, in the same audience's rendering — one
-      // email rather than two (and the customer copy is the stripped sheet).
-      const attachments = [];
-      try {
-        const la = App.laPeriod().id ? App.laPeriod() : await api(`/api/jobs/${encodeURIComponent(App.state.job)}/lookahead`);
-        const laShare = await api(`/api/lookahead/${la.id}/share?audience=${audience === "team" ? "team" : "customer"}&weeks=${la.weeks || 2}`);
-        if (laShare.pdf_b64) attachments.push({ filename: laShare.filename || "look-ahead.pdf", content_b64: laShare.pdf_b64 });
-      } catch (e2) {}
-      await companionFetch("/draft", { to: payload.to || "", subject: payload.subject,
-        html: payload.html, attachments, display: true });
-      const upd = await api(`/api/briefings/${b.id}`, { method: "PATCH", body: JSON.stringify({ status: "Sent" }) });
-      App.state.data.briefing = upd;
-      App.act(audience === "team"
-        ? "The internal briefing is drafted in Outlook with the full financial position. Address it before sending."
-        : "The customer briefing is drafted in Outlook. It carries status and narrative only — no cost, billing or margin figures.",
-        upd.activity_id, ["briefing"]);
-    } catch (err) {
-      if (isNetErr(err)) {
-        setState({ live: "No Outlook companion on this machine. Queue it from a desk that has one, or copy the briefing text by hand — the .eml route for briefings lands in v2.x." });
-      } else {
-        setState({ live: "The companion refused: " + err.message });
-      }
-    }
+      const out = await api(`/api/briefings/${b.id}/refine`, { method: "POST" });
+      if (!out.changed) { setState({ live: out.detail }); return; }
+      App.state.data.briefing = out;
+      App.act("The briefing lines were reworded. The facts are still the registers' — read it before it goes out.", out.activity_id, ["briefing"]);
+    } catch (err) { setState({ live: err.message }); }
   },
 
   buildBrief() {
@@ -3825,8 +3811,9 @@ Object.assign(App, {
             gets: "Internal copy — full financial position", color: "var(--ac)", soft: "var(--as)" }],
       noRecipients: cust && contacts.length === 0,
       briefReseed: () => App.briefReseed(),
-      briefSend: App.briefShare(cust ? "customer" : "team"),
-      briefSendLabel: cust ? "Draft the customer email in Outlook" : "Draft the internal email in Outlook",
+      briefRefine: () => App.briefRefine(),
+      briefSend: App.openShareWith(cust ? { "brief-cust": true } : { "brief-int": true }),
+      briefSendLabel: "Choose recipients and send",
     };
   },
 });
@@ -4117,3 +4104,186 @@ function uiBars(v) {
   }
   return out;
 }
+
+// ————— unified share sheet (prototype lines 1359–1451, wired to the real
+// generators; the one rule with teeth: an internal item cannot be selected
+// while a customer contact is) ————————————————————————————————————————————
+Object.assign(App, {
+  openShareWith: (items) => () => {
+    App.state.shareItems = items;
+    App.openShare();
+  },
+  async openShare() {
+    if (!App.state.data.personnel) {
+      try { App.state.data.personnel = (await api("/api/personnel")).personnel || []; } catch (e) { App.state.data.personnel = []; }
+    }
+    setState({ shareOpen: true }, focusRef("share"));
+  },
+  closeShare() { setState({ shareOpen: false }); },
+  toggleRecipient: (key) => () => {
+    const r = { ...App.state.recipients };
+    r[key] = !r[key];
+    setState({ recipients: r });
+  },
+  toggleShareItem: (id) => () => {
+    const it = { ...App.state.shareItems };
+    it[id] = !it[id];
+    setState({ shareItems: it });
+  },
+
+  shareItemDefs() {
+    return [
+      { id: "brief-cust", label: "Weekly briefing — customer copy", aud: "customer",
+        note: "Status and narrative only. Carries no cost, billing or margin figures." },
+      { id: "brief-int", label: "Weekly briefing — internal copy", aud: "internal",
+        note: "Full financial position, margin risk and anything damaging if it left the building." },
+      { id: "look-cust", label: "Look ahead — customer copy", aud: "customer",
+        note: "Activities and days. Tools, material and internal notes are stripped." },
+      { id: "look-int", label: "Look ahead — internal copy", aud: "internal",
+        note: "Includes tools, material and operational notes for the crew." },
+    ];
+  },
+
+  async confirmShare() {
+    const s = App.state;
+    const people = Object.keys(s.recipients).filter((k) => s.recipients[k]);
+    if (!people.length) { setState({ live: "Choose at least one recipient first." }); return; }
+    const custSelected = people.some((k) => k.startsWith("cust:"));
+    const picked = App.shareItemDefs().filter((d) =>
+      s.shareItems[d.id] && !(d.aud === "internal" && custSelected));
+    if (!picked.length) { setState({ live: "Choose at least one item to include." }); return; }
+
+    const job = encodeURIComponent(s.job);
+    const contacts = (((s.data.job || {}).meta || {}).contacts || []);
+    const personnel = s.data.personnel || [];
+    const emailOf = (key) => {
+      const name = key.slice(key.indexOf(":") + 1);
+      if (key.startsWith("cust:")) return (contacts.find((c) => c.name === name) || {}).email || "";
+      return (personnel.find((p2) => p2.name === name) || {}).email || "";
+    };
+    const custTo = people.filter((k) => k.startsWith("cust:")).map(emailOf).filter(Boolean).join("; ");
+    const intTo = people.filter((k) => k.startsWith("int:")).map(emailOf).filter(Boolean).join("; ");
+
+    // One draft per audience: customer recipients get the customer-safe
+    // items; internal recipients get everything picked. Each item is fetched
+    // from ITS OWN generator, so the sheet can never fork the audience rules.
+    const build = async (audience) => {
+      const isInt = audience === "internal";
+      const items = picked.filter((d) => isInt || d.aud === "customer");
+      if (!items.length) return null;
+      let subject = null, html = null;
+      const attachments = [];
+      for (const d of items) {
+        if (d.id.startsWith("brief")) {
+          const b = App.briefRow().id ? App.briefRow() : await api(`/api/jobs/${job}/briefing`);
+          const payload = await api(`/api/briefings/${b.id}/share?audience=${d.aud === "internal" ? "team" : "customer"}`);
+          subject = subject || payload.subject;
+          html = payload.html;
+        } else {
+          const la = App.laPeriod().id ? App.laPeriod() : await api(`/api/jobs/${job}/lookahead`);
+          const payload = await api(`/api/lookahead/${la.id}/share?audience=${d.aud === "internal" ? "team" : "customer"}&weeks=${la.weeks || 2}`);
+          subject = subject || payload.subject;
+          if (payload.pdf_b64) attachments.push({ filename: payload.filename || "look-ahead.pdf", content_b64: payload.pdf_b64 });
+          if (!html) html = payload.html;
+        }
+      }
+      return { subject, html, attachments, to: isInt ? intTo : custTo, audience };
+    };
+
+    try {
+      const drafts = [];
+      if (custTo) drafts.push(await build("customer"));
+      if (intTo) drafts.push(await build("internal"));
+      // Internal items with no internal recipient still go out — unaddressed,
+      // for the PM to route in Outlook (the look-ahead team rule, D19).
+      if (!intTo && picked.some((d) => d.aud === "internal")) drafts.push(await build("internal"));
+      let n = 0;
+      for (const d of drafts.filter(Boolean)) {
+        await companionFetch("/draft", { to: d.to, subject: d.subject, html: d.html,
+          attachments: d.attachments, display: true });
+        n++;
+      }
+      const custCount = people.filter((k) => k.startsWith("cust:")).length;
+      const msg = "Outlook drafted " + n + (n === 1 ? " email" : " emails") + ". " +
+        (custCount ? custCount + " customer recipient" + (custCount === 1 ? "" : "s") + " get the customer copy only." : "All internal.") +
+        " Nothing sends until you press Send in Outlook.";
+      if (picked.some((d) => d.id.startsWith("brief"))) {
+        // A briefing went out: mark it Sent, undoably — same bookkeeping the
+        // page's old direct send did.
+        const b = App.briefRow().id ? App.briefRow() : await api(`/api/jobs/${job}/briefing`);
+        const upd = await api(`/api/briefings/${b.id}`, { method: "PATCH", body: JSON.stringify({ status: "Sent" }) });
+        App.state.data.briefing = upd;
+        setState({ shareOpen: false });
+        App.act(msg, upd.activity_id, ["briefing"]);
+      } else {
+        setState({ shareOpen: false, live: msg });
+      }
+    } catch (err) {
+      // Either rung below Outlook on the ladder ends the same way: the email
+      // files are handed over, one per audience, recipients already inside.
+      setState({ shareOpen: false, live: isNetErr(err)
+        ? "No Outlook companion on this machine — downloading the email files instead."
+        : "The companion refused: " + err.message + " — downloading the email files instead." });
+      let b = App.briefRow();
+      if (!b.id && picked.some((d) => d.id.startsWith("brief"))) {
+        try { b = await api(`/api/jobs/${job}/briefing`); } catch (e2) {}
+      }
+      if (picked.some((d) => d.id.startsWith("brief")) && b.id) {
+        if (picked.some((d) => d.id === "brief-cust")) downloadEmlUrl(`/api/briefings/${b.id}/share.eml?audience=customer`);
+        if (picked.some((d) => d.id === "brief-int")) downloadEmlUrl(`/api/briefings/${b.id}/share.eml?audience=team`);
+      }
+      let la = App.laPeriod();
+      if (!la.id && picked.some((d) => d.id.startsWith("look"))) {
+        try { la = await api(`/api/jobs/${job}/lookahead`); } catch (e2) {}
+      }
+      if (la.id) {
+        if (picked.some((d) => d.id === "look-cust")) downloadEmlUrl(`/api/lookahead/${la.id}/share.eml?audience=customer&weeks=${la.weeks || 2}`);
+        if (picked.some((d) => d.id === "look-int")) downloadEmlUrl(`/api/lookahead/${la.id}/share.eml?audience=team&weeks=${la.weeks || 2}`);
+      }
+    }
+  },
+
+  buildShare() {
+    const s = this.state;
+    if (!s.shareOpen) return { shareOpen: "" };
+    const contacts = (((s.data.job || {}).meta || {}).contacts || []).filter((c) => c.email);
+    const personnel = (s.data.personnel || []).filter((p2) => !s.user || p2.name !== s.user.name);
+    const custSelected = Object.keys(s.recipients).some((k) => s.recipients[k] && k.startsWith("cust:"));
+    const people = Object.keys(s.recipients).filter((k) => s.recipients[k]);
+    const items = Object.keys(s.shareItems).filter((k) => s.shareItems[k]);
+    return {
+      shareOpen: true,
+      shareJob: s.job || "",
+      closeShare: () => App.closeShare(),
+      shareCustomer: contacts.map((c, i) => ({
+        id: "sr-c" + i, name: c.name || c.email, role: c.role || "", email: c.email,
+        on: !!s.recipients["cust:" + c.name], toggle: App.toggleRecipient("cust:" + c.name) })),
+      noCustomerContacts: contacts.length === 0,
+      shareInternal: personnel.map((p2, i) => ({
+        id: "sr-i" + i, name: p2.name, role: p2.is_admin ? "Administrator" : "Project team", email: p2.email,
+        on: !!s.recipients["int:" + p2.name], toggle: App.toggleRecipient("int:" + p2.name) })),
+      noInternal: personnel.length === 0,
+      shareContent: App.shareItemDefs().map((d) => {
+        const blocked = d.aud === "internal" && custSelected;
+        return {
+          id: "si-" + d.id, label: d.label, note: d.note,
+          on: s.shareItems[d.id] && !blocked,
+          disabled: blocked,
+          toggle: blocked ? () => {} : App.toggleShareItem(d.id),
+          tag: d.aud === "customer" ? "Customer safe" : "Internal only",
+          tagStyle: stamp(d.aud === "customer" ? "ok" : "er"),
+          rowStyle: blocked ? "opacity:.55" : "",
+          blocked,
+          blockedWhy: "Cannot be sent while a customer contact is selected. Send this in a separate internal email.",
+        };
+      }),
+      shareSummary: (() => {
+        const cst = people.filter((k) => k.startsWith("cust:")).length;
+        if (!people.length) return "Nobody selected yet.";
+        return cst + " customer, " + (people.length - cst) + " internal · " + items.length + (items.length === 1 ? " item" : " items");
+      })(),
+      shareSubmitLabel: "Draft these in Outlook",
+      confirmShare: () => App.confirmShare(),
+    };
+  },
+});

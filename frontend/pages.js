@@ -717,6 +717,7 @@ function pageBrief(v) {
 
       <div style="display:flex;gap:9px;justify-content:flex-end;flex-wrap:wrap">
         <button data-click="${H(v.briefReseed)}" class="hb-ls" style="${btn("ghost")}">Reseed from the registers</button>
+        <button data-click="${H(v.briefRefine)}" class="hb-ls" style="${btn("ghost")}">Reword with drafting help</button>
         <button data-click="${H(v.briefSend)}" class="hb-ah" style="${btn("primary")}">${esc(v.briefSendLabel)}</button>
       </div>
     </div>

@@ -16,9 +16,18 @@
   --ok:#1B6B3D; --oks:#E4F0E8; --wn:#7A5100; --wns:#F7EEDA;
   --er:#A9291D; --ers:#F9E8E5; --nt:#5C636A; --nts:#EDECE7;
   --vi:#5B3A8E; --vis:#EDE7F5;
-  --fd:'Barlow Semi Condensed','Segoe UI Semibold',system-ui,sans-serif;
-  --fb:Archivo,'Segoe UI',system-ui,sans-serif;
-  --fm:'JetBrains Mono','Cascadia Mono',Consolas,monospace;
+  /* Typography verdict overturned by the product owner on seeing it live
+     (2026-08-19): the design canvas never actually loaded the spec'd
+     webfonts — its sandbox blocked Google Fonts — so the "prototype look"
+     Ross approved was the FALLBACK stack: Segoe UI Semibold display,
+     Segoe UI body, Cascadia Mono data. Measured proof: canvas metrics for
+     Archivo/Barlow/JetBrains were identical in the prototype tab and the
+     app tab, yet he read the webfonts as "typewriter" against what he
+     remembered. The families below are what he saw and signed off. The
+     spec'd webfonts remain vendored in fonts/ should the verdict change. */
+  --fd:'Segoe UI Semibold','Bahnschrift','Segoe UI',system-ui,sans-serif;
+  --fb:'Segoe UI',system-ui,-apple-system,sans-serif;
+  --fm:'Cascadia Mono',Consolas,'SF Mono',monospace;
   --sh:0 1px 2px rgba(24,27,30,.05),0 8px 24px rgba(24,27,30,.06);
   --shp:0 18px 50px rgba(24,27,30,.20);
   --rowY:12px; --cellY:11px; --tap:36px; --fz:13.5px; --fzs:12.5px; --lbl:9.5px; --h1:21px;

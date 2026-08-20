@@ -97,7 +97,10 @@ function uiLogin(v) {
     submitLabel = "Create account";
     foot = `<p style="margin:15px 0 0;font-size:12px;color:var(--ft)">Already have an account? <button type="button" data-click="${H(v.switchAuthMode("login"))}" style="font:inherit;color:var(--bp);text-decoration:underline;text-underline-offset:2px">Sign in</button></p>`;
   } else {
-    fields = f("login-email", "Work email", "email", a.email || "", H(v.setAuthField("email")), "username", "")
+    // The server signs you in by email OR by name ("Ross Hixon" predates
+    // email on this instance). type="text", not "email" — the browser's
+    // @-validation must not reject a name the server would accept.
+    fields = f("login-email", "Work email or name", "text", a.email || "", H(v.setAuthField("email")), "username", "Your sign-in email, or your name if your account predates email.")
       + f("login-pass", "Password", "password", a.pass || "", H(v.setAuthField("pass")), "current-password", "");
     foot = `<p style="margin:15px 0 0;font-size:12px;color:var(--ft)">New here? <button type="button" data-click="${H(v.switchAuthMode("register"))}" style="font:inherit;color:var(--bp);text-decoration:underline;text-underline-offset:2px">Create your account</button></p>`;
   }
@@ -921,6 +924,83 @@ function uiViewer(v) {
         ${v.viewerIsPicker ? `<button data-click="${H(v.viewerToggleAttach)}" class="hb-ls" style="${v.viewerAttachStyle}">${esc(v.viewerAttachLabel)}</button>
         <button data-click="${H(v.viewerClose)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">${esc(v.viewerDoneLabel)}</button>` : ""}
         ${v.viewerIsPlain ? `<button data-click="${H(v.viewerClose)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">Done marking up</button>` : ""}
+      </div>
+    </div>
+  </div>`;
+}
+
+// ——— Unified share sheet (lines 1359–1451) ————————————————————————————————
+function uiShare(v) {
+  if (!v.shareOpen) return "";
+  return `<div style="position:fixed;inset:0;z-index:132;background:rgba(24,27,30,.42);display:flex;justify-content:flex-end">
+    <div role="dialog" aria-modal="true" aria-labelledby="share-title" style="width:min(700px,100%);height:100%;background:var(--pn);border-left:1px solid var(--ls);box-shadow:var(--shp);display:flex;flex-direction:column;animation:fadein .16s ease-out">
+      <div style="flex:none;padding:15px 20px;border-bottom:1px solid var(--ln);display:flex;align-items:flex-start;gap:12px">
+        <div style="flex:1;min-width:0">
+          <p style="margin:0 0 4px;font:500 10px var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--ac)">Share from job ${esc(v.shareJob)}</p>
+          <h2 id="share-title" style="margin:0;font:600 19px/1.25 var(--fd)">Choose who gets what</h2>
+        </div>
+        <button data-click="${H(v.closeShare)}" data-ref="share" class="hb-ls-ink" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;font:600 12.5px var(--fd);color:var(--mu);white-space:nowrap">Cancel and close</button>
+      </div>
+      <div style="flex:1;overflow-y:auto;padding:16px 20px 20px">
+        <p style="margin:0 0 16px;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">Nothing is sent to everyone by default. Pick the people, then pick what each audience receives. Customer-safe items are marked; internal items cannot be selected for a customer contact at all.</p>
+
+        <section aria-labelledby="share-cust" style="margin-bottom:16px;border:1px solid var(--ln);border-radius:7px;overflow:hidden">
+          <div style="padding:11px 14px;background:var(--bps);border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <h3 id="share-cust" style="margin:0;flex:1;font:600 14px var(--fd);color:var(--bp)">Customer contacts</h3>
+            <p style="margin:0;font:11.5px var(--fm);color:var(--bp)">Customer-safe items only</p>
+          </div>
+          <ul style="list-style:none;margin:0;padding:0">
+            ${v.shareCustomer.map((p) => `<li style="display:flex;gap:11px;align-items:flex-start;padding:11px 14px;border-bottom:1px solid var(--ln)">
+              <input id="${p.id}" type="checkbox" ${p.on ? "checked" : ""} data-change="${H(p.toggle)}" style="width:19px;height:19px;margin:2px 0 0;accent-color:var(--ac);flex:none">
+              <label for="${p.id}" style="flex:1;cursor:pointer">
+                <span style="display:block;font:600 var(--fzs) var(--fd)">${esc(p.name)}</span>
+                <span style="display:block;font-size:12.5px;color:var(--mu)">${esc(p.role)}</span>
+                <span style="display:block;font:11.5px var(--fm);color:var(--ft);margin-top:2px">${esc(p.email)}</span>
+              </label>
+            </li>`).join("")}
+          </ul>
+          ${v.noCustomerContacts ? `<p style="margin:0;padding:16px 14px;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">No customer contacts on this job. Add one on Job setup before sending anything to the customer.</p>` : ""}
+        </section>
+
+        <section aria-labelledby="share-int" style="margin-bottom:16px;border:1px solid var(--ln);border-radius:7px;overflow:hidden">
+          <div style="padding:11px 14px;background:var(--as);border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+            <h3 id="share-int" style="margin:0;flex:1;font:600 14px var(--fd);color:var(--ac)">Internal personnel</h3>
+            <p style="margin:0;font:11.5px var(--fm);color:var(--ac)">Anything on this job</p>
+          </div>
+          <ul style="list-style:none;margin:0;padding:0">
+            ${v.shareInternal.map((p) => `<li style="display:flex;gap:11px;align-items:flex-start;padding:11px 14px;border-bottom:1px solid var(--ln)">
+              <input id="${p.id}" type="checkbox" ${p.on ? "checked" : ""} data-change="${H(p.toggle)}" style="width:19px;height:19px;margin:2px 0 0;accent-color:var(--ac);flex:none">
+              <label for="${p.id}" style="flex:1;cursor:pointer">
+                <span style="display:block;font:600 var(--fzs) var(--fd)">${esc(p.name)}</span>
+                <span style="display:block;font-size:12.5px;color:var(--mu)">${esc(p.role)}</span>
+                <span style="display:block;font:11.5px var(--fm);color:var(--ft);margin-top:2px">${esc(p.email)}</span>
+              </label>
+            </li>`).join("")}
+          </ul>
+          ${v.noInternal ? `<p style="margin:0;padding:16px 14px;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">No other approved accounts with an email yet. An internal copy can still be drafted unaddressed — you choose the recipients in Outlook.</p>` : ""}
+        </section>
+
+        <fieldset style="margin:0;padding:0;border:1px solid var(--ln);border-radius:7px;overflow:hidden">
+          <legend style="float:left;width:100%;margin:0;padding:11px 14px;background:var(--p2);border-bottom:1px solid var(--ln);font:600 14px var(--fd)">What to include</legend>
+          <ul style="list-style:none;margin:0;padding:0;clear:both">
+            ${v.shareContent.map((c) => `<li style="display:flex;gap:11px;align-items:flex-start;padding:11px 14px;border-bottom:1px solid var(--ln);${c.rowStyle}">
+              <input id="${c.id}" type="checkbox" ${c.on ? "checked" : ""} ${c.disabled ? "disabled" : ""} data-change="${H(c.toggle)}" style="width:19px;height:19px;margin:2px 0 0;accent-color:var(--ac);flex:none">
+              <label for="${c.id}" style="flex:1;cursor:pointer">
+                <span style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <span style="font:600 var(--fzs) var(--fd)">${esc(c.label)}</span>
+                  <span style="${c.tagStyle}">${esc(c.tag)}</span>
+                </span>
+                <span style="display:block;font-size:12.5px;color:var(--mu);margin-top:3px;text-wrap:pretty">${esc(c.note)}</span>
+                ${c.blocked ? `<span style="display:block;font:11.5px var(--fm);color:var(--er);margin-top:4px">${esc(c.blockedWhy)}</span>` : ""}
+              </label>
+            </li>`).join("")}
+          </ul>
+        </fieldset>
+      </div>
+      <div style="flex:none;padding:14px 20px;border-top:1px solid var(--ln);background:var(--p2);display:flex;gap:9px;align-items:center;flex-wrap:wrap">
+        <p style="margin:0;flex:1;min-width:200px;font-size:12px;color:var(--mu);text-wrap:pretty" aria-live="polite">${esc(v.shareSummary)}</p>
+        <button data-click="${H(v.closeShare)}" class="hb-ls" style="min-height:var(--tap);padding:9px 15px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 13px var(--fd)">Cancel</button>
+        <button data-click="${H(v.confirmShare)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">${esc(v.shareSubmitLabel)}</button>
       </div>
     </div>
   </div>`;

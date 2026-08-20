@@ -14,9 +14,10 @@ cannot be recalled — reversing a send restores the RECORD's state, and says
 so. Reversing an entry whose object has since been deleted fails its
 downstream check rather than resurrecting half a world.
 
-TODO(v2.x): widen the reversible set (documents, areas, look-ahead rows are
+TODO(v2.x): widen the reversible set further (documents and work areas are
 still undo-bar-only via client inverses) and chain-detection (reversing a
 create whose object has since been edited should warn with the edit list).
+Look-ahead rows joined the covered set 2026-08-19.
 """
 from __future__ import annotations
 
@@ -140,6 +141,8 @@ def _downstream_problem(revert: dict[str, Any]) -> str | None:
         return "The purchase order this invoice belonged to has since been deleted."
     if op == "record.patch" and not exists("pipeline_records", revert["id"]):
         return "The record this entry touched has since been deleted."
+    if op == "laitem.recreate" and not exists("lookahead_periods", revert["row"]["period_id"]):
+        return "The look-ahead period this row belonged to has since been deleted."
     if op == "task.patch" and not exists("schedule_tasks", revert["id"]):
         return "The schedule task this entry edited has since been deleted — possibly by a re-import."
     if op in ("po.recreate", "co.recreate"):
@@ -192,6 +195,10 @@ def apply(activity_id: int, actor: str, is_admin: bool) -> dict[str, Any]:
             _patch(conn, "schedule_tasks", revert["id"], revert["fields"])
         elif op == "briefing.patch":
             _patch(conn, "briefings", revert["id"], revert["fields"])
+        elif op == "laitem.delete":
+            conn.execute("DELETE FROM lookahead_items WHERE id = ?", (revert["id"],))
+        elif op == "laitem.recreate":
+            _insert(conn, "lookahead_items", revert["row"])
         elif op == "meta.patch":
             # Route through the meta helper so clears behave identically —
             # but without logging a second revert for the reversal itself.

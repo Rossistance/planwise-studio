@@ -22,6 +22,18 @@
         "scripts/dev-server.py"
       ],
       "port": 8781
+    },
+    {
+      "name": "design-proto",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8741",
+        "--directory",
+        "C:/Users/rhixon/planwise claude design migration/design"
+      ],
+      "port": 8741
     }
   ]
 }

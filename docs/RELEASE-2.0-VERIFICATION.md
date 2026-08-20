@@ -108,3 +108,27 @@ These three re-run on Ross's PC after deploy — the ladder's fallback rungs
 - [x] 1.x deep links resolve (legacy page keys mapped).
 - [x] A 1.x database opens under 2.0 unchanged (additive migrations only;
   `test_migrations` extended).
+
+## Post-release feedback round (2026-08-19, owner walkthrough)
+
+- [x] Typography: canvas `measureText` in BOTH tabs proved the design canvas
+  never loaded its Google Fonts — the approved look was the fallback stack.
+  Tokens now carry the system stack (Segoe UI Semibold / Segoe UI / Cascadia
+  Mono); fonts.css link and SW precaches removed (cache v6); drift test
+  re-pinned.
+- [x] Login accepts a name again: `type="text"`, label "Work email or name" —
+  signed in as "Dev Admin" by name in the browser pane.
+- [x] Vista live on both real instances via `/api/health` (local 8771:
+  workbook found on OneDrive, 9,359 jobs; Render: same extract).
+- [x] Unified share sheet (was deferred): opens from briefing + look pages
+  with the pressed button's item preselected; customer contacts + internal
+  personnel listed from real data; internal items disable with the blocking
+  line while a customer contact is selected; one draft per audience through
+  the real generators; briefing send marks the row Sent, undoably.
+- [x] Companion pairing guard answered live from the dev identity ("paired to
+  Ross Hixon") and the sheet surfaced it, then handed over the `.eml` files
+  (200; latin-1 filename regression fixed and pinned by test).
+- [x] Briefing "Reword with drafting help": no-key fallback answers honestly
+  ("Nothing was reworded … The blocks are untouched.").
+- [x] Look-ahead row add/remove now reversible server-side
+  (`laitem.delete` / `laitem.recreate`), downstream check included.

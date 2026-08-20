@@ -251,8 +251,15 @@ def add_item(period_id: str, fields: dict[str, Any], task_id: str | None = None,
     conn.execute(f"INSERT INTO lookahead_items ({cols}) VALUES ({','.join('?' * len(rec))})",  # noqa: S608
                  tuple(rec.values()))
     conn.commit()
-    return dict(conn.execute("SELECT * FROM lookahead_items WHERE id = ?",
-                             (rec["id"],)).fetchone())
+    out = dict(conn.execute("SELECT * FROM lookahead_items WHERE id = ?",
+                            (rec["id"],)).fetchone())
+    period = get_period(period_id) or {}
+    out["activity_id"] = db.log_activity(
+        actor, period.get("job_number"), "lookahead.item.add",
+        rec.get("description") or "(untitled)",
+        object_kind="laitem", object_id=rec["id"],
+        revert={"op": "laitem.delete", "id": rec["id"]})
+    return out
 
 
 def update_item(item_id: str, fields: dict[str, Any],
@@ -288,9 +295,20 @@ def toggle_day(item_id: str, index: int, on: bool | None = None,
 
 def delete_item(item_id: str, actor: str | None = None) -> bool:
     conn = db.connect()
+    row = conn.execute(
+        "SELECT i.*, p.job_number FROM lookahead_items i "
+        "JOIN lookahead_periods p ON p.id = i.period_id WHERE i.id = ?",
+        (item_id,)).fetchone()
     cur = conn.execute("DELETE FROM lookahead_items WHERE id = ?", (item_id,))
     conn.commit()
-    return cur.rowcount > 0
+    if cur.rowcount == 0:
+        return False
+    snap = {k: row[k] for k in row.keys() if k != "job_number"}
+    db.log_activity(actor, row["job_number"], "lookahead.item.delete",
+                    row["description"] or "(untitled)",
+                    object_kind="laitem", object_id=item_id,
+                    revert={"op": "laitem.recreate", "row": snap})
+    return True
 
 
 def seed_from_schedule(period_id: str, actor: str | None = None) -> dict[str, Any]:

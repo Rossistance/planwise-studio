@@ -28,9 +28,12 @@
   el.dataset.density = prefs.density || "comfortable";
   el.dataset.mode = prefs.mode || "desk";
   if (prefs.accent) { el.style.setProperty("--ac", prefs.accent); el.style.setProperty("--ah", prefs.accent); }
+  // TEMPORARY type tryout: applied pre-paint so candidates don't flash.
+  try { var ft = localStorage.getItem("pw.fontTry"); if (ft) el.dataset.font = ft; } catch (e) {}
 })();
 </script>
 <link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="fonts-candidates.css">
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="app.css">
 </head>

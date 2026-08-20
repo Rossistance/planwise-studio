@@ -1,0 +1,21 @@
+/* TEMPORARY type tryout (2026-08-20) — three candidate faces the owner can
+   flip between live, built by the exact PlanWise Sans pipeline (weights cut
+   ~50 heavier, digits equal-width, ttfautohint + smoothing gasp; OFL, see
+   fonts/OFL.txt). html[data-font] swaps the type tokens; no data-font means
+   the shipping face. This file and the bar that drives it are deleted once
+   the owner picks — the winner becomes PlanWise Sans. */
+@font-face{font-family:'PW Nunito Sans';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/PWNunitoSans-400.woff2') format('woff2');}
+@font-face{font-family:'PW Nunito Sans';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/PWNunitoSans-500.woff2') format('woff2');}
+@font-face{font-family:'PW Nunito Sans';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/PWNunitoSans-600.woff2') format('woff2');}
+@font-face{font-family:'PW Nunito Sans';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/PWNunitoSans-700.woff2') format('woff2');}
+@font-face{font-family:'PW Asap';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/PWAsap-400.woff2') format('woff2');}
+@font-face{font-family:'PW Asap';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/PWAsap-500.woff2') format('woff2');}
+@font-face{font-family:'PW Asap';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/PWAsap-600.woff2') format('woff2');}
+@font-face{font-family:'PW Asap';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/PWAsap-700.woff2') format('woff2');}
+@font-face{font-family:'PW Figtree';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/PWFigtree-400.woff2') format('woff2');}
+@font-face{font-family:'PW Figtree';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/PWFigtree-500.woff2') format('woff2');}
+@font-face{font-family:'PW Figtree';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/PWFigtree-600.woff2') format('woff2');}
+@font-face{font-family:'PW Figtree';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/PWFigtree-700.woff2') format('woff2');}
+html[data-font="nunito"]{--fd:'PW Nunito Sans','Segoe UI',system-ui,sans-serif;--fb:'PW Nunito Sans','Segoe UI',system-ui,sans-serif;--fm:'PW Nunito Sans','Segoe UI',system-ui,sans-serif}
+html[data-font="asap"]{--fd:'PW Asap','Segoe UI',system-ui,sans-serif;--fb:'PW Asap','Segoe UI',system-ui,sans-serif;--fm:'PW Asap','Segoe UI',system-ui,sans-serif}
+html[data-font="figtree"]{--fd:'PW Figtree','Segoe UI',system-ui,sans-serif;--fb:'PW Figtree','Segoe UI',system-ui,sans-serif;--fm:'PW Figtree','Segoe UI',system-ui,sans-serif}

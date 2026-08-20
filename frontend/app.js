@@ -29,6 +29,7 @@ const App = {
     // — rail
     railPin: (() => { try { const v = localStorage.getItem("pw.railPin"); return v === "open" || v === "closed" || v === "auto" ? v : "open"; } catch (e) { return "open"; } })(),
     railHover: false,
+    fontTry: (() => { try { return localStorage.getItem("pw.fontTry") || ""; } catch (e) { return ""; } })(),
     jobsOpen: false, jobQuery: "", jobHits: [],
 
     // — header / search
@@ -337,6 +338,22 @@ const App = {
   },
   setAccent: (color) => () => {
     savePrefs({ accent: color, live: "Accent colour changed." });
+  },
+
+  // TEMPORARY type tryout (deleted once the owner picks a face)
+  setFontTry: (key) => () => {
+    try { key ? localStorage.setItem("pw.fontTry", key) : localStorage.removeItem("pw.fontTry"); } catch (e) {}
+    if (key) document.documentElement.dataset.font = key;
+    else delete document.documentElement.dataset.font;
+    setState({ fontTry: key });
+  },
+
+  buildTypeTry() {
+    const cur = this.state.fontTry || "";
+    const opt = (key, label) => ({ key, label, on: key === cur, pick: App.setFontTry(key) });
+    return { typeTryOptions: [
+      opt("", "Current"), opt("nunito", "Nunito"), opt("asap", "Asap"), opt("figtree", "Figtree"),
+    ] };
   },
 
   // ————— rail ————————————————————————————————————————————————————————————
@@ -1348,6 +1365,7 @@ Object.assign(App, {
       ...this.buildThread(),
       ...this.buildViewer(),
       ...this.buildShare(),
+      ...this.buildTypeTry(),
       ...this.buildBrief(),
       ...this.buildRegister(),
       ...this.buildDetail(),
@@ -1377,7 +1395,7 @@ Object.assign(App, {
           </div>
         </div>
       </div>`
-      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiShare(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v) + uiBars(v);
+      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiShare(v) + uiTypeTry(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v) + uiBars(v);
   },
 });
 

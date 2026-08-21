@@ -1493,6 +1493,12 @@ async function companionFetch(path, body) {
 }
 const isNetErr = (err) => /failed to fetch|networkerror|load failed|connection refused/i.test(err.message || "");
 
+function draftWhere(out) {
+  return out && out.mode === "mailbox"
+    ? " It is saved in your Drafts folder and syncing to your mailbox — open Outlook and give it a few seconds."
+    : " It is open in a draft window.";
+}
+
 function downloadEmlUrl(url, live) {
   // Binary response, cookie rides along; synthesized <a download>.
   fetch(url, { credentials: "same-origin" }).then(async (r) => {
@@ -1704,12 +1710,12 @@ Object.assign(App, {
     }
     const unaddressed = !(payload.to || "").trim();
     try {
-      await companionFetch("/draft", { to: payload.to, subject: payload.subject,
+      const drafted = await companionFetch("/draft", { to: payload.to, subject: payload.subject,
         body: payload.body, attachments: payload.attachments, display: true });
       const upd = await api(`/api/jobs/${job}/cos/${coId}`, { method: "PATCH",
         body: JSON.stringify({ status: "Awaiting Outlook" }) });
       setState({ co: null });
-      App.act("The change order letter is drafted in Outlook with the PDF and Word copies attached." +
+      App.act("The change order letter is drafted in Outlook with the PDF and Word copies attached." + draftWhere(drafted) +
         (unaddressed ? " The To: line is empty — this job has no customer contact yet, so address it in Outlook, or add the contact on Job setup for next time." : "") +
         " It shows as Awaiting Outlook until you press Send there.",
         upd.activity_id, ["job"]);
@@ -4442,14 +4448,14 @@ Object.assign(App, {
       // Internal items with no internal recipient still go out — unaddressed,
       // for the PM to route in Outlook (the look-ahead team rule, D19).
       if (!intTo && picked.some((d) => d.aud === "internal")) drafts.push(await build("internal"));
-      let n = 0;
+      let n = 0, lastDraft = null;
       for (const d of drafts.filter(Boolean)) {
-        await companionFetch("/draft", { to: d.to, subject: d.subject, html: d.html,
+        lastDraft = await companionFetch("/draft", { to: d.to, subject: d.subject, html: d.html,
           attachments: d.attachments, display: true });
         n++;
       }
       const custCount = people.filter((k) => k.startsWith("cust:")).length;
-      const msg = "Outlook drafted " + n + (n === 1 ? " email" : " emails") + ". " +
+      const msg = "Outlook drafted " + n + (n === 1 ? " email" : " emails") + "." + draftWhere(lastDraft) + " " +
         (custCount ? custCount + " customer recipient" + (custCount === 1 ? "" : "s") + " get the customer copy only." : "All internal.") +
         " Nothing sends until you press Send in Outlook.";
       if (picked.some((d) => d.id.startsWith("brief"))) {

@@ -294,3 +294,30 @@ class FakeAsyncResponse:
 
     def raise_for_status(self):
         return None
+
+
+def test_new_outlook_detection_reads_the_toggle_and_the_process(monkeypatch):
+    """UseNewOutlook=1 or a running olk.exe — either means the person lives
+    in new Outlook and drafting must go the hidden-save-and-sync way."""
+    from companion import companion as comp
+
+    class FakeKey:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+
+    import types
+    fake_winreg = types.SimpleNamespace(
+        HKEY_CURRENT_USER=0,
+        OpenKey=lambda *a, **k: FakeKey(),
+        QueryValueEx=lambda k, name: (1, 4))
+    import sys
+    monkeypatch.setitem(sys.modules, "winreg", fake_winreg)
+    assert comp.new_outlook_preferred() is True
+
+    fake_winreg.QueryValueEx = lambda k, name: (0, 4)
+    import subprocess as sp
+    monkeypatch.setattr(sp, "run", lambda *a, **k: types.SimpleNamespace(stdout="INFO: No tasks"))
+    assert comp.new_outlook_preferred() is False
+
+    monkeypatch.setattr(sp, "run", lambda *a, **k: types.SimpleNamespace(stdout="olk.exe  1234 Console"))
+    assert comp.new_outlook_preferred() is True

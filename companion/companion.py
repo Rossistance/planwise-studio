@@ -394,7 +394,36 @@ def _make_visible(app_) -> None:
         log.warning("could not show the Outlook window (%s)", exc)
 
 
-def _outlook(start_if_needed: bool = False):
+def new_outlook_preferred() -> bool:
+    """Is NEW Outlook (olk.exe) this person's Outlook?
+
+    Two signals, either sufficient: the toggle classic writes when someone
+    flips "Try the new Outlook" (UseNewOutlook=1), or olk.exe actually
+    running right now. New Outlook has no COM surface at all, so when it is
+    the daily driver the draft window path is pointless — the useful move is
+    to save the draft through a HIDDEN classic instance and push it to the
+    mailbox, where new Outlook's Drafts folder shows it seconds later
+    (owner's design, 2026-08-21).
+    """
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Office\16.0\Outlook\Preferences") as k:
+            if winreg.QueryValueEx(k, "UseNewOutlook")[0] == 1:
+                return True
+    except OSError:
+        pass
+    try:
+        import subprocess
+        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq olk.exe", "/NH"],
+                             capture_output=True, text=True, timeout=10,
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        return "olk.exe" in (out.stdout or "")
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _outlook(start_if_needed: bool = False, visible: bool = True):
     """Attach to the user's Outlook. Start one ONLY when a person asked.
 
     WHY THIS IS NOT `Dispatch`.
@@ -474,11 +503,12 @@ def _outlook(start_if_needed: bool = False):
         raise HTTPException(status_code=503, detail=(
             f"Desktop Outlook is not reachable via COM: {exc}. {hint}")) from exc
 
-    if not running:
+    started = not running
+    if started and visible:
         _make_visible(app_)
 
     try:
-        return app_, app_.GetNamespace("MAPI")
+        return app_, app_.GetNamespace("MAPI"), started
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=503, detail=(
             f"Outlook is open but not answering: {exc}. "
@@ -518,7 +548,7 @@ def health():
             "paired_user": paired_user(),
             "server": server_url(), "poll": poll_state, "watch": watch_state}
     try:
-        _app, ns = _outlook()
+        _app, ns, _started = _outlook()
         acct = ns.Accounts.Item(1).SmtpAddress if ns.Accounts.Count else None
         info.update({"outlook": True, "account": acct})
     except HTTPException as exc:
@@ -660,9 +690,15 @@ def pair(body: dict = Body(...), origin: str | None = Header(default=None)):
 def create_draft(body: dict = Body(...)):
     """Create (never send) a draft in this user's Outlook Drafts folder."""
     _check(body.get("token"))
-    # A person pressed "Draft in Outlook". Starting Outlook is what they asked
-    # for, so this is one of the two paths allowed to — visibly.
-    app_, _ns = _outlook(start_if_needed=True)
+    # A person pressed "Draft in Outlook". Starting Outlook is what they
+    # asked for, so this is one of the two paths allowed to. HOW it starts
+    # depends on which Outlook this person lives in: classic users get the
+    # draft window as always; new-Outlook users get a hidden classic
+    # instance that saves the draft and pushes it to the mailbox, because a
+    # classic window would be a stranger on their desktop and new Outlook
+    # itself has no COM to drive.
+    new_pref = new_outlook_preferred()
+    app_, ns, started = _outlook(start_if_needed=True, visible=not new_pref)
 
     mail = app_.CreateItem(0)  # olMailItem
     mail.Subject = body.get("subject") or ""
@@ -710,7 +746,28 @@ def create_draft(body: dict = Body(...)):
     # whole point is that a human reviews and presses Send (D10), so putting
     # the composed mail in front of them beats asking them to go and find it.
     opened = False
-    if body.get("display", True):
+    mode = "window"
+    if new_pref:
+        # New-Outlook mode: no window to show. Kick a sync so the saved
+        # draft reaches the mailbox — that is where new Outlook reads its
+        # Drafts folder from — and if this request started the hidden
+        # classic instance, give the sync a moment and fold it away (a
+        # lingering headless Outlook is the ghost this file's own notes
+        # warn about).
+        mode = "mailbox"
+        try:
+            sync = ns.SyncObjects
+            for i in range(1, sync.Count + 1):
+                sync.Item(i).Start()
+        except Exception:  # noqa: BLE001 — cached mode syncs on its own soon
+            pass
+        if started:
+            time.sleep(6)
+            try:
+                app_.Quit()
+            except Exception:  # noqa: BLE001
+                pass
+    elif body.get("display", True):
         try:
             mail.Display(False)  # modeless — never block the companion
             opened = True
@@ -719,7 +776,7 @@ def create_draft(body: dict = Body(...)):
 
     return {"drafted": True, "entry_id": mail.EntryID,
             "conversation_topic": mail.Subject,
-            "opened": opened,
+            "opened": opened, "mode": mode,
             "unresolved": unresolved}
 
 
@@ -734,7 +791,7 @@ def show_drafts(body: dict = Body(...)):
     _check(body.get("token"))
     # Likewise: the whole point of this call is to put Outlook in front of the
     # user, so an Outlook that has to be started is started where they can see it.
-    _app, ns = _outlook(start_if_needed=True)
+    _app, ns, _started = _outlook(start_if_needed=True)
     drafts = ns.GetDefaultFolder(16)  # olFolderDrafts
     try:
         explorer = _app.ActiveExplorer()
@@ -760,7 +817,7 @@ def _scan_sent(queries: list[dict]) -> list[dict]:
     once it is Sent, the customer's reply was then invisible too. One missed
     event silently killed the whole chain.
     """
-    _app, ns = _outlook()
+    _app, ns, _started = _outlook()
     sent_folder = ns.GetDefaultFolder(5)  # olFolderSentMail
 
     wanted: dict[str, str] = {}
@@ -842,7 +899,7 @@ def _scan_inbox(queries: list[dict]) -> dict:
     every open RFI and submittal that becomes the dominant cost, so the topic
     map is built first and the folder is walked once.
     """
-    _app, ns = _outlook()
+    _app, ns, _started = _outlook()
     inbox = ns.GetDefaultFolder(6)  # olFolderInbox
 
     watched: dict[str, list[dict]] = {}

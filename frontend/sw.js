@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v23";     // the tour defers, one close per screen, connectors on top
+const VERSION = "planwise-shell-v24";     // close works, zoom is real, a page can reach an RFI again
 const SHELL = [
   "/",
   "/index.html",

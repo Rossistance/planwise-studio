@@ -620,6 +620,10 @@ function pageThread(v) {
               <button data-click="${H(p.open)}" class="hb-ac" style="min-height:var(--tap);padding:7px 12px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 11.5px var(--fd);white-space:nowrap">Open the page</button>
             </li>`).join("")}
           </ul>` : `<p style="margin:0;font-size:var(--fzs);color:var(--mu)">No pages attached. The package is the email alone.</p>`}
+          ${v.threadCanAttach ? `<div style="margin-top:10px;display:flex;gap:9px;flex-wrap:wrap">
+            ${v.threadDocs.map((d) => `<button data-click="${H(d.pick)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">${esc(d.label)}</button>`).join("")}
+          </div>` : ""}
+          ${v.threadNoDocs ? `<p style="margin:10px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">No drawing sets on this job yet. Upload one on the Drawings page and its pages can be attached here.</p>` : ""}
           <p style="margin:11px 0 0;padding:11px 13px;border:1px solid var(--ln);border-left:3px solid var(--bp);border-radius:0 6px 6px 0;background:var(--bps);font-size:12.5px;color:var(--mu);text-wrap:pretty">The package carries the original page plus this record's own layer. The internal team layer stayed in the building.</p>
         </div>
       </section>

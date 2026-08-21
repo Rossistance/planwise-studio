@@ -222,3 +222,51 @@ def test_every_companion_state_carries_a_way_out():
     for handler in ("recheckCompanion", "openPairPage", "openOutlook"):
         assert handler in app, handler
     assert "Open Outlook now" in app
+
+
+def test_every_button_has_a_handler_behind_it():
+    """`H(v.foo)` with no `foo` in the view-model renders a button that does
+    nothing at all. That is how "Close this panel" was dead on every drawer
+    for a whole release — it had a working duplicate in the footer hiding it
+    (owner, 2026-08-21). This walks every handler binding in the markup and
+    fails on the first one the view-model never defines."""
+    markup = read("ui.js") + read("pages.js")
+    app = read("app.js")
+    used = sorted(set(re.findall(r"H\(v\.([A-Za-z_][A-Za-z0-9_]*)\)", markup)))
+    assert used, "no handler bindings found — the scan is broken, not the app"
+    dead = [k for k in used
+            if not re.search(r"(^|[^A-Za-z0-9_.])" + k + r"\s*:", app, re.M)]
+    assert not dead, f"buttons bound to nothing: {dead}"
+
+
+def test_the_gantt_zoom_is_applied_as_a_real_width():
+    """The chart's width was authored as a min-width that stopped being
+    honoured after first paint: at 274% the attribute said 1976px while the
+    element still rendered at the container's width, so the axis never spread
+    and the dependency lines had nothing longer to span."""
+    app = read("app.js")
+    assert "canvas.style.width = px" in app
+    assert "board.clientWidth" in app          # floored at the visible width
+
+
+def test_a_drawing_page_can_still_be_put_on_a_record():
+    """The viewer's picker mode survived the migration; the way IN did not,
+    so an RFI could no longer carry a drawing page at all."""
+    app = read("app.js")
+    pages = read("pages.js")
+    assert '"picker", { recordId: rec.id }' in app, "nothing opens the viewer in picker mode"
+    assert "threadDocs" in app and "threadCanAttach" in app
+    assert "Choose pages from" in app          # the label, built in the view-model
+    assert "v.threadDocs.map" in pages          # and rendered on the thread page
+    # and the record pages must load the library the picker lists
+    assert 'want.add("records"); want.add("documents");' in app
+
+
+def test_register_headers_wrap_so_the_table_fits():
+    """Ten nowrap headers pushed the cost table past its container, which is
+    where the horizontal scrollbar under the cost breakdown came from."""
+    app = read("app.js")
+    colstyle = [ln for ln in app.splitlines() if "const colStyle" in ln]
+    assert colstyle, "colStyle not found"
+    assert "white-space:normal" in colstyle[0]
+    assert "white-space:nowrap" not in colstyle[0]

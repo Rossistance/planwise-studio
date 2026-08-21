@@ -322,7 +322,9 @@ const App = {
     if (page === "sched") { want.add("schedule"); this.loadStagedImport && this.loadStagedImport(); }
     if (page === "look") want.add("lookahead");
     if (page === "docs") want.add("documents");
-    if (page === "rfis" || page === "subs") want.add("records");
+    // Records need the drawing library too: a thread offers its pages for
+    // the outbound package, and the picker cannot list sets it never loaded.
+    if (page === "rfis" || page === "subs") { want.add("records"); want.add("documents"); }
     if (page === "activity") want.add("activity");
     if (page === "brief") want.add("briefing");
     for (const kind of want) {
@@ -407,6 +409,24 @@ const App = {
       board.scrollLeft = Math.max(0, a.ratio * board.scrollWidth - a.offsetX);
     }
     const wrap = svg.parentElement;
+    // Make the zoom REAL before anything is measured.
+    //
+    // The chart's width is authored as a min-width on the scroll content, and
+    // that min-width was not being honoured after the first paint: at 274%
+    // the attribute read 1976px while the element still computed 760px and
+    // rendered at the container's width, so the axis never spread and the
+    // dependency lines had nothing longer to span (owner, 2026-08-21).
+    // An explicit width on the same element applies every time, so the
+    // min-width is restated as one — floored at the visible width so the
+    // chart still fills the board when it is narrower than the screen.
+    const canvas = wrap.parentElement;
+    if (canvas && board) {
+      const want = parseFloat(canvas.style.minWidth) || 0;
+      if (want) {
+        const px = Math.max(want, board.clientWidth) + "px";
+        if (canvas.style.width !== px) canvas.style.width = px;
+      }
+    }
     const wrapRect = wrap.getBoundingClientRect();
     // The overlay is sized to the SCROLLABLE content, not to the visible box.
     // `inset:0` alone sizes it to the viewport of the scroller, so at any zoom
@@ -979,7 +999,12 @@ Object.assign(App, {
     if (!spec) return { hasRegister: "" };
     const s = this.state;
     const align = (right) => right ? ";text-align:right;font-variant-numeric:tabular-nums" : "";
-    const colStyle = (right) => "padding:9px 10px;font:500 var(--lbl) var(--fm);letter-spacing:.09em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ln);white-space:nowrap;text-align:" + (right ? "right" : "left");
+    // Headers WRAP. Held on one line, "Approved work with no purchase order"
+    // alone claims about 300px, and ten such columns pushed the cost table
+    // past its container — which is where the horizontal scrollbar under the
+    // cost breakdown came from (owner, 2026-08-21). Wrapped, the table fits
+    // its width and the bar never appears.
+    const colStyle = (right) => "padding:9px 10px;font:500 var(--lbl) var(--fm);letter-spacing:.09em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ln);white-space:normal;text-wrap:balance;vertical-align:bottom;text-align:" + (right ? "right" : "left");
 
     let rows = spec.rows.slice();
     const si = s.regSort.col;
@@ -1733,6 +1758,10 @@ Object.assign(App, {
       ...this.buildField(),
       ...this.buildBrief(),
       ...this.buildRegister(),
+      // The drawer's ONE close button. It is bound here, at the top level,
+      // because buildDetail() returns early on half a dozen paths and a key
+      // set inside any of them would be missing on the others.
+      closeDetail: () => App.closeDetail(),
       ...this.buildDetail(),
       ...this.buildForm(),
       ...(typeof buildPageVals === "function" ? buildPageVals(this) : {}),
@@ -2094,6 +2123,7 @@ Object.assign(App, {
       coTitle: co.isNew && !co.desc ? "Compose a change order" : co.desc || "CO-" + co.num,
       coStateLabel: co.status === "Unsent" || co.status === "Draft" ? "Draft — editable" : co.status,
       coStateStyle: stamp(STATUS_TONE[co.status] || "wn"),
+      coTogglePreview: () => App.coTogglePreview(),
       coPreviewOn: this.state.coPreview,
       coPreviewAria: this.state.coPreview ? "true" : "false",
       coPreviewLabel: this.state.coPreview ? "Hide the preview" : "Show the preview",
@@ -3916,6 +3946,17 @@ Object.assign(App, {
         open: App.openViewer(a.document_id, a.page, "markup", { layer: (isR ? "rfi:" : "submittal:") + rec.id }),
       })),
       threadPackageUrl: `/api/records/${rec.id}/package`,
+      // Choosing pages for the package. The viewer has always had a picker
+      // mode — attach/detach per page, live counts — but after the migration
+      // nothing opened it, so a drawing page could no longer be put on an RFI
+      // at all (owner, 2026-08-21). Every drawing set on the job offers its
+      // own way in.
+      threadCanAttach: !!((s.data.documents || {}).documents || []).length,
+      threadNoDocs: !((s.data.documents || {}).documents || []).length,
+      threadDocs: (((s.data.documents || {}).documents) || []).map((d) => ({
+        label: "Choose pages from " + d.name,
+        pick: App.openViewer(d.id, 1, "picker", { recordId: rec.id }),
+      })),
       threadCompare: (() => {
         const c = s.threadCompare;
         if (!c || c.recId !== rec.id) return null;

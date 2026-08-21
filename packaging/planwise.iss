@@ -19,7 +19,7 @@
 ; per-machine install would be wrong anyway.
 
 #define AppName        "PlanWise"
-#define AppVersion     "2.0.4"
+#define AppVersion     "2.0.5"
 #define AppPublisher   "1910 Legacy / White Electrical Construction"
 #define AppExe         "PlanWise.exe"
 #define CompanionExe   "PlanWiseCompanion.exe"

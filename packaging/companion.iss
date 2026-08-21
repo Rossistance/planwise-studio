@@ -14,7 +14,7 @@
 ; /pair page remains the fallback if they skip this page.
 
 #define AppName        "PlanWise Companion"
-#define AppVersion     "2.0.4"
+#define AppVersion     "2.0.5"
 #define AppPublisher   "1910 Legacy / White Electrical Construction"
 #define ExeName        "PlanWiseCompanion.exe"
 

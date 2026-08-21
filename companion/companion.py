@@ -213,12 +213,22 @@ async def _maybe_refresh_vista(manifest: dict) -> None:
     # Daily backstop: 6:30 came and went with this PC off. The first sweep
     # after 7 AM that finds the server's data more than 20 hours old re-runs
     # the task. Throttled hard, so an upstream failure cannot hammer Power BI.
+    # The server stamps as_of with an OFFSET; datetime.now() has none, and
+    # subtracting one from the other raises rather than comparing. Swallowing
+    # that made every sweep read the data as infinitely old and re-pull Power
+    # BI on the two-hour throttle, all day, against data that was minutes
+    # fresh. Compare in whichever kind the stamp itself carries.
     hours_old = float("inf")
     if v.get("as_of"):
         try:
-            hours_old = (now - datetime.fromisoformat(v["as_of"])).total_seconds() / 3600
-        except Exception:  # noqa: BLE001
-            pass
+            stamp = datetime.fromisoformat(v["as_of"])
+            ref = datetime.now(stamp.tzinfo) if stamp.tzinfo else datetime.now()
+            hours_old = (ref - stamp).total_seconds() / 3600
+        except (TypeError, ValueError) as exc:
+            # Narrow, and noisy: an unreadable stamp is a real problem and
+            # must not masquerade as stale data.
+            log.warning("vista as_of unreadable (%r): %s", v.get("as_of"), exc)
+            return
     if hours_old > 20 and now.hour >= 7 and mins_since > 120:
         age = f"{hours_old:.0f} hours old" if hours_old != float("inf") else "missing"
         await asyncio.to_thread(_trigger_vista_pull, "daily backstop — server data " + age)

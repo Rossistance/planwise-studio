@@ -364,3 +364,49 @@ def test_an_incapable_machine_never_fires(monkeypatch):
     fired = _reset_vista(monkeypatch, capable=False)
     asyncio.run(c._maybe_refresh_vista({"vista": {"wanted": True, "as_of": None}}))
     assert fired == []
+
+
+def test_a_timezone_stamped_as_of_is_read_as_fresh(monkeypatch):
+    """The server stamps as_of with an offset. Comparing it against a naive
+    now() raises, and swallowing that read minutes-old data as infinitely
+    stale — re-pulling Power BI every two hours, all day (2026-08-21)."""
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    fired = _reset_vista(monkeypatch)
+    fresh = datetime.now(timezone(timedelta(hours=-4))).isoformat(timespec="seconds")
+    asyncio.run(c._maybe_refresh_vista({"vista": {"wanted": False, "as_of": fresh}}))
+    assert fired == [], "fresh, timezone-stamped data must not trigger a pull"
+
+
+def test_genuinely_old_data_still_triggers_the_backstop(monkeypatch):
+    import asyncio
+    from datetime import datetime, timedelta, timezone
+
+    fired = _reset_vista(monkeypatch)
+    old = (datetime.now(timezone(timedelta(hours=-4))) - timedelta(days=2)).isoformat(timespec="seconds")
+    asyncio.run(c._maybe_refresh_vista({"vista": {"wanted": False, "as_of": old}}))
+    # The backstop only runs after 7am; before then the day hasn't started.
+    if datetime.now().hour >= 7:
+        assert fired and "backstop" in fired[0]
+    else:
+        assert fired == []
+
+
+def test_an_unreadable_stamp_is_reported_not_treated_as_stale(monkeypatch):
+    import asyncio
+    fired = _reset_vista(monkeypatch)
+    asyncio.run(c._maybe_refresh_vista({"vista": {"wanted": False, "as_of": "not-a-date"}}))
+    assert fired == [], "a broken stamp must not masquerade as stale data"
+
+
+def test_health_never_touches_outlooks_object_model(monkeypatch):
+    """Reading Namespace.Accounts to name the mailbox is address-book access,
+    and it popped Outlook's own security guard every time Settings opened."""
+    import inspect
+    # Comments explain the history; only the CODE is under test.
+    code = "\n".join(line.split("#", 1)[0]
+                     for line in inspect.getsource(c.health).splitlines())
+    assert "Accounts" not in code, "health reads the address book again"
+    assert "_outlook(" not in code, "health opens a COM connection again"
+    assert "outlook_is_open()" in code

@@ -1429,6 +1429,7 @@ Object.assign(App, {
         n: u.co_number || "?", sub: u.subcontractor || "", desc: u.description || "",
         amt: money(u.amount_approved), issue: App.issuePoFromCo(u.id) })),
       uncoveredTotal: money((jd.approved_no_po || {}).total || 0),
+      openSubCo: App.openForm("subco"),
 
       // page bodies
       ...this.buildConfirm(),
@@ -1874,7 +1875,7 @@ Object.assign(App, {
         extras: [
           { label: "Compose a change order", click: App.openCO(null, "customer"), hoverClass: "hb-fill",
             style: "min-height:var(--tap);padding:7px 14px;border-radius:6px;border:1px solid var(--ac);background:var(--as);color:var(--ac);font:600 12.5px var(--fd);letter-spacing:.03em;white-space:nowrap" },
-          { label: "Log a subcontractor CO", click: App.openCO(null, "subcontractor"), hoverClass: "hb-ls",
+          { label: "Log a subcontractor CO", click: App.openForm("subco"), hoverClass: "hb-ls",
             style: "min-height:var(--tap);padding:7px 14px;border-radius:6px;border:1px solid var(--ln);background:var(--pn);font:600 12.5px var(--fd);white-space:nowrap" },
         ] };
     }
@@ -1983,7 +1984,9 @@ Object.assign(App, {
         detailActions: [
           btn2("Close this panel", "ghost", App.closeDetail),
           btn2("Remove CO-" + (c.co_number || "?"), "ghost", () => { App.closeDetail(); App.coDelete(c.id)(); }),
-          btn2("Open the composer", editable ? "ghost" : "ghost", () => { App.closeDetail(); App.openCO(c.id)(); }),
+          isCust
+            ? btn2("Open the composer", "ghost", () => { App.closeDetail(); App.openCO(c.id)(); })
+            : btn2("Edit this sub CO", "ghost", () => { App.closeDetail(); App.openForm("subco", { coId: c.id })(); }),
           ...(editable && isCust ? [btn2("Send CO-" + (c.co_number || "?"), "primary", () => { App.closeDetail(); App.coSend(c.id)(); })] : []),
         ],
       });
@@ -2141,6 +2144,25 @@ Object.assign(App, {
         review: "Logging this order adds its full amount to open committed cost and to the remaining-to-invoice column. Invoices are recorded against it afterwards from its own panel.",
       };
     }
+    if (kind === "subco") {
+      const editing = (ctx || {}).coId
+        ? ((jd.change_orders || []).find((c) => c.id === ctx.coId) || {}) : null;
+      return {
+        eyebrow: "Cost & contracts",
+        title: editing ? "Edit sub CO " + (editing.co_number || "") : "Log a subcontractor change order",
+        submit: editing ? "Save the changes" : "Log this sub CO",
+        intro: "A subcontractor change order is a register entry, not a letter — it prices a change a sub has raised. Once it is Approved, the money is owed whether or not anything has been ordered against it.",
+        fields: [
+          ["number", "CO number", "text", { req: true, value: editing ? (editing.co_number || "") : App.nextCoNumber("subcontractor"), hint: "S-numbers run in sequence. Change it if the sub's paperwork says otherwise." }],
+          ["subcontractor", "Subcontractor", "text", { req: true, value: editing ? (editing.subcontractor || "") : "", placeholder: "Caprock Boring", hint: "Whose change this is." }],
+          ["desc", "Description", "textarea", { req: true, rows: 2, wide: true, value: editing ? (editing.description || "") : "", placeholder: "Rock clause — duct bank run 4", hint: "What changed, in the words the field would use." }],
+          ["date", "Date received", "date", { req: true, value: editing ? (editing.date_submitted || "") : new Date().toISOString().slice(0, 10), hint: "" }],
+          ["amount", "Approved amount, US dollars", "text", { req: false, value: editing && editing.amount_approved ? String(editing.amount_approved) : "", placeholder: "48200.00", hint: "Numbers only. Leave blank until their pricing is approved — approval is what creates exposure." }],
+          ["status", "Status", "select", { req: true, value: editing ? (editing.status || "Draft") : "Draft", hint: "Approved with no purchase order shows as exposure on the cost breakdown and on Invoices & POs until its PO is issued.", options: [["Draft", "Draft"], ["Approved", "Approved"]] }],
+        ],
+        review: "An Approved sub CO with no purchase order appears under \u201CApproved subcontractor COs awaiting a purchase order\u201D on Invoices & POs — issuing the PO from there covers it in one step and clears the exposure line.",
+      };
+    }
     if (kind === "invoice") {
       const po = ((jd.purchase_orders || []).find((p) => p.id === (ctx || {}).po)) || {};
       const amt = po.adjusted_amount !== null && po.adjusted_amount !== undefined ? po.adjusted_amount : po.original_amount;
@@ -2180,7 +2202,7 @@ Object.assign(App, {
   App.submitForm = async function () {
     const f = App.state.form;
     if (!f) return;
-    if (!["po", "invoice", "rfi", "sub"].includes(f.kind)) return baseSubmit();
+    if (!["po", "invoice", "rfi", "sub", "subco"].includes(f.kind)) return baseSubmit();
     const spec = App.formSpec(f.kind, f.ctx);
     const errs = App.formErrors(spec, f);
     if (errs.length) {
@@ -2191,6 +2213,25 @@ Object.assign(App, {
     const job = encodeURIComponent(App.state.job);
     const num = (vv) => parseFloat(String(vv || "").replace(/[^0-9.-]/g, "")) || null;
     try {
+      if (f.kind === "subco") {
+        const vals = f.values || {};
+        const amt = num(vals.amount);
+        const body = { kind: "subcontractor", co_number: vals.number, subcontractor: vals.subcontractor,
+          description: vals.desc, date_submitted: vals.date, amount_approved: amt,
+          status: vals.status || "Draft" };
+        if ((f.ctx || {}).coId) {
+          const out = await api(`/api/jobs/${job}/cos/${f.ctx.coId}`, { method: "PATCH", body: JSON.stringify(body) });
+          setState({ form: null });
+          App.act("Sub CO " + vals.number + " updated.", out.activity_id, ["job"]);
+        } else {
+          const out = await api(`/api/jobs/${job}/cos`, { method: "POST", body: JSON.stringify(body) });
+          setState({ form: null });
+          App.act("Sub CO " + vals.number + " logged for " + vals.subcontractor + "." +
+            (body.status === "Approved" && amt ? " " + money(amt) + " shows as exposure on Invoices & POs until its purchase order is issued." : ""),
+            out.activity_id, ["job"]);
+        }
+        return;
+      }
       if (f.kind === "po") {
         const out = await api(`/api/jobs/${job}/pos`, { method: "POST", body: JSON.stringify({
           po_number: f.values.number, vendor: f.values.vendor, description: f.values.desc,
@@ -2240,6 +2281,27 @@ Object.assign(App, {
 // ————— POs page body: exposure panel + import review above the register ————
 function pagePos(v) {
   let out = "";
+  if ((v.uncovered || []).length) {
+    out += `<section aria-labelledby="unc-heading" style="background:var(--pn);border:1px solid var(--ln);border-left:4px solid var(--er);border-radius:0 8px 8px 0;box-shadow:var(--sh);margin-bottom:14px">
+      <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 id="unc-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Approved subcontractor COs awaiting a purchase order</h2>
+        <span style="${stamp("er")}">${esc(v.uncoveredTotal)} exposure</span>
+        <button data-click="${H(v.openSubCo)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);white-space:nowrap">Log a subcontractor CO</button>
+      </div>
+      <p style="margin:0;padding:10px 16px 0;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">Approved money with nothing ordered against it. Issuing the purchase order covers the commitment and moves the value into open committed cost.</p>
+      <ul style="list-style:none;margin:0;padding:10px 16px 14px;display:flex;flex-direction:column;gap:8px">
+        ${v.uncovered.map((u) => `<li style="display:flex;gap:12px;align-items:center;padding:11px 13px;border:1px solid var(--ln);border-radius:7px;background:var(--p2);flex-wrap:wrap">
+          <span style="font:600 12px var(--fm);color:var(--er);flex:none">${esc(u.n)}</span>
+          <span style="flex:1;min-width:180px">
+            <span style="display:block;font:600 var(--fzs) var(--fd)">${esc(u.sub)}</span>
+            ${u.desc ? `<span style="display:block;font-size:12.5px;color:var(--mu);text-wrap:pretty">${esc(u.desc)}</span>` : ""}
+          </span>
+          <span style="font:600 14px var(--fd);font-variant-numeric:tabular-nums;flex:none">${esc(u.amt)}</span>
+          <button data-click="${H(u.issue)}" class="hb-ah" style="flex:none;min-height:var(--tap);padding:7px 14px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd);white-space:nowrap">Issue the PO</button>
+        </li>`).join("")}
+      </ul>
+    </section>`;
+  }
   if (v.poImport) {
     out += `<section aria-labelledby="poimp-heading" style="background:var(--pn);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
       <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">

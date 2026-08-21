@@ -99,7 +99,7 @@ def test_an_explicit_request_may_start_outlook_but_shows_it(com):
     precisely the thing that made a machine slow for reasons its owner could
     not find.
     """
-    app_, _ns = c._outlook(start_if_needed=True)
+    app_, _ns, _started = c._outlook(start_if_needed=True)
 
     assert com.dispatch_calls == 1
     assert app_.Explorers.added, "an Outlook we started must be given a window"
@@ -108,7 +108,7 @@ def test_an_explicit_request_may_start_outlook_but_shows_it(com):
 @pytest.mark.parametrize("com", [True], indirect=True)
 def test_a_running_outlook_is_attached_to_and_left_alone(com):
     """Dispatch against a running Outlook attaches; it must not add a window."""
-    app_, _ns = c._outlook()
+    app_, _ns, _started = c._outlook()
 
     assert com.dispatch_calls == 1
     assert not app_.Explorers.added, \

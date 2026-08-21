@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v17";     // dynamic gantt axis; PDF imports read Project prints
+const VERSION = "planwise-shell-v18";     // the sub-CO entry surface and awaiting-PO panel return
 const SHELL = [
   "/",
   "/index.html",

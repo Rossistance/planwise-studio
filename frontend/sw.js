@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v16";     // import progress, diff review, undoable wipe
+const VERSION = "planwise-shell-v17";     // dynamic gantt axis; PDF imports read Project prints
 const SHELL = [
   "/",
   "/index.html",

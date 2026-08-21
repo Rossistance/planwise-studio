@@ -372,11 +372,14 @@ function pageSched(v) {
   if (v.schedImporting) {
     const im = v.schedImporting;
     return `<section aria-labelledby="importing-heading" style="background:var(--pn);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px;padding:16px 18px">
-      <h2 id="importing-heading" style="margin:0;font:600 15px var(--fd)">Importing ${esc(im.name)}</h2>
-      <div role="progressbar" aria-valuemin="0" aria-valuemax="100" ${im.parsing ? "" : `aria-valuenow="${im.pct}"`} aria-label="${esc(im.label)}" style="margin:12px 0 8px;height:10px;border-radius:5px;background:var(--ln);overflow:hidden">
-        <span style="display:block;height:100%;width:${im.pct}%;background:var(--ac);border-radius:5px;transition:width .2s ease${im.parsing ? ";animation:pulse 1.2s ease-in-out infinite" : ""}"></span>
+      <div style="display:flex;align-items:center;gap:10px">
+        <h2 id="importing-heading" style="margin:0;flex:1;font:600 15px var(--fd)">${im.failed ? "That import did not land" : `Importing ${esc(im.name)}`}</h2>
+        ${im.failed ? `<button data-click="${H(im.dismiss)}" class="hb-ls" style="min-height:32px;padding:5px 12px;border:1px solid var(--ln);border-radius:6px;font:600 12px var(--fd);color:var(--mu)">Dismiss</button>` : ""}
       </div>
-      <p style="margin:0;font:500 12px var(--fm);color:var(--mu)" aria-live="polite">${esc(im.label)}</p>
+      <div role="progressbar" aria-valuemin="0" aria-valuemax="100" ${im.parsing ? "" : `aria-valuenow="${im.pct}"`} aria-label="${esc(im.label)}" style="margin:12px 0 8px;height:10px;border-radius:5px;background:var(--ln);overflow:hidden">
+        <span style="display:block;height:100%;width:${im.pct}%;background:${im.failed ? "var(--er)" : "var(--ac)"};border-radius:5px;transition:width .2s ease${im.parsing ? ";animation:pulse 1.2s ease-in-out infinite" : ""}"></span>
+      </div>
+      <p role="${im.failed ? "alert" : "status"}" style="margin:0;font:500 ${im.failed ? "13px var(--fb)" : "12px var(--fm)"};color:${im.failed ? "var(--er)" : "var(--mu)"};text-wrap:pretty">${esc(im.label)}</p>
       ${im.parsing ? `<p style="margin:6px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">A Microsoft Project file opens through the schedule engine; a large one can take half a minute. Nothing lands until you review and commit it.</p>` : ""}
     </section>` + (v.hasSched ? "" : "");
   }

@@ -2653,6 +2653,10 @@ Object.assign(App, {
       clearInterval(App._impT);
       setState({ schedImporting: null, ...patch });
     };
+    const fail = (msg) => {
+      clearInterval(App._impT);
+      setState({ schedImporting: { name: file.name, mb, phase: "failed", pct: 100, msg }, live: msg });
+    };
     const fd = new FormData();
     fd.append("file", file);
     const xhr = new XMLHttpRequest();
@@ -2676,12 +2680,12 @@ Object.assign(App, {
         setState({ schedImporting: { ...imp, secs: Math.round((performance.now() - started) / 1000) } });
       }, 500);
     };
-    xhr.onerror = () => done({ live: "The upload failed — check the connection and try again." });
+    xhr.onerror = () => fail("The upload failed — check the connection and try again.");
     xhr.onload = () => {
       let out = {};
       try { out = JSON.parse(xhr.responseText || "{}"); } catch (e) {}
       if (xhr.status < 200 || xhr.status >= 300) {
-        done({ live: "Couldn't read that file: " + (out.detail || xhr.status) });
+        fail("Couldn't read that file: " + (typeof out.detail === "string" ? out.detail : xhr.status));
         return;
       }
       if (out.committed || out.staged === false) {
@@ -2727,12 +2731,29 @@ Object.assign(App, {
 
   // ————— Gantt frame (real project span, padded to month edges) ————————————
   ganttSpan() {
+    // The axis derives from the SAME dates the bars draw with (engine early
+    // dates over stored floors) — a span computed from any other field lets
+    // bars paint past the last month, which is exactly what happened with a
+    // schedule whose engine dates collapsed (2026-08-21). Then breathing
+    // room on both ends, sized to the schedule, so a printed or exported
+    // chart has perspective; month-edge clamping keeps the header honest.
     const sd = this.state.data.schedule || {};
-    const start = sd.project_start ? new Date(sd.project_start + "T00:00:00Z") : new Date();
-    const finish = sd.project_finish ? new Date(sd.project_finish + "T00:00:00Z") : new Date(start.getTime() + 120 * 86400000);
-    const t0 = Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1);
-    const t1 = Date.UTC(finish.getUTCFullYear(), finish.getUTCMonth() + 1, 1);
-    return { t0, t1, span: Math.max(t1 - t0, 86400000) };
+    const DAY = 86400000;
+    const dms = (d) => (d ? Date.parse(d + "T00:00:00Z") : NaN);
+    let lo = Infinity, hi = -Infinity;
+    (sd.tasks || []).forEach((t) => {
+      const a = dms(t.early_start || t.start), b = dms(t.early_finish || t.finish);
+      if (!isNaN(a)) { if (a < lo) lo = a; if (a > hi) hi = a; }
+      if (!isNaN(b)) { if (b < lo) lo = b; if (b > hi) hi = b; }
+    });
+    const today = dms(new Date().toISOString().slice(0, 10));
+    if (!isFinite(lo)) { lo = today; hi = today + 120 * DAY; }
+    if (hi <= lo) hi = lo + DAY;
+    const pad = Math.max(14 * DAY, Math.round((hi - lo) * 0.06));
+    const s0 = new Date(lo - pad), s1 = new Date(hi + pad);
+    const t0 = Date.UTC(s0.getUTCFullYear(), s0.getUTCMonth(), 1);
+    const t1 = Date.UTC(s1.getUTCFullYear(), s1.getUTCMonth() + 1, 1);
+    return { t0, t1, span: Math.max(t1 - t0, DAY), taskLo: lo, taskHi: hi };
   },
   confirmDeleteTask: (t) => () => {
     const links = App.schedLinks();
@@ -2851,7 +2872,9 @@ Object.assign(App, {
           (summary ? ";clip-path:polygon(0 0,100% 0,100% 100%,calc(100% - 6px) 55%,6px 55%,0 100%)" : "") +
           (dragMs ? ";box-shadow:0 3px 10px rgba(24,27,30,.25);cursor:grabbing" : ""),
         fillStyle: "display:block;height:100%;width:" + pct + "%;background:" + color + ";opacity:" + (done ? ".55" : "1") + ";pointer-events:none",
-        todayStyle: "position:absolute;top:0;bottom:0;left:" + todayPct.toFixed(2) + "%;width:1px;background:var(--ac);opacity:.5",
+        todayStyle: todayPct >= 0 && todayPct <= 100
+          ? "position:absolute;top:0;bottom:0;left:" + todayPct.toFixed(2) + "%;width:1px;background:var(--ac);opacity:.5"
+          : "display:none",
         aria: (t.name || "?") + ", " + (barStart || "") + " to " + (barFinish || "") + ", " + pct + "% complete, " +
           (critical ? "on the critical path" : floatTxt || "float not computed") +
           (pr ? ", follows " + (pr.name || "?") + " " + (DEP_NAME[primary.link_type] || primary.link_type || "FS") : "") +
@@ -2865,15 +2888,18 @@ Object.assign(App, {
       ganttMonths: months,
       ganttRows,
       ganttMinWidth: Math.max(760, Math.round(months.length * 90 * zoom)),
-      ganttRange: (sd.project_start ? usDate(sd.project_start) : "—") + " – " + (sd.project_finish ? usDate(sd.project_finish) : "—") + " · today " + usDate(new Date().toISOString().slice(0, 10)),
+      ganttRange: (isFinite(gs.taskLo) ? usDate(new Date(gs.taskLo).toISOString().slice(0, 10)) : "—") + " – " + (isFinite(gs.taskHi) ? usDate(new Date(gs.taskHi).toISOString().slice(0, 10)) : "—") + " · today " + usDate(new Date().toISOString().slice(0, 10)),
       schedZoomIn: () => App.schedZoomIn(), schedZoomOut: () => App.schedZoomOut(), schedZoomReset: () => App.schedZoomReset(),
       schedImporting: s.schedImporting ? {
         name: s.schedImporting.name, mb: s.schedImporting.mb,
         pct: s.schedImporting.pct,
-        label: s.schedImporting.phase === "uploading"
+        label: s.schedImporting.phase === "failed" ? s.schedImporting.msg
+          : s.schedImporting.phase === "uploading"
           ? "Uploading — " + s.schedImporting.pct + "% of " + s.schedImporting.mb + " MB"
           : "Upload complete. The schedule engine is reading the file — " + s.schedImporting.secs + "s",
         parsing: s.schedImporting.phase === "parsing",
+        failed: s.schedImporting.phase === "failed",
+        dismiss: () => setState({ schedImporting: null }),
       } : null,
       schedZoomLabel: Math.round((s.schedZoom || 1) * 100) + "%",
       openNewTask: App.openForm("task"),

@@ -76,6 +76,7 @@ situation, not a substitute for the file.
 """
 from __future__ import annotations
 
+import io
 import re
 from typing import Any
 
@@ -108,6 +109,12 @@ class Page:
         self.height = 0.0
 
 
+import contextvars as _ctxv
+
+_PAGE_BYTES: "_ctxv.ContextVar[bytes]" = _ctxv.ContextVar("pdf_bytes", default=b"")
+_PAGE_INDEX: "_ctxv.ContextVar[int]" = _ctxv.ContextVar("pdf_page_index", default=0)
+
+
 def read_page(page) -> Page:
     """Everything drawn on a page: decoded text with positions, plus graphics.
 
@@ -132,6 +139,13 @@ def read_page(page) -> Page:
     box = page.mediabox
     out.width, out.height = float(box.width), float(box.height)
 
+    # Two text extractors, tried in order. pypdf's visitor is the proven
+    # path — the Siemens fixture pins it — but a print that routes its text
+    # through Form XObjects loses all geometry there: every run lands on one
+    # point (seen on the GUC Community Solar prints, 2026-08-21). When the
+    # visitor's output is degenerate like that, pdfminer's layout engine
+    # reads the same page with real positions. pypdf still does the graphics
+    # walk below — pdfminer has no equivalent.
     def visit(text, cm, tm, _font, size):
         if not text or not text.strip():
             return
@@ -142,6 +156,61 @@ def read_page(page) -> Page:
 
     try:
         page.extract_text(visitor_text=visit)
+    except Exception as exc:  # noqa: BLE001 — a page that won't decode is a warning
+        raise ScheduleError(f"The text on this page could not be decoded: {exc}") from exc
+
+    if out.texts:
+        # Broken geometry has a signature: runs PARKED at the page's origin
+        # corner (x≈0, y≈page height) because their XObject matrices never
+        # composed. A handful can be real furniture; dozens cannot.
+        parked = sum(1 for t in out.texts
+                     if t["x"] < 1.0 and t["y"] > out.height - 1.0)
+        if parked < max(10, 0.15 * len(out.texts)):
+            _read_graphics(page, out)
+            return out
+        out.texts = []          # degenerate geometry: fall through to pdfminer
+
+    try:
+        from pdfminer.high_level import extract_pages
+        from pdfminer.layout import LTChar, LTTextContainer, LTTextLine
+
+        for layout in extract_pages(io.BytesIO(_PAGE_BYTES.get()), page_numbers=[_PAGE_INDEX.get()]):
+            for element in layout:
+                if not isinstance(element, LTTextContainer):
+                    continue
+                for line in element:
+                    if not isinstance(line, LTTextLine):
+                        continue
+                    # Split a line into CELLS at column-sized gaps only:
+                    # "1067 days" and "Wed 7/17/24" must stay one text (the
+                    # duration and date parsers see whole cells), while the
+                    # wide gaps between a print's columns must break — which
+                    # is also what un-fuses a header emitted as one string.
+                    frag, x0, size, prev_x1 = "", None, 8.0, None
+                    def flush():
+                        nonlocal frag, x0, prev_x1
+                        if frag.strip():
+                            out.texts.append({"x": x0 or 0.0, "y": line.y0,
+                                              "text": frag.strip(), "size": size})
+                        frag, x0, prev_x1 = "", None, None
+                    for ch in line:
+                        if not isinstance(ch, LTChar):
+                            continue
+                        c = ch.get_text()
+                        gap = (ch.x0 - prev_x1) if prev_x1 is not None else 0.0
+                        if gap > max(2.2 * (ch.size or 8.0) * 0.5, 4.0):
+                            flush()
+                        if c.isspace():
+                            if frag and not frag.endswith(" "):
+                                frag += " "
+                            prev_x1 = ch.x1
+                            continue
+                        if x0 is None:
+                            x0 = ch.x0
+                        size = ch.size or size
+                        frag += c
+                        prev_x1 = ch.x1
+                    flush()
     except Exception as exc:  # noqa: BLE001 — a page that won't decode is a warning
         raise ScheduleError(f"The text on this page could not be decoded: {exc}") from exc
 
@@ -353,6 +422,10 @@ def _row_to_task(cells, head, name_x, page_no, warnings) -> dict[str, Any] | Non
         s = c["text"].strip()
         if not s:
             continue
+        # Word-granular extraction splits "Wed 7/17/24" into two tokens; the
+        # bare weekday belongs to the date column, never to a task name.
+        if re.fullmatch(r"(Mon|Tue|Wed|Thu|Fri|Sat|Sun)", s):
+            continue
         if _PCT_RE.match(s):
             pct = float(s.rstrip("%"))
             continue
@@ -372,6 +445,15 @@ def _row_to_task(cells, head, name_x, page_no, warnings) -> dict[str, Any] | Non
         name_parts.append(s)
 
     name = normalise_name(" ".join(name_parts))
+    # A tight print can fuse the date cell onto the name cell; a task name
+    # never legitimately ends in "Wed 7/17/24".
+    while True:
+        trimmed = re.sub(
+            r"\s*(Mon|Tue|Wed|Thu|Fri|Sat|Sun)?\s*\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\s*$",
+            "", name)
+        if trimmed == name:
+            break
+        name = trimmed.strip()
     if not name:
         return None
 
@@ -757,6 +839,7 @@ def parse_pdf(data: bytes) -> dict[str, Any]:
         reader = PdfReader(BytesIO(data))
     except Exception as exc:  # noqa: BLE001 — pypdf raises many shapes
         raise ScheduleError(f"That PDF could not be opened: {exc}") from exc
+    _PAGE_BYTES.set(data)
 
     warnings: list[str] = []
     tasks: list[dict[str, Any]] = []
@@ -765,6 +848,7 @@ def parse_pdf(data: bytes) -> dict[str, Any]:
 
     for n, pg in enumerate(reader.pages, start=1):
         try:
+            _PAGE_INDEX.set(n - 1)
             page = read_page(pg)
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"Page {n} could not be read ({exc}); skipped.")

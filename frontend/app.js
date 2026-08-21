@@ -779,10 +779,29 @@ const App = {
         + `left:${r.left - pad}px;top:${r.top - pad}px;width:${r.width + pad * 2}px;height:${r.height + pad * 2}px`;
       if (card) {
         const cw = card.offsetWidth || 400, ch = card.offsetHeight || 210;
-        const left = Math.min(Math.max(12, r.left), innerWidth - cw - 12);
-        let top = r.bottom + 16;
-        if (top + ch > innerHeight - 12) top = Math.max(12, r.top - ch - 16);
-        card.style.left = left + "px"; card.style.top = top + "px";
+        const m = 14;                                   // margin from the edge
+        const fits = (p) => p.x >= m && p.y >= m
+          && p.x + cw <= innerWidth - m && p.y + ch <= innerHeight - m;
+        const clear = (p) => !(p.x < r.right + 8 && p.x + cw > r.left - 8
+          && p.y < r.bottom + 8 && p.y + ch > r.top - 8);
+        const alignX = Math.min(Math.max(m, r.left), innerWidth - cw - m);
+        const alignY = Math.min(Math.max(m, r.top), innerHeight - ch - m);
+        // Below, above, then beside — and a card that cannot avoid a big
+        // target (the Gantt fills the screen) retreats to the far corner
+        // rather than sitting on top of what it is describing.
+        const spots = [
+          { x: alignX, y: r.bottom + 16 },
+          { x: alignX, y: r.top - ch - 16 },
+          { x: r.right + 16, y: alignY },
+          { x: r.left - cw - 16, y: alignY },
+          { x: innerWidth - cw - m, y: innerHeight - ch - m },
+          { x: m, y: innerHeight - ch - m },
+        ];
+        const pick = spots.find((p) => fits(p) && clear(p))
+          || spots.find((p) => fits(p))
+          || { x: innerWidth - cw - m, y: innerHeight - ch - m };
+        card.style.left = Math.round(pick.x) + "px";
+        card.style.top = Math.round(pick.y) + "px";
         card.style.right = "auto"; card.style.bottom = "auto";
       }
     } else {

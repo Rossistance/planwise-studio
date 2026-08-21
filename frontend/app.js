@@ -420,11 +420,12 @@ const App = {
     // min-width is restated as one — floored at the visible width so the
     // chart still fills the board when it is narrower than the screen.
     const canvas = wrap.parentElement;
+    let widthChanged = false;
     if (canvas && board) {
       const want = parseFloat(canvas.style.minWidth) || 0;
       if (want) {
         const px = Math.max(want, board.clientWidth) + "px";
-        if (canvas.style.width !== px) canvas.style.width = px;
+        if (canvas.style.width !== px) { canvas.style.width = px; widthChanged = true; }
       }
     }
     const wrapRect = wrap.getBoundingClientRect();
@@ -487,6 +488,25 @@ const App = {
       parts.push('<path d="M' + x2 + ' ' + b.y + ' l' + (-6 * dir) + ' -4 v8 z" fill="var(--ft)"></path>');
     });
     svg.innerHTML = parts.join("");
+
+    // Trust, then verify. This engine has been caught applying a width one
+    // frame late (the same stale-style behaviour that ignored min-width
+    // entirely) — and links drawn against the OLD layout while the bars
+    // settled into the new one is exactly "arrows landing mid-bar". When
+    // this pass changed the width, look again next frame; if the first bar
+    // is not where we measured it, draw once more against the truth.
+    if (widthChanged && !this._ganttVerify) {
+      const sample = links.length && at(links[0].pred_id);
+      this._ganttVerify = true;
+      requestAnimationFrame(() => {
+        this._ganttVerify = false;
+        const again = sample && document.querySelector('[data-task-bar="' + links[0].pred_id + '"]');
+        if (!again) return;
+        const wr2 = wrap.getBoundingClientRect();
+        const r2 = again.getBoundingClientRect();
+        if (Math.abs((r2.right - wr2.left) - sample.r) > 2) App.drawGanttLinks();
+      });
+    }
   },
 
   // ————— rail ————————————————————————————————————————————————————————————

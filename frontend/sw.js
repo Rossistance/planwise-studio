@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v25";     // one linear scale: axis, bars, links agree at any zoom
+const VERSION = "planwise-shell-v26";     // the link layer verifies its own geometry a frame later
 const SHELL = [
   "/",
   "/index.html",

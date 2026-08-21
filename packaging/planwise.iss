@@ -19,7 +19,7 @@
 ; per-machine install would be wrong anyway.
 
 #define AppName        "PlanWise"
-#define AppVersion     "2.0.2"
+#define AppVersion     "2.0.3"
 #define AppPublisher   "1910 Legacy / White Electrical Construction"
 #define AppExe         "PlanWise.exe"
 #define CompanionExe   "PlanWiseCompanion.exe"
@@ -55,9 +55,11 @@ RestartApplications=no
 [Files]
 Source: "..\dist\{#AppExe}";       DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\{#CompanionExe}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\dist\PlanWise-Getting-Started.pdf"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\PlanWise";          Filename: "{app}\{#AppExe}"
+Name: "{group}\Getting started (PDF)"; Filename: "{app}\PlanWise-Getting-Started.pdf"
 Name: "{userdesktop}\PlanWise";    Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 ; Startup matters more than it looks: a companion nobody remembers to launch
 ; means a customer reply nobody sees. The exe self-installs this on first run

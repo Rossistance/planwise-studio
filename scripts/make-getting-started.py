@@ -39,40 +39,66 @@ CONTENT: list[tuple[str, str]] = [
           "runs in the background. You will find PlanWise on the Start menu and on your desktop."),
 
     ("h", "2.  Create your account"),
-    ("p", "Open PlanWise. The first screen asks for your work email, your name and a password "
-          "you choose. Nobody sends you a password, and there is nothing to copy from anyone."),
+    ("p", "Open PlanWise. The first screen asks for your work email and a password you choose. "
+          "Nobody sends you a password, and there is nothing to copy from anyone."),
     ("p", "You will then see a short waiting screen. New accounts are approved by an "
           "administrator before they show job data — Ross is notified the moment you sign up, "
           "so this is usually a minute or two. The screen lets you in by itself once approved; "
           "you do not need to refresh or sign in again."),
 
-    ("h", "3.  Connect your Outlook  (optional, but do it)"),
+    ("h", "3.  Take the tour"),
+    ("p", "Your first sign-in offers a guided tour. Take it. It opens a fully-built sample "
+          "project — every number fake, every mechanism real — and walks you through every "
+          "page, inviting you to click and type as you go: open a change order, issue a "
+          "purchase order against real exposure, zoom the schedule, mark up a drawing, read "
+          "an RFI thread. Nothing you do in the sample matters, which is the point."),
+    ("p", "About five minutes, and you can end it at any time. Skip it and PlanWise simply "
+          "waits for you to look up your first job. The tour stays under Settings whenever "
+          "you want it again, and the sample project stays in the job switcher as a safe "
+          "place to try things."),
+
+    ("h", "4.  Connect your Outlook  (optional, but do it)"),
     ("p", "The companion is what lets PlanWise put a draft into YOUR Outlook and notice when a "
           "customer replies. It opens its own page the first time it runs; if you missed it, "
           "browse to http://127.0.0.1:8772/pair."),
     ("p", "Sign in there with the same email and password you just chose. That is the whole "
           "setup — mail always leaves from your own mailbox, and PlanWise never sends anything "
-          "itself. You review every draft and press Send."),
+          "itself. You review every draft and press Send. New Outlook or classic both work: "
+          "classic opens the draft window, new Outlook finds the draft waiting in Drafts."),
     ("p", "Without the companion PlanWise still works: every share offers a Download email "
           "(.eml) file that opens in Outlook as a ready-made draft. What you lose is one-click "
           "drafting and automatic reply tracking."),
 
-    ("h", "4.  On your phone"),
-    ("p", f"Open {URL} in Safari, then Share > Add to Home Screen. Launch it from that icon and "
-          "it behaves like an app. Notifications — an RFI reply, an access request — only work "
-          "from the home-screen copy, which is an Apple restriction rather than ours."),
+    ("h", "5.  On your phone"),
+    ("p", f"Open {URL} on the phone and sign in. In Safari: Share > Add to Home Screen; in "
+          "Chrome: menu > Install app. Launch it from that icon and it behaves like an app, "
+          "with a layout built for a phone."),
+    ("p", "Superintendents and field leads named on a job's setup page get the field version "
+          "automatically — today's plan, the drawings, and the records that concern them, "
+          "sized for gloves and sunlight."),
+    ("p", "Turn on notifications under Settings > Notifications on this device, and an RFI "
+          "reply or a returned submittal reaches the phone even with PlanWise closed."),
 
     ("h", "What you can do straight away"),
-    ("b", "Search a job by number or name, and see Vista's live cost picture — estimate, actual, "
-          "projected, variance, and where each cost type sits by phase code."),
-    ("b", "Raise RFIs and submittals, mark up the drawing pages that go with them, and send the "
-          "package from your own Outlook. Replies file themselves back against the record."),
-    ("b", "Build a two-week look ahead and share it — a customer version, and an internal one "
-          "carrying tools and materials that the customer version never shows."),
-    ("b", "Produce customer change order letters on WECC letterhead, with breakout pricing and "
-          "the standing clarifications and exceptions, as Word and PDF together."),
+    ("b", "Search a job by number or name, and see Vista's cost picture — estimate, actual, "
+          "projected, variance, and where each cost type sits by phase code. The data "
+          "refreshes itself every morning, and Settings can ask for a fresh pull anytime."),
+    ("b", "Produce customer change order letters on WECC letterhead — breakout pricing, your "
+          "narrative, the standing clarifications — with a live preview, as Word and PDF."),
+    ("b", "See approved subcontractor work with no purchase order as exposure, and issue the "
+          "covering PO in one step from the Invoices & POs page."),
     ("b", "Import a schedule from Microsoft Project (.mpp or XML), Excel, CSV — or from a "
-          "printed PDF of a customer's schedule."),
+          "printed PDF of a customer's schedule — and get a real engine: dependencies, float, "
+          "the critical path, and a compare of what changed on re-import."),
+    ("b", "Build a two- or three-week look ahead and share it — a customer version, and an "
+          "internal one carrying tools and materials that the customer version never shows."),
+    ("b", "Raise RFIs and submittals, mark up the drawing pages that go with them, and send "
+          "the package from your own Outlook. Replies file themselves back against the "
+          "record, and you can compare what came back against what you sent, page by page."),
+    ("b", "Let the weekly briefing write its own first draft from the registers, then edit it "
+          "in your words and send the customer and internal copies."),
+    ("b", "Undo anything you send. Every outbound or destructive act shows an Undo bar, and "
+          "the activity log keeps append-only history with reversals recorded beneath."),
 
     ("h", "If something looks wrong"),
     ("p", "PlanWise tells you when a number is missing rather than showing a confident zero, and "

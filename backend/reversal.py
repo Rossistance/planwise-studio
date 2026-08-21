@@ -145,6 +145,8 @@ def _downstream_problem(revert: dict[str, Any]) -> str | None:
         return "The look-ahead period this row belonged to has since been deleted."
     if op == "task.patch" and not exists("schedule_tasks", revert["id"]):
         return "The schedule task this entry edited has since been deleted — possibly by a re-import."
+    if op == "task.recreate" and exists("schedule_tasks", revert["row"]["id"]):
+        return "The deleted task appears to exist again already."
     if op in ("po.recreate", "co.recreate"):
         if exists(op.split(".")[0] == "po" and "purchase_orders" or "change_orders",
                   revert["row"]["id"]):
@@ -193,6 +195,15 @@ def apply(activity_id: int, actor: str, is_admin: bool) -> dict[str, Any]:
             _patch(conn, "pipeline_records", revert["id"], revert["fields"])
         elif op == "task.patch":
             _patch(conn, "schedule_tasks", revert["id"], revert["fields"])
+        elif op == "task.recreate":
+            _insert(conn, "schedule_tasks", revert["row"])
+            for ln in revert.get("links", []):
+                # A link whose other end has since been deleted stays gone —
+                # resurrecting half a dependency helps nobody.
+                other = ln["pred_id"] if ln["succ_id"] == revert["row"]["id"] else ln["succ_id"]
+                if conn.execute("SELECT 1 FROM schedule_tasks WHERE id = ?",
+                                (other,)).fetchone():
+                    _insert(conn, "schedule_links", ln)
         elif op == "briefing.patch":
             _patch(conn, "briefings", revert["id"], revert["fields"])
         elif op == "laitem.delete":

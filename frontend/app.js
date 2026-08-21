@@ -2451,6 +2451,7 @@ Object.assign(App, {
       // children — the engine overwrites anything typed, so don't offer it.
       datesDisabled: !!t.is_summary && hasKids,
       setStart: App.setSchedDate(t.id, "start"), setFinish: App.setSchedDate(t.id, "finish"),
+      removeTask: App.confirmDeleteTask(t),
       predValue: primary ? primary.pred_id : "",
       predOpts: [{ value: "", label: "None" }].concat(tasks.filter((x) => x.id !== t.id).map((x) => ({ value: x.id, label: nameOf(x.id) }))),
       setPred: App.setSchedPred(t.id),
@@ -2703,6 +2704,43 @@ Object.assign(App, {
     const t1 = Date.UTC(finish.getUTCFullYear(), finish.getUTCMonth() + 1, 1);
     return { t0, t1, span: Math.max(t1 - t0, 86400000) };
   },
+  confirmDeleteTask: (t) => () => {
+    const links = App.schedLinks();
+    const preds = links.filter((l) => l.succ_id === t.id).length;
+    const succs = links.filter((l) => l.pred_id === t.id).length;
+    const checks = [
+      succs
+        ? ["warn", "Dependent tasks", succs + (succs === 1 ? " task lists" : " tasks list") +
+           " this as a predecessor. Those links are removed with it, and the engine reruns without them — dependent tasks may move."]
+        : ["pass", "Dependent tasks", "Nothing lists this task as a predecessor."],
+      preds
+        ? ["pass", "Its own predecessors", preds + (preds === 1 ? " link into this task is" : " links into this task are") + " removed with it."]
+        : ["pass", "Its own predecessors", "This task has no predecessor links."],
+      t.critical
+        ? ["warn", "Critical path", "This task is on the critical path. Removing it changes the path the finish date rides on."]
+        : ["pass", "Critical path", "This task carries float; the finish date does not ride on it."],
+      ["pass", "Reversible", "The task and its links come back with one undo, for thirty days."],
+    ];
+    setState({
+      confirm: {
+        eyebrow: "Remove a task", title: t.name || "(unnamed)",
+        body: "The task and every dependency link on either end of it are removed, and the engine recalculates the schedule.",
+        checks, blocked: false,
+        verdict: "Nothing blocks this. The removal is written to the log; Undo restores the task and its links.",
+        label: "Remove the task",
+        run: async () => {
+          setState({ confirm: null });
+          try {
+            const out = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/tasks/${t.id}`, { method: "DELETE" });
+            App.act("The task “" + (t.name || t.id) + "” was removed" +
+              (out.links_removed ? " with " + out.links_removed + (out.links_removed === 1 ? " link" : " links") : "") +
+              ". The engine has rerun without it.", out.activity_id, ["schedule"]);
+          } catch (err) { setState({ live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
   schedZoomIn() { setState({ schedZoom: Math.min(6, (App.state.schedZoom || 1) * 1.4) }); },
   schedZoomOut() { setState({ schedZoom: Math.max(0.5, (App.state.schedZoom || 1) / 1.4) }); },
   schedZoomReset() { setState({ schedZoom: 1 }); },

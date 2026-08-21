@@ -417,6 +417,8 @@ function uiPeekFields(g) {
       <select data-change="${H(g.addSucc)}" aria-label="Add a successor to this task" style="min-height:28px;padding:3px 8px;border:1px dashed var(--ls);border-radius:999px;background:transparent;font-size:11.5px;color:var(--mu);max-width:220px">
         ${g.succOpts.map((o) => `<option value="${esc(o.value)}" ${o.value === "" ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
       </select>
+      <span style="flex:1"></span>
+      <button data-click="${H(g.removeTask)}" class="hb-er" style="min-height:30px;padding:5px 12px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12px var(--fd);color:var(--er)">Delete this task</button>
     </div>`;
 }
 

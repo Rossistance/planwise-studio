@@ -863,14 +863,32 @@ def clear_tasks(job_number: str, actor: str | None = None) -> int:
     return n
 
 
-def delete_task(job_number: str, task_id: str, actor: str | None = None) -> bool:
+def delete_task(job_number: str, task_id: str,
+                actor: str | None = None) -> dict | None:
+    """Remove one task, its links on BOTH ends with it — a link to a dead
+    task is a lie the engine would have to keep stepping around. The entry
+    carries its own inverse (task + links), so the confirm dialog's
+    "reversible for thirty days" stays true here too."""
     conn = db.connect()
-    cur = conn.execute("DELETE FROM schedule_tasks WHERE id = ? AND job_number = ?",
-                       (task_id, job_number))
+    row = conn.execute("SELECT * FROM schedule_tasks WHERE id = ? AND job_number = ?",
+                       (task_id, job_number)).fetchone()
+    if row is None:
+        return None
+    links = [dict(r) for r in conn.execute(
+        "SELECT * FROM schedule_links WHERE job_number = ? AND (pred_id = ? OR succ_id = ?)",
+        (job_number, task_id, task_id))]
+    conn.execute("DELETE FROM schedule_links WHERE job_number = ? AND (pred_id = ? OR succ_id = ?)",
+                 (job_number, task_id, task_id))
+    conn.execute("DELETE FROM schedule_tasks WHERE id = ?", (task_id,))
     conn.commit()
-    if cur.rowcount:
-        db.log_activity(actor, job_number, "schedule.task.delete", task_id)
-    return cur.rowcount > 0
+    rec = dict(row)
+    activity_id = db.log_activity(
+        actor, job_number, "schedule.task.delete",
+        (rec.get("name") or task_id) + (links and f" (and {len(links)} link" +
+                                        ("s" if len(links) != 1 else "") + ")" or ""),
+        object_kind="task", object_id=task_id,
+        revert={"op": "task.recreate", "row": rec, "links": links})
+    return {"deleted": task_id, "links_removed": len(links), "activity_id": activity_id}
 
 
 # --- working time -------------------------------------------------------------

@@ -161,3 +161,47 @@ def test_record_send_reversal_restores_draft_without_claiming_to_unsend(admin):
     back = records.get_record(rec["id"])
     assert back["status"] == "Draft"
     assert back["sent_at"] is None
+
+
+def test_deleting_a_task_takes_its_links_and_one_undo_brings_both_back():
+    """The task and every link on either end leave together, and come back
+    together — except a link whose other task has since died stays gone."""
+    from backend import schedule
+
+    a = schedule.add_task("24-003", {"name": "Set anchors", "start_date": "2026-09-01",
+                                     "finish_date": "2026-09-03"}, actor="pm")
+    b = schedule.add_task("24-003", {"name": "Pour pad", "start_date": "2026-09-04",
+                                     "finish_date": "2026-09-08"}, actor="pm")
+    schedule.add_link("24-003", a["id"], b["id"], link_type="FS", actor="pm")
+
+    out = schedule.delete_task("24-003", a["id"], actor="pm")
+    assert out["links_removed"] == 1
+    conn = db.connect()
+    assert conn.execute("SELECT COUNT(*) FROM schedule_links WHERE pred_id = ?",
+                        (a["id"],)).fetchone()[0] == 0, "no orphan links"
+
+    undo = reversal.apply(out["activity_id"], actor="pm", is_admin=True)
+    assert undo["ok"] is True, undo
+    assert conn.execute("SELECT name FROM schedule_tasks WHERE id = ?",
+                        (a["id"],)).fetchone()["name"] == "Set anchors"
+    assert conn.execute("SELECT COUNT(*) FROM schedule_links WHERE pred_id = ?",
+                        (a["id"],)).fetchone()[0] == 1, "the link came back with it"
+
+
+def test_the_undo_never_resurrects_half_a_dependency():
+    from backend import schedule
+
+    a = schedule.add_task("24-003", {"name": "A", "start_date": "2026-09-01",
+                                     "finish_date": "2026-09-02"}, actor="pm")
+    b = schedule.add_task("24-003", {"name": "B", "start_date": "2026-09-03",
+                                     "finish_date": "2026-09-04"}, actor="pm")
+    schedule.add_link("24-003", a["id"], b["id"], link_type="FS", actor="pm")
+    out = schedule.delete_task("24-003", a["id"], actor="pm")
+    schedule.delete_task("24-003", b["id"], actor="pm")   # the other end dies too
+
+    undo = reversal.apply(out["activity_id"], actor="pm", is_admin=True)
+    assert undo["ok"] is True, undo
+    conn = db.connect()
+    assert conn.execute("SELECT COUNT(*) FROM schedule_links WHERE pred_id = ?",
+                        (a["id"],)).fetchone()[0] == 0, \
+        "B is gone, so the A->B link stays gone"

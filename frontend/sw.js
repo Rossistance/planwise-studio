@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v14";     // gantt: frozen axes, wheel zoom, dependency arrows
+const VERSION = "planwise-shell-v15";     // task delete with the checked confirm
 const SHELL = [
   "/",
   "/index.html",

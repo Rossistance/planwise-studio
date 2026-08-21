@@ -1957,9 +1957,10 @@ def patch_task(job_number: str, task_id: str, body: dict = Body(...),
 @app.delete("/api/jobs/{job_number}/schedule/tasks/{task_id}")
 def remove_task(job_number: str, task_id: str,
                 x_planwise_user: str | None = Header(default=None)):
-    if not schedule.delete_task(job_number, task_id, actor=_actor(x_planwise_user)):
+    out = schedule.delete_task(job_number, task_id, actor=_actor(x_planwise_user))
+    if out is None:
         raise HTTPException(status_code=404, detail="No such task.")
-    return {"deleted": task_id}
+    return out
 
 
 @app.delete("/api/jobs/{job_number}/schedule/tasks")

@@ -139,7 +139,7 @@ function uiRail(v) {
       </button>
     </div>
 
-    <div style="${v.jobCardWrap}">
+    <div style="${v.jobCardWrap}" data-tour="jobcard">
       ${v.railWide ? `<div style="${v.jobCardStyle}">
           <label for="job-picker" style="display:block;font:500 var(--lbl) var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--ft);padding:9px 11px 0">Current job</label>
           <p style="margin:0;padding:3px 11px 0;font:500 11px var(--fm);letter-spacing:.04em;color:var(--ac)">${esc(v.jobCurrentNum)}</p>
@@ -171,7 +171,7 @@ function uiRail(v) {
         ${v.jobsEmpty ? `<p style="margin:0;padding:14px 11px;font-size:12.5px;color:var(--mu);text-wrap:pretty">No job matches that. Try a number like 24-003 or part of a name.</p>` : ""}
       </div>` : ""}
 
-    <nav aria-label="Job sections" style="${v.navStyle}">
+    <nav aria-label="Job sections" data-tour="rail" style="${v.navStyle}">
       ${v.navGroups.map((g) => `<div role="group" aria-labelledby="${g.id}" style="${g.groupStyle}">
         <h2 id="${g.id}" style="${g.headStyle}">${esc(g.label)}</h2>
         <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px">
@@ -187,11 +187,11 @@ function uiRail(v) {
       </div>`).join("")}
     </nav>
 
-    <div style="${v.userRowStyle}">
+    <div style="${v.userRowStyle}" data-tour="userrow">
       <div style="display:flex;align-items:center;gap:9px;justify-content:${v.userJustify}">
         <span aria-hidden="true" style="width:27px;height:27px;border-radius:50%;background:var(--as);color:var(--ac);font:700 10.5px var(--fd);display:grid;place-content:center;letter-spacing:.04em;flex:none">${esc(v.userInitials)}</span>
         ${v.railWide ? `<span style="flex:1;min-width:0"><span style="display:block;font-size:var(--fzs);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(v.userName)}</span><span style="display:block;font:10px var(--fm);letter-spacing:.05em;text-transform:uppercase;color:var(--ft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(v.userRole)}</span></span>
-          <button data-click="${H(v.openSettings)}" aria-label="Settings" title="Settings" class="hb-ac" style="flex:none;min-height:32px;min-width:32px;display:grid;place-content:center;border:1px solid var(--ln);border-radius:6px;color:var(--mu)">
+          <button data-click="${H(v.openSettings)}" data-tour="settingsbtn" aria-label="Settings" title="Settings" class="hb-ac" style="flex:none;min-height:32px;min-width:32px;display:grid;place-content:center;border:1px solid var(--ln);border-radius:6px;color:var(--mu)">
             <svg aria-hidden="true" viewBox="0 0 24 24" style="width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm7.4-3q0-.6-.1-1.2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-2-1.2L14.5 2h-4l-.4 2.6a7.4 7.4 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 0 0 0 2.4l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 2 1.2l.4 2.6h4l.4-2.6a7.4 7.4 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6q.1-.6.1-1.2Z"></path></svg>
           </button>` : ""}
       </div>
@@ -210,13 +210,13 @@ function uiHeader(v) {
       ${v.mobileMenu ? `<button data-click="${H(v.toggleMobileNav)}" aria-label="Menu" aria-expanded="${v.mobileNavOpen ? "true" : "false"}" class="hb-ac" style="flex:none;min-height:var(--tap);min-width:var(--tap);display:grid;place-content:center;border:1px solid var(--ln);border-radius:6px;color:var(--mu)">
         <svg aria-hidden="true" viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
       </button>` : ""}
-      <search style="position:relative;flex:1 1 180px;min-width:0;max-width:400px">
+      <search data-tour="search" style="position:relative;flex:1 1 180px;min-width:0;max-width:400px">
         <label for="job-search" class="sr">Search job ${esc(v.jobNumber)} for change orders, purchase orders, RFIs, submittals, drawings and tasks</label>
         <input id="job-search" type="search" data-ref="search" value="${esc(v.query)}" data-input="${H(v.onQuery)}" data-focus="${H(v.onSearchFocus)}" autocomplete="off" aria-describedby="search-hint" placeholder="Search this job — press / to jump here" class="fi" style="width:100%;min-height:var(--tap);padding:7px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
         <span id="search-hint" class="sr">Results appear below as you type. Press Escape to close them.</span>
       </search>
       <span style="flex:1"></span>
-      ${v.attnHasAny ? `<button data-click="${H(v.toggleAttn)}" aria-expanded="${v.attnExpanded}" aria-controls="${v.attnControls}" class="hb-ls" style="${v.attnBtnStyle}">${esc(v.attnBtnLabel)}<span style="${v.attnCountStyle}">${v.attnCount}</span></button>` : ""}
+      ${v.attnHasAny ? `<button data-click="${H(v.toggleAttn)}" data-tour="attnbtn" aria-expanded="${v.attnExpanded}" aria-controls="${v.attnControls}" class="hb-ls" style="${v.attnBtnStyle}">${esc(v.attnBtnLabel)}<span style="${v.attnCountStyle}">${v.attnCount}</span></button>` : ""}
     </header>
 
     ${v.searchOpen ? `<section aria-label="Search results" style="border-bottom:1px solid var(--ln);background:var(--p2);padding:12px 18px;animation:fadein .14s ease-out">
@@ -253,7 +253,7 @@ function uiScaffold(v) {
           </div>
           <p style="margin:3px 0 0;font-size:var(--fzs);color:var(--mu);max-width:78ch;text-wrap:pretty">${esc(v.pagePurpose)}</p>
         </div>
-        <div role="group" aria-label="Actions for this page" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+        <div role="group" aria-label="Actions for this page" data-tour="nextstep" style="display:flex;gap:9px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
           ${v.nextStepLabel ? `<p style="margin:0;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ac);white-space:nowrap">${esc(v.nextStepLabel)}</p>` : ""}
           ${v.pageActions.map((a) => `<button data-click="${H(a.click)}" class="${a.hoverClass}" style="${a.style}">${esc(a.label)}</button>`).join("")}
         </div>
@@ -361,25 +361,65 @@ function uiKeys(v) {
   </div>`;
 }
 
-// ——— Tour (lines 1540–1562) ———————————————————————————————————————————————
-function uiTour(v) {
-  if (!v.tourOpen) return "";
+// ——— Guided tour (2.0.3) ——————————————————————————————————————————————————
+// Three pieces. The OFFER is the one modal moment — first sign-in only. The
+// CARD floats beside whatever the current step points at (afterRender
+// positions it; these styles are only its resting place) and never blocks the
+// page — the whole point is that the person clicks and types for real. The
+// EMPTY LANDING is what "skip" leaves behind: nothing, honestly, until a job
+// is looked up.
+function uiTourOffer(v) {
+  if (!v.tourOffer) return "";
   return `<div style="position:fixed;inset:0;z-index:150;background:rgba(24,27,30,.5);display:grid;place-items:center;padding:24px">
-    <div role="dialog" aria-modal="true" aria-labelledby="tour-title" aria-describedby="tour-body" style="width:min(520px,100%);background:var(--pn);border:1px solid var(--ls);border-radius:10px;box-shadow:var(--shp);animation:fadein .16s ease-out">
-      <div style="padding:18px 22px 0;display:flex;align-items:baseline;gap:10px">
-        <p style="margin:0;font:500 10.5px var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--ac)">${esc(v.tourStepLabel)}</p>
-        <span style="flex:1"></span>
-        <ul aria-hidden="true" style="list-style:none;margin:0;padding:0;display:flex;gap:5px">
-          ${v.tourDots.map((d) => `<li style="${d.style}"></li>`).join("")}
-        </ul>
+    <div role="dialog" aria-modal="true" aria-labelledby="offer-title" style="width:min(560px,100%);background:var(--pn);border:1px solid var(--ls);border-radius:10px;box-shadow:var(--shp);animation:fadein .16s ease-out">
+      <div style="padding:22px 24px 0">
+        <p style="margin:0;font:500 10.5px var(--fm);letter-spacing:.16em;text-transform:uppercase;color:var(--ac)">Welcome to PlanWise</p>
+        <h2 id="offer-title" style="margin:9px 0 0;font:600 21px var(--fd);letter-spacing:.01em">Learn it on a job that isn't real</h2>
+        <p style="margin:9px 0 0;font-size:var(--fz);color:var(--mu);line-height:1.6;text-wrap:pretty">The guided tour opens a fully-built sample project and walks every page — change orders, purchase orders, the schedule, drawings, RFIs — inviting you to click and type as you go. Nothing in it is real, so nothing you do in it matters. About five minutes.</p>
       </div>
-      <h2 id="tour-title" style="margin:9px 22px 0;font:600 20px var(--fd);letter-spacing:.01em">${esc(v.tourTitle)}</h2>
-      <p id="tour-body" style="margin:8px 22px 0;font-size:var(--fz);color:var(--mu);line-height:1.6;text-wrap:pretty">${esc(v.tourBody)}</p>
-      <div style="display:flex;gap:9px;align-items:center;padding:18px 22px;margin-top:14px;border-top:1px solid var(--ln);background:var(--p2);border-radius:0 0 10px 10px;flex-wrap:wrap">
-        <button data-click="${H(v.endTour)}" class="ht-ink" style="min-height:var(--tap);padding:8px 13px;font:600 12.5px var(--fd);color:var(--mu);text-decoration:underline;text-underline-offset:2px">Skip the tour</button>
+      <div style="display:flex;gap:9px;align-items:center;padding:18px 24px;margin-top:16px;border-top:1px solid var(--ln);background:var(--p2);border-radius:0 0 10px 10px;flex-wrap:wrap">
+        <button data-click="${H(v.tourOfferSkip)}" class="ht-ink" style="min-height:var(--tap);padding:8px 13px;font:600 12.5px var(--fd);color:var(--mu);text-decoration:underline;text-underline-offset:2px">Skip — I'll find my way</button>
         <span style="flex:1"></span>
-        ${v.tourHasBack ? `<button data-click="${H(v.tourBack)}" class="hb-ls" style="min-height:var(--tap);padding:8px 15px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Back</button>` : ""}
-        <button data-click="${H(v.tourNext)}" data-ref="tour" class="hb-ah" style="min-height:var(--tap);padding:8px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 12.5px var(--fd);letter-spacing:.03em">${esc(v.tourNextLabel)}</button>
+        <button data-click="${H(v.tourOfferStart)}" data-ref="tourcard" class="hb-ah" style="min-height:var(--tap);padding:9px 18px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em">Take the tour</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function uiTourCard(v) {
+  const t = v.tourCard;
+  if (!t) return "";
+  return `<aside id="pw-tour-card" role="dialog" aria-labelledby="tourc-title" style="position:fixed;z-index:419;right:22px;bottom:22px;width:min(400px,calc(100vw - 34px));background:var(--pn);border:1px solid var(--ls);border-left:4px solid var(--ac);border-radius:8px;box-shadow:var(--shp);animation:fadein .18s ease-out">
+    <div style="padding:13px 16px 0;display:flex;align-items:baseline;gap:10px">
+      <p style="margin:0;font:500 10px var(--fm);letter-spacing:.15em;text-transform:uppercase;color:var(--ac)">${esc(t.label)}</p>
+      <span style="flex:1"></span>
+      <button data-click="${H(t.end)}" class="ht-ink" aria-label="End the tour" style="font:600 11.5px var(--fd);color:var(--ft);text-decoration:underline;text-underline-offset:2px">End tour</button>
+    </div>
+    <h2 id="tourc-title" style="margin:7px 16px 0;font:600 15.5px var(--fd);letter-spacing:.01em">${esc(t.title)}</h2>
+    <p style="margin:6px 16px 0;font-size:12.5px;color:var(--mu);line-height:1.55;text-wrap:pretty">${esc(t.body)}</p>
+    ${t.tryLine ? `<p style="margin:9px 16px 0;padding:8px 11px;border:1px solid var(--as);border-left:3px solid var(--ac);border-radius:0 6px 6px 0;background:var(--as);font:600 12px var(--fd);color:var(--ac)">Try it: <span style="font-weight:500;color:var(--ink)">${esc(t.tryLine)}</span></p>` : ""}
+    ${t.away ? `<p style="margin:9px 16px 0;font-size:12px;color:var(--wn)">This step lives on another page. <button data-click="${H(t.awayGo)}" class="ht-ink" style="font:600 12px var(--fd);color:var(--ac);text-decoration:underline;text-underline-offset:2px">Go back to it</button></p>` : ""}
+    <div style="display:flex;gap:8px;align-items:center;padding:12px 16px 13px;margin-top:11px;border-top:1px solid var(--ln)">
+      <span style="flex:1"></span>
+      ${t.hasBack ? `<button data-click="${H(t.back)}" class="hb-ls" style="min-height:34px;padding:6px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12px var(--fd)">Back</button>` : ""}
+      <button data-click="${H(t.next)}" data-ref="tourcard" class="hb-ah" style="min-height:34px;padding:6px 15px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 12px var(--fd);letter-spacing:.03em">${esc(t.nextLabel)}</button>
+    </div>
+  </aside>`;
+}
+
+function uiEmptyLanding(v) {
+  return `<div style="min-height:60vh;display:grid;place-items:center;padding:40px 20px">
+    <div style="max-width:520px;text-align:center">
+      <svg viewBox="0 0 170 210" aria-hidden="true" style="width:74px;height:auto;margin:0 auto 18px;opacity:.5;display:block">
+        <path d="M52 20h66" stroke="var(--ft)" stroke-width="3.5" stroke-linecap="round" fill="none"></path>
+        <path d="M85 20v82" stroke="var(--ft)" stroke-width="2" fill="none"></path>
+        <path d="M67 102h36l-18 62z" fill="var(--ls)"></path>
+      </svg>
+      <h1 style="margin:0;font:600 21px var(--fd);letter-spacing:.01em">No job open</h1>
+      <p style="margin:10px 0 0;font-size:var(--fz);color:var(--mu);line-height:1.6;text-wrap:pretty">Look up a job to begin — the switcher at the top of the rail searches the whole Vista registry by number or name. PlanWise reopens to your last job from then on.</p>
+      <div style="display:flex;gap:10px;justify-content:center;margin-top:18px;flex-wrap:wrap">
+        <button data-click="${H(v.emptyFocusSearch)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd)">Look up a job</button>
+        <button data-click="${H(v.emptyStartTour)}" class="hb-ls" style="min-height:var(--tap);padding:9px 15px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Tour the sample project</button>
       </div>
     </div>
   </div>`;
@@ -425,7 +465,7 @@ function uiPeekFields(g) {
 // ——— Generic register (lines 850–965) ————————————————————————————————————
 function uiRegister(v) {
   if (!v.hasRegister) return "";
-  return `<section aria-labelledby="register-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+  return `<section aria-labelledby="register-heading" data-tour="register" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
     <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--ln);flex-wrap:wrap">
       <h2 id="register-heading" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">${esc(v.regTitle)}</h2>
       <p style="margin:0;font:500 10.5px var(--fm);letter-spacing:.07em;text-transform:uppercase;color:var(--ft)">${esc(v.regSource)}</p>

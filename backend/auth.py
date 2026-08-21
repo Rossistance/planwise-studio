@@ -104,6 +104,7 @@ def _public(row: dict[str, Any]) -> dict[str, Any]:
             "is_admin": bool(row.get("is_admin")),
             "disabled": bool(row.get("disabled")),
             "pending": bool(row.get("pending")),
+            "toured": bool(row.get("toured_at")),
             "must_change_password": bool(row.get("must_change_password"))}
 
 

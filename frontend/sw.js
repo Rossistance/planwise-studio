@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v21";     // splash completes itself; Vista refresh from Settings
+const VERSION = "planwise-shell-v22";     // the tour is an engine over a sample project
 const SHELL = [
   "/",
   "/index.html",

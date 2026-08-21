@@ -23,7 +23,7 @@ function pageBody(page, v) {
 // ——— Dashboard (prototype lines 293–419) ————————————————————————————————
 function pageDash(v) {
   return `<div style="display:flex;flex-direction:column;gap:16px">
-    <section aria-labelledby="kpi-heading">
+    <section aria-labelledby="kpi-heading" data-tour="kpis">
       <h2 id="kpi-heading" style="margin:0 0 10px;font:600 15px var(--fd);letter-spacing:.03em">Money at a glance</h2>
       <ul style="list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:10px">
         ${v.kpis.map((k) => `<li style="${k.cardStyle}">
@@ -47,7 +47,7 @@ function pageDash(v) {
     </section>
 
     <div style="display:grid;grid-template-columns:minmax(0,1.55fr) minmax(0,1fr);gap:14px">
-      <section aria-labelledby="forecast-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+      <section aria-labelledby="forecast-heading" data-tour="chart" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-bottom:1px solid var(--ln);flex-wrap:wrap">
           <h2 id="forecast-heading" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Cost forecast to completion</h2>
           <ul style="list-style:none;margin:0;padding:0;display:flex;gap:12px;font:500 10.5px var(--fm);letter-spacing:.07em;text-transform:uppercase;color:var(--mu)">
@@ -167,7 +167,7 @@ function pageSetup(v) {
         <p style="margin:0;padding:0 16px 13px;font-size:12px;color:var(--ft);text-wrap:pretty">Solid underlines are yours. Each one saves the moment you change it and says so beside its label.</p>
       </section>
 
-      <section aria-labelledby="contact-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+      <section aria-labelledby="contact-heading" data-tour="contacts" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
         <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px">
           <h2 id="contact-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Job contacts</h2>
           <p style="margin:0;font:11.5px var(--fm);color:var(--ft)">${esc(v.contactCount)}</p>
@@ -461,7 +461,7 @@ function pageSched(v) {
       <button data-click="${H(v.clearSchedule)}" class="hb-er" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);color:var(--er)">Delete the whole schedule</button>
       <button data-click="${H(v.openNewTask)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd)">Add a task</button>
     </div>
-    <div data-gantt style="overflow:auto;max-height:calc(100vh - 230px);padding:0 0 6px;overscroll-behavior-x:contain">
+    <div data-gantt data-tour="gantt" style="overflow:auto;max-height:calc(100vh - 230px);padding:0 0 6px;overscroll-behavior-x:contain">
       <div style="min-width:${v.ganttMinWidth}px">
         <div style="display:grid;grid-template-columns:280px minmax(0,1fr);border-bottom:1px solid var(--ln);position:sticky;top:0;background:var(--pn);z-index:4">
           <p style="margin:0;padding:8px 16px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft);position:sticky;left:0;background:var(--pn);z-index:2">Task</p>
@@ -513,7 +513,7 @@ function pageLook(v) {
       <p style="margin:0;font-size:var(--fzs);color:var(--mu)">Loading the look ahead…</p>
     </section>`;
   }
-  return `<section aria-labelledby="areas-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
+  return `<section data-tour="register" aria-labelledby="areas-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
     <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--ln);flex-wrap:wrap">
       <h2 id="areas-heading" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Work areas</h2>
       <p style="margin:0;font:500 10.5px var(--fm);letter-spacing:.07em;text-transform:uppercase;color:var(--ft)">${esc(v.areaCount)}</p>
@@ -726,7 +726,7 @@ function pageBrief(v) {
     </section>`;
   }
   return `<div style="display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;align-items:start">
-    <section aria-labelledby="brief-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
+    <section data-tour="register" aria-labelledby="brief-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
       <div style="padding:14px 18px;border-bottom:1px solid var(--ln)">
         <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap">
           <h2 id="brief-heading" style="margin:0;flex:1;font:600 16px var(--fd);letter-spacing:.02em">${esc(v.briefWeekTitle)}</h2>

@@ -42,7 +42,7 @@ const App = {
     vistaExpanded: true,
 
     // — overlays
-    settingsOpen: false, keysOpen: false, tour: 0,
+    settingsOpen: false, keysOpen: false, tour: null, tourOffer: false,
     confirm: null, detail: null, form: null, co: null,
     viewer: null,
 
@@ -154,9 +154,14 @@ const App = {
   enterApp() {
     const fj = (this._status || {}).field_jobs || [];
     if (fj.length) { this.state.stage = "app"; this.enterFieldShell(); return; }
-    let firstRun = true;
-    try { firstRun = !localStorage.getItem("pw.tourDone"); } catch (e) {}
-    this.state.tour = firstRun ? 1 : 0;
+    // First login on this ACCOUNT (the server's stamp, not this browser's):
+    // offer the guided tour, and hold the shell on empty space until they
+    // choose — the owner's spec. Skip lands on nothing until a job is looked
+    // up, this one time only; every later sign-in reopens the last job.
+    if (!(this.state.user || {}).toured) {
+      this.state.tourOffer = true;
+      this._holdEmpty = true;
+    }
     this.route();
     // The prototype's timers: the attention panel tucks itself away after 10s
     // if untouched; the Vista pill collapses to a dot after 6s when fresh.
@@ -264,6 +269,12 @@ const App = {
   route() {
     const r = this.parseHash();
     if (!r) {
+      if (this._holdEmpty) {
+        // First login, tour not yet taken or skipped: empty space, on
+        // purpose, until a job is looked up or the tour opens the sample.
+        setState({ job: null, page: "dash" });
+        return;
+      }
       // No job in the hash: land on the last one, or the first the registry
       // offers — a dashboard about nothing helps nobody.
       let last = null;
@@ -278,6 +289,7 @@ const App = {
       }).catch(() => {});
       return;
     }
+    this._holdEmpty = false;         // a job was looked up (or a deep link)
     const jobChanged = r.job !== this.state.job;
     if (jobChanged) {
       this.state.data = { health: this.state.data.health };
@@ -578,10 +590,11 @@ const App = {
       if (s.form) return setState({ form: null });
       if (s.threadCompare) return setState({ threadCompare: null });
       if (s.detail) return setState({ detail: null });
-      if (s.tour) return App.endTour();
       if (s.keysOpen) return setState({ keysOpen: false });
       if (s.searchOpen) return setState({ searchOpen: false });
       if (s.jobsOpen) return setState({ jobsOpen: false });
+      if (s.tourOffer) return App.tourSkip()();
+      if (s.tour) return App.tourEnd(false)();
       return;
     }
     if (e.altKey) {
@@ -601,14 +614,112 @@ const App = {
     if (e.key === "?") { e.preventDefault(); const open = !s.keysOpen; setState({ keysOpen: open }, open ? focusRef("keys") : undefined); return; }
   },
 
-  // ————— tour / keys / settings ————————————————————————————————————————————
-  startTour() { setState({ tour: 1 }, focusRef("tour")); },
-  endTour() {
-    try { localStorage.setItem("pw.tourDone", "1"); } catch (e) {}
-    setState({ tour: 0 });
+  // ————— the guided tour engine (2.0.3) ————————————————————————————————————
+  // A step list in copy.js (TOUR_STEPS), a highlight ring OUTSIDE the
+  // morphdom root, and predicates over the same state the app renders from —
+  // so "do the thing to continue" is detected by the thing actually
+  // happening, not by spying on clicks. Esc ends it; Next always works.
+  async tourStart() {
+    setState({ tourOffer: false, live: "Setting up the sample project — a moment…" });
+    try {
+      await api("/api/sample/ensure", { method: "POST", body: JSON.stringify({ reset: true }) });
+    } catch (err) {
+      setState({ live: "The sample project could not be seeded: " + err.message });
+      return;
+    }
+    this._holdEmpty = false;
+    this._tourAdvanced = -1;
+    this._tourScrolled = -1;
+    this.state.tour = { i: 0 };
+    if (this.state.job === "25-DEMO") { this.state.page = "dash"; setState({}); }
+    location.hash = "#/job/25-DEMO/dash";
+    setState({}, focusRef("tourcard"));
   },
-  tourNext() { if (App.state.tour >= TOUR.length) return App.endTour(); setState({ tour: App.state.tour + 1 }, focusRef("tour")); },
-  tourBack() { setState({ tour: Math.max(1, App.state.tour - 1) }, focusRef("tour")); },
+  tourGo(i) {
+    if (i >= TOUR_STEPS.length) return App.tourEnd(true)();
+    const step = TOUR_STEPS[i];
+    this.state.tour = { i };
+    this._tourAdvanced = -1;
+    this._tourScrolled = -1;
+    if (step.page && this.state.page !== step.page && this.state.job) App.go(step.page)();
+    else setState({}, focusRef("tourcard"));
+  },
+  tourNext: () => () => { const t = App.state.tour; if (t) App.tourGo(t.i + 1); },
+  tourBack: () => () => { const t = App.state.tour; if (t && t.i > 0) App.tourGo(t.i - 1); },
+  tourEnd: (finished) => () => {
+    if (!App.state.tour) return;
+    App.state.tour = null;
+    App.removeTourChrome();
+    App.markToured();
+    setState({ live: finished
+      ? "That's the tour. The sample project stays in the job switcher whenever you want a safe place to try something."
+      : "Tour ended. Replay it anytime from Settings." });
+  },
+  tourSkip: () => () => {
+    App.state.tourOffer = false;
+    App.markToured();
+    setState({ live: "No tour — look up a job to begin. The guided tour waits in Settings if you change your mind." });
+  },
+  markToured() {
+    if (this.state.user && !this.state.user.toured) {
+      this.state.user.toured = true;
+      api("/api/auth/toured", { method: "POST" }).catch(() => {});
+    }
+  },
+  removeTourChrome() {
+    const r = document.getElementById("pw-tour-ring");
+    if (r) r.remove();
+    clearTimeout(this._tourT);
+  },
+  tourAfterRender() {
+    const t = this.state.tour;
+    const ring = document.getElementById("pw-tour-ring");
+    if (!t) { if (ring) ring.remove(); return; }
+    const step = TOUR_STEPS[t.i] || {};
+    // Advance the moment the invited interaction actually happened — with a
+    // beat, so the person sees their own action land before the card moves.
+    if (step.done && this._tourAdvanced !== t.i && this.state.job) {
+      let ok = false;
+      try { ok = !!step.done(this.state); } catch (e) {}
+      if (ok) {
+        this._tourAdvanced = t.i;
+        clearTimeout(this._tourT);
+        this._tourT = setTimeout(() => {
+          if (this.state.tour && this.state.tour.i === t.i) App.tourGo(t.i + 1);
+        }, 1100);
+      }
+    }
+    const onPage = !step.page || this.state.page === step.page;
+    const target = onPage && step.target ? document.querySelector(step.target) : null;
+    const card = document.getElementById("pw-tour-card");
+    if (target) {
+      const r = target.getBoundingClientRect();
+      if (this._tourScrolled !== t.i && r.height && (r.top < 70 || r.bottom > innerHeight - 40)) {
+        this._tourScrolled = t.i;
+        target.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+      let el = ring;
+      if (!el) { el = document.createElement("div"); el.id = "pw-tour-ring"; document.body.appendChild(el); }
+      const pad = 6;
+      el.style.cssText = "position:fixed;z-index:418;pointer-events:none;border:2px solid var(--ac);"
+        + "border-radius:9px;box-shadow:0 0 0 4px color-mix(in srgb, var(--ac) 22%, transparent);"
+        + "transition:left .28s cubic-bezier(.3,1,.4,1),top .28s cubic-bezier(.3,1,.4,1),width .28s,height .28s;"
+        + `left:${r.left - pad}px;top:${r.top - pad}px;width:${r.width + pad * 2}px;height:${r.height + pad * 2}px`;
+      if (card) {
+        const cw = card.offsetWidth || 400, ch = card.offsetHeight || 210;
+        const left = Math.min(Math.max(12, r.left), innerWidth - cw - 12);
+        let top = r.bottom + 16;
+        if (top + ch > innerHeight - 12) top = Math.max(12, r.top - ch - 16);
+        card.style.left = left + "px"; card.style.top = top + "px";
+        card.style.right = "auto"; card.style.bottom = "auto";
+      }
+    } else {
+      if (ring) ring.remove();
+      if (card) { card.style.left = ""; card.style.top = ""; card.style.right = ""; card.style.bottom = ""; }
+    }
+  },
+
+  // ————— keys / settings ———————————————————————————————————————————————————
   openSettings() { setState({ settingsOpen: true }, focusRef("settings")); },
   closeSettings() { setState({ settingsOpen: false }); },
 
@@ -620,6 +731,7 @@ const App = {
     if (this.state.viewer) this.paintViewerCanvases();
     this.drawGanttLinks();
     if (this.state.threadCompare) this.drawCompare();
+    this.tourAfterRender();
     // Splash exit rides the animation itself: when `splashout` finishes the
     // fade is exactly complete, so the swap beneath can never cut it short.
     // Under prefers-reduced-motion every animation ends in .01ms, so this
@@ -1278,7 +1390,6 @@ Object.assign(App, {
     const vh = health.vista || {};
     const vistaStale = !!vh.stale;
     const vistaAsOf = vh.as_of ? usDate(vh.as_of) : null;
-    const tourStep = TOUR[s.tour - 1] || TOUR[0];
     const user = s.user || {};
     const initials = (user.name || "??").split(/\s+/).map((w) => w[0] || "").join("").slice(0, 2).toUpperCase();
 
@@ -1414,13 +1525,28 @@ Object.assign(App, {
       // overlays
       keysOpen: s.keysOpen,
       closeKeys: () => setState({ keysOpen: false }),
-      tourOpen: s.tour > 0,
-      tourStepLabel: "Step " + s.tour + " of " + TOUR.length,
-      tourTitle: tourStep.title, tourBody: tourStep.body,
-      tourHasBack: s.tour > 1,
-      tourNextLabel: s.tour >= TOUR.length ? "Start using PlanWise" : "Next",
-      tourNext: () => App.tourNext(), tourBack: () => App.tourBack(), endTour: () => App.endTour(),
-      tourDots: TOUR.map((t, i) => ({ style: "width:7px;height:7px;border-radius:50%;background:" + (i < s.tour ? "var(--ac)" : "var(--ls)") })),
+      tourOffer: !!s.tourOffer && s.stage === "app",
+      tourOfferStart: () => App.tourStart(),
+      tourOfferSkip: App.tourSkip(),
+      tourCard: (() => {
+        const t = s.tour;
+        if (!t) return null;
+        const step = TOUR_STEPS[t.i] || {};
+        const away = !!(step.page && s.page !== step.page && s.job);
+        return {
+          label: "Guided tour · " + (t.i + 1) + " of " + TOUR_STEPS.length,
+          title: step.title || "", body: step.body || "",
+          tryLine: step.try_ || "",
+          away, awayGo: () => (s.job ? App.go(step.page)() : null),
+          hasBack: t.i > 0,
+          nextLabel: t.i + 1 >= TOUR_STEPS.length ? "Finish" : "Next",
+          next: App.tourNext(), back: App.tourBack(), end: App.tourEnd(false),
+        };
+      })(),
+      emptyLanding: !s.job,
+      emptyCanTour: !!(s.user && !s.user.toured) || !!s.tourOffer,
+      emptyStartTour: () => App.tourStart(),
+      emptyFocusSearch: () => { const el = document.querySelector('[data-ref="jobsearch"]') || document.querySelector('[data-tour=jobcard] input'); if (el) el.focus(); else setState({ jobsOpen: true }); },
 
       appearanceRows: [
         { label: "Theme", note: "Light for the office, dark for a night shift or a dim trailer.",
@@ -1445,9 +1571,9 @@ Object.assign(App, {
         { label: "Keyboard shortcuts", note: "Every shortcut, and the order the Tab key moves through the page.",
           icon: "M3 6h18v12H3V6Zm4 3h.01M11 9h.01M15 9h.01M7 13h10",
           click: () => setState({ settingsOpen: false, keysOpen: true }) },
-        { label: "Replay the guided tour", note: "Four steps covering the rail, the one orange action, the attention panel and undo.",
+        { label: "Replay the guided tour", note: "The full walk through the sample project — every page, every mechanism, hands on. The sample resets itself when the tour starts.",
           icon: "M12 21a9 9 0 1 0-9-9m0 0V7m0 5h5m5.5-1.5L12 12",
-          click: () => setState({ settingsOpen: false, tour: 1 }) },
+          click: () => { setState({ settingsOpen: false }); App.tourStart(); } },
         { label: "Sign out", note: "Ends this session on this device. Your drafts and registers stay on the server.",
           icon: "M9 21H5V3h4M16 17l5-5-5-5M21 12H9",
           click: () => App.signOut() },
@@ -1524,17 +1650,17 @@ Object.assign(App, {
           ${uiHeader(v)}
           <div style="display:grid;grid-template-columns:minmax(0,1fr) ${v.attnMobile ? "0px" : v.attnCol};align-items:start">
             <main id="main-content" style="min-width:0;padding:0 0 80px">
-              ${uiScaffold(v)}
+              ${v.emptyLanding ? uiEmptyLanding(v) : uiScaffold(v) + `
               <div style="padding:16px 20px 0">
                 ${typeof pageBody === "function" ? pageBody(s.page, v) : ""}
                 ${uiRegister(v)}
-              </div>
+              </div>`}
             </main>
             ${uiAttention(v)}
           </div>
         </div>
       </div>`
-      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiShare(v) + uiSettings(v) + uiKeys(v) + uiTour(v) + uiUndo(v) + uiBars(v);
+      + uiConfirm(v) + uiDetail(v) + uiForm(v) + uiCO(v) + uiViewer(v) + uiShare(v) + uiSettings(v) + uiKeys(v) + uiTourOffer(v) + uiTourCard(v) + uiUndo(v) + uiBars(v);
   },
 });
 
@@ -2439,7 +2565,7 @@ Object.assign(App, {
 function pagePos(v) {
   let out = "";
   if ((v.uncovered || []).length) {
-    out += `<section aria-labelledby="unc-heading" style="background:var(--pn);border:1px solid var(--ln);border-left:4px solid var(--er);border-radius:0 8px 8px 0;box-shadow:var(--sh);margin-bottom:14px">
+    out += `<section aria-labelledby="unc-heading" data-tour="exposure" style="background:var(--pn);border:1px solid var(--ln);border-left:4px solid var(--er);border-radius:0 8px 8px 0;box-shadow:var(--sh);margin-bottom:14px">
       <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <h2 id="unc-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Approved subcontractor COs awaiting a purchase order</h2>
         <span style="${stamp("er")}">${esc(v.uncoveredTotal)} exposure</span>

@@ -62,7 +62,12 @@ def test_doctrine_microcopy_is_verbatim():
         "What PlanWise checked before offering this",
         "Set this from the schedule, not from hope",
         "One question per RFI. Two questions in one RFI get one answer.",
-        "Anything you send can be undone",
+        # The 2.0.3 tour: an ENGINE over the sample project, not slides. These
+        # lines are its spine — the offer, the invitation format, the close.
+        "Learn it on a job that isn't real",
+        "every number in it is fake, every mechanism real",
+        "Exposure is money owed with nothing ordered",
+        "Anything sent can be undone",
         "The log is append-only",
         "so the two screens can never disagree",
         "never sent outside the firm",

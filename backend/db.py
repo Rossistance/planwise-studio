@@ -505,6 +505,9 @@ MIGRATIONS = [
     # Phase 5a: real accounts, now that PlanWise is going on a public URL.
     ("users", "password_hash", "TEXT"),
     ("users", "is_admin", "INTEGER"),
+    # 2.0.3: the guided tour offers itself exactly once per ACCOUNT (not per
+    # browser) — this stamp is when they finished or skipped it.
+    ("users", "toured_at", "TEXT"),
     ("users", "disabled", "INTEGER"),
     ("users", "must_change_password", "INTEGER"),
     # Zero-token access (2026-08-10): self-service sign-up and password-based

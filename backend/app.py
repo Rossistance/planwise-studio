@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import (ai, attention, auth, briefing, changeorder, config, db, field, projection,
                documents, eml, lookahead, outbox, po_pdf, push, records,
-               reversal, schedule, store, vista)
+               reversal, sample, schedule, store, vista)
 
 FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 
@@ -503,6 +503,18 @@ def _vista_refresh_clear() -> None:
     conn.commit()
 
 
+@app.post("/api/sample/ensure")
+def ensure_sample(body: dict = Body(default={})):
+    """Seed (or reset) the sample project the guided tour walks through.
+
+    Reset rebuilds the canonical state so every tour starts from the same
+    picture regardless of what the last person clicked — the one job where
+    that is allowed, because nothing in it is real."""
+    me = _CURRENT_USER.get() or {}
+    return sample.ensure(actor=me.get("name") or sample.ACTOR,
+                         reset=bool(body.get("reset")))
+
+
 @app.post("/api/vista/refresh-request")
 def request_vista_refresh():
     """Flag that someone wants the Vista extract re-pulled. Session-authed —
@@ -720,6 +732,18 @@ def auth_logout(response: Response, request: Request):
     return {"signed_out": True}
 
 
+@app.post("/api/auth/toured")
+def auth_mark_toured():
+    """The guided tour was finished or skipped — either way, never offer it
+    again on this ACCOUNT. A stamp, not a flag, so support can see when."""
+    me = _CURRENT_USER.get()
+    conn = db.connect()
+    conn.execute("UPDATE users SET toured_at = ? WHERE name = ?",
+                 (db.now(), me["name"]))
+    conn.commit()
+    return {"toured": True}
+
+
 @app.post("/api/auth/password")
 def auth_change_password(response: Response, request: Request, body: dict = Body(...)):
     me = _CURRENT_USER.get()
@@ -849,7 +873,15 @@ def personnel():
 @app.get("/api/jobs")
 def list_jobs(q: str | None = None, limit: int = 50):
     """Type-ahead over every job. Job-number prefix matches rank first."""
-    snap = _snapshot()
+    try:
+        snap = _snapshot()
+    except HTTPException:
+        # No extract on this machine. The sample project is still findable —
+        # it is the one job a brand-new install can open.
+        hit = sample.search_hit(q)
+        if hit:
+            return {"total": 1, "jobs": [hit]}
+        raise
     numbers = vista.job_numbers(snap)
 
     if q:
@@ -866,7 +898,7 @@ def list_jobs(q: str | None = None, limit: int = 50):
 
     return {
         "total": len(numbers),
-        "jobs": [
+        "jobs": ([hit] if (hit := sample.search_hit(q)) else []) + [
             {
                 "job_number": n,
                 "job_name": snap.jobs[n].get("job_name"),
@@ -882,7 +914,17 @@ def list_jobs(q: str | None = None, limit: int = 50):
 @app.get("/api/jobs/{job_number}")
 def get_job(job_number: str):
     """Everything Vista knows about one job + the PM-entered registers."""
-    snap = _snapshot()
+    if job_number == sample.JOB:
+        # The sample job's financials come from a synthetic snapshot shaped
+        # exactly like the extract, so every derivation below runs through
+        # the same code as a real job. Real jobs never touch this branch —
+        # and the sample must open even on a machine with NO extract at all,
+        # which is exactly the machine a brand-new user is sitting at.
+        snap = sample.vista_snapshot()
+        if snap is None:
+            raise HTTPException(status_code=404, detail="The sample project has not been seeded.")
+    else:
+        snap = _snapshot()
     rec = snap.jobs.get(job_number)
     if rec is None:
         raise HTTPException(status_code=404, detail=f"Job '{job_number}' is not in the Vista extract.")
@@ -1040,7 +1082,11 @@ def job_history(job_number: str):
             merged.append({**r, "grain": "extract"})
     proj = None
     try:
-        job = _snapshot().jobs.get(job_number)
+        if job_number == sample.JOB:
+            overlay = sample.vista_snapshot()
+            job = overlay.jobs.get(job_number) if overlay else None
+        else:
+            job = _snapshot().jobs.get(job_number)
         if job:
             proj = projection.for_job(job_number, job)
     except HTTPException:

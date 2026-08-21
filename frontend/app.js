@@ -2288,7 +2288,7 @@ function pagePos(v) {
         <span style="${stamp("er")}">${esc(v.uncoveredTotal)} exposure</span>
         <button data-click="${H(v.openSubCo)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);white-space:nowrap">Log a subcontractor CO</button>
       </div>
-      <p style="margin:0;padding:10px 16px 0;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">Approved money with nothing ordered against it. Issuing the purchase order covers the commitment and moves the value into open committed cost.</p>
+      <p style="margin:0;padding:10px 16px 0;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">Exposure, not a commitment: the money is owed in principle but nothing has been ordered against it. Issuing the purchase order moves it into open committed cost, where the cost breakdown can see it.</p>
       <ul style="list-style:none;margin:0;padding:10px 16px 14px;display:flex;flex-direction:column;gap:8px">
         ${v.uncovered.map((u) => `<li style="display:flex;gap:12px;align-items:center;padding:11px 13px;border:1px solid var(--ln);border-radius:7px;background:var(--p2);flex-wrap:wrap">
           <span style="font:600 12px var(--fm);color:var(--er);flex:none">${esc(u.n)}</span>
@@ -2337,26 +2337,6 @@ function pagePos(v) {
         <button data-click="${H(v.poImportDiscard)}" class="hb-ls" style="min-height:var(--tap);padding:9px 15px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 13px var(--fd)">Discard</button>
         <button data-click="${H(v.poImportAccept)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">Log the ticked orders</button>
       </div>
-    </section>`;
-  }
-  if (v.uncovered.length) {
-    out += `<section aria-labelledby="unc-heading" style="background:var(--pn);border:1px solid var(--er);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
-      <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:9px;flex-wrap:wrap">
-        <span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;background:var(--er);box-shadow:0 0 0 3px var(--ers)"></span>
-        <h2 id="unc-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Approved subcontractor work with no purchase order</h2>
-        <p style="margin:0;font:600 12px var(--fm);color:var(--er)">${esc(v.uncoveredTotal)} exposed</p>
-      </div>
-      <ul style="list-style:none;margin:0;padding:0">
-        ${v.uncovered.map((u) => `<li style="display:flex;gap:12px;align-items:center;padding:11px 16px;border-bottom:1px solid var(--ln)">
-          <span style="flex:1;min-width:0">
-            <span style="display:block;font:600 var(--fzs) var(--fd)">Sub CO-${esc(u.n)} · ${esc(u.sub)}</span>
-            <span style="display:block;font-size:12.5px;color:var(--mu)">${esc(u.desc)}</span>
-          </span>
-          <span style="font:600 13px var(--fm);font-variant-numeric:tabular-nums">${esc(u.amt)}</span>
-          <button data-click="${H(u.issue)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd);white-space:nowrap">Issue the purchase order</button>
-        </li>`).join("")}
-      </ul>
-      <p style="margin:0;padding:11px 16px;font-size:12px;color:var(--ft);text-wrap:pretty">Exposure, not a commitment: the money is owed in principle but nothing has been ordered against it. Issuing the purchase order moves it into open committed cost, where the cost breakdown can see it.</p>
     </section>`;
   }
   return out;

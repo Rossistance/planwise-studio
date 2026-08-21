@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v18";     // the sub-CO entry surface and awaiting-PO panel return
+const VERSION = "planwise-shell-v19";     // one exposure panel, not two
 const SHELL = [
   "/",
   "/index.html",

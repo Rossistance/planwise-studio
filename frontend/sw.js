@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v13";     // PlanWise Field shell for field roles
+const VERSION = "planwise-shell-v14";     // gantt: frozen axes, wheel zoom, dependency arrows
 const SHELL = [
   "/",
   "/index.html",

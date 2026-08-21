@@ -425,18 +425,20 @@ function pageSched(v) {
       <button data-click="${H(v.triggerSchedImport)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Import an updated schedule</button>
       <button data-click="${H(v.openNewTask)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd)">Add a task</button>
     </div>
-    <div style="overflow-x:auto;padding:0 0 6px">
+    <div data-gantt style="overflow:auto;max-height:calc(100vh - 230px);padding:0 0 6px;overscroll-behavior-x:contain">
       <div style="min-width:${v.ganttMinWidth}px">
-        <div style="display:grid;grid-template-columns:280px minmax(0,1fr);border-bottom:1px solid var(--ln);position:sticky;top:0;background:var(--pn);z-index:1">
-          <p style="margin:0;padding:8px 16px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">Task</p>
+        <div style="display:grid;grid-template-columns:280px minmax(0,1fr);border-bottom:1px solid var(--ln);position:sticky;top:0;background:var(--pn);z-index:4">
+          <p style="margin:0;padding:8px 16px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft);position:sticky;left:0;background:var(--pn);z-index:2">Task</p>
           <div style="display:flex;position:relative;padding:8px 16px 8px 0">
-            ${v.ganttMonths.map((m) => `<span style="${m.style}">${esc(m.label)}</span>`).join("")}
+            ${v.ganttMonths.map((m) => `<span style="${m.style}"><span style="position:sticky;left:288px;padding-left:5px">${esc(m.label)}</span></span>`).join("")}
           </div>
         </div>
-        <ul style="list-style:none;margin:0;padding:0">
+        <div style="position:relative">
+        <svg data-gantt-links aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;z-index:0"></svg>
+        <ul style="list-style:none;margin:0;padding:0;position:relative;z-index:1">
           ${v.ganttRows.map((g) => `<li data-sched-row="${g.idx}" style="${g.rowStyle}">
             <div class="hr-p2" style="display:grid;grid-template-columns:280px minmax(0,1fr);align-items:center">
-              <div style="padding:5px 6px 5px 8px;min-width:0;display:flex;gap:6px;align-items:center">
+              <div style="padding:5px 6px 5px 8px;min-width:0;display:flex;gap:6px;align-items:center;position:sticky;left:0;z-index:2;background:${g.cellBg}">
                 <span data-pointerdown="${H(g.gripDown)}" title="Drag to reorder this row" aria-hidden="true" style="flex:none;width:14px;color:var(--ls);cursor:grab;touch-action:none;font:700 11px/1 var(--fm);letter-spacing:0;text-align:center;user-select:none">⠿</span>
                 <span aria-hidden="true" style="${g.indentStyle}"></span>
                 ${g.caretShow ? `<button data-click="${H(g.toggleCollapse)}" aria-label="${esc(g.caretAria)}" class="hb-as" style="flex:none;width:18px;height:18px;display:grid;place-content:center;border-radius:4px;color:var(--mu);font:600 10px var(--fm)">${g.caret}</button>` : ""}
@@ -449,8 +451,8 @@ function pageSched(v) {
               <div style="position:relative;height:26px;margin-right:16px">
                 <span aria-hidden="true" style="${g.trackStyle}"></span>
                 ${g.isMilestone
-                  ? `<span data-pointerdown="${H(g.barDown)}" aria-hidden="true" style="${g.msStyle}"></span>`
-                  : `<span data-pointerdown="${H(g.barDown)}" aria-hidden="true" style="${g.barStyle}"><span style="${g.fillStyle}"></span></span>`}
+                  ? `<span data-pointerdown="${H(g.barDown)}" data-task-bar="${g.id}" aria-hidden="true" style="${g.msStyle}"></span>`
+                  : `<span data-pointerdown="${H(g.barDown)}" data-task-bar="${g.id}" aria-hidden="true" style="${g.barStyle}"><span style="${g.fillStyle}"></span></span>`}
                 <span aria-hidden="true" style="${g.todayStyle}"></span>
                 <span class="sr">${esc(g.aria)}</span>
               </div>
@@ -461,9 +463,10 @@ function pageSched(v) {
             </div>` : ""}
           </li>`).join("")}
         </ul>
+        </div>
       </div>
     </div>
-    <p style="margin:0;padding:11px 16px;border-top:1px solid var(--ln);font-size:12px;color:var(--ft);text-wrap:pretty">Drag a bar to move a task, or drag the ⠿ grip to reorder the register — both ask for confirmation before anything changes. The ▾ caret collapses a summary; the + peek opens dates, predecessor, successors and dependency type as editable fields. Moving a task pushes every dependent task with it. ${esc(v.calendarNote)}</p>
+    <p style="margin:0;padding:11px 16px;border-top:1px solid var(--ln);font-size:12px;color:var(--ft);text-wrap:pretty">Hold Ctrl and scroll over the chart to zoom the time axis. Drag a bar to move a task, or drag the ⠿ grip to reorder the register — both ask for confirmation before anything changes. The ▾ caret collapses a summary; the + peek opens dates, predecessor, successors and dependency type as editable fields. Moving a task pushes every dependent task with it. ${esc(v.calendarNote)}</p>
   </section>`;
 }
 

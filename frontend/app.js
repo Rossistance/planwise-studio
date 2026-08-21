@@ -70,6 +70,17 @@ const App = {
     applyChrome();
     document.addEventListener("keydown", (e) => this.onKey(e));
     window.addEventListener("hashchange", () => this.route());
+    // Ctrl+wheel over the Gantt zooms the time axis, keeping the point under
+    // the cursor still — the way every scheduling tool does it.
+    document.addEventListener("wheel", (e) => {
+      const board = e.target && e.target.closest && e.target.closest("[data-gantt]");
+      if (!board || !e.ctrlKey) return;
+      e.preventDefault();
+      const rect = board.getBoundingClientRect();
+      const offsetX = e.clientX - rect.left;
+      App._ganttAnchor = { ratio: (board.scrollLeft + offsetX) / board.scrollWidth, offsetX };
+      if (e.deltaY < 0) App.schedZoomIn(); else App.schedZoomOut();
+    }, { passive: false });
     window.addEventListener("focus", () => App.detectSent());
 
     // Phones get the drawer shell; coarse pointers with no saved preference
@@ -354,6 +365,50 @@ const App = {
     savePrefs({ accent: color, live: "Accent colour changed." });
   },
 
+  // After every render on the schedule page: draw the dependency arrows from
+  // the REAL bar geometry (collapse, wraps and open peeks included), and
+  // settle the Ctrl+wheel zoom so the point under the cursor stays put.
+  drawGanttLinks() {
+    if (this.state.page !== "sched" || this.state.shell === "field") return;
+    const board = document.querySelector("[data-gantt]");
+    const svg = document.querySelector("[data-gantt-links]");
+    if (!board || !svg) return;
+    if (this._ganttAnchor) {
+      const a = this._ganttAnchor;
+      this._ganttAnchor = null;
+      board.scrollLeft = Math.max(0, a.ratio * board.scrollWidth - a.offsetX);
+    }
+    const wrap = svg.parentElement;
+    const wrapRect = wrap.getBoundingClientRect();
+    svg.setAttribute("width", wrap.scrollWidth);
+    svg.setAttribute("height", wrap.scrollHeight);
+    const links = ((this.state.data.schedule || {}).links) || [];
+    const at = (id) => {
+      const el = wrap.querySelector('[data-task-bar="' + id + '"]');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { l: r.left - wrapRect.left, r: r.right - wrapRect.left,
+               y: r.top - wrapRect.top + r.height / 2 };
+    };
+    const parts = [];
+    links.forEach((l) => {
+      const a = at(l.pred_id), b = at(l.succ_id);
+      if (!a || !b) return;                    // a collapsed summary hides its rows
+      const type = (l.link_type || l.type || "FS").toUpperCase();
+      const x1 = type === "SS" || type === "SF" ? a.l : a.r;
+      const x2 = type === "FF" || type === "SF" ? b.r : b.l;
+      const dir = type === "FF" || type === "SF" ? -1 : 1;
+      const stub = 8 * dir;
+      const mid = (x1 + stub) * 1;
+      const d = "M" + x1 + " " + a.y + " H" + (x1 + stub) +
+        (Math.abs(mid - (x2 - stub)) < 1 ? "" : " V" + b.y + " H" + (x2 - stub)) +
+        " V" + b.y + " H" + x2;
+      parts.push('<path d="' + d + '" fill="none" stroke="var(--ls)" stroke-width="1.3"></path>');
+      parts.push('<path d="M' + x2 + ' ' + b.y + ' l' + (-5 * dir) + ' -3.5 v7 z" fill="var(--ft)"></path>');
+    });
+    svg.innerHTML = parts.join("");
+  },
+
   // ————— rail ————————————————————————————————————————————————————————————
   railEnter() {
     clearTimeout(App._railT);
@@ -551,6 +606,7 @@ const App = {
 
   afterRender() {
     if (this.state.viewer) this.paintViewerCanvases();
+    this.drawGanttLinks();
     // Rail hover-open: mouseenter/leave don't bubble, so they bind directly to
     // the persistent element (morphdom keeps it) rather than delegating.
     const rail = document.getElementById("pw-rail");
@@ -2673,7 +2729,7 @@ Object.assign(App, {
       const d = new Date(t);
       months.push({ label: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getUTCMonth()] +
         (d.getUTCMonth() === 0 || t === gs.t0 ? " ’" + String(d.getUTCFullYear()).slice(2) : ""),
-        style: "flex:1;font:500 10px var(--fm);letter-spacing:.08em;color:var(--ft);text-align:left;border-left:1px solid " + (t === gs.t0 ? "transparent" : "var(--ln)") + ";padding-left:5px" });
+        style: "flex:1;display:flex;font:500 10px var(--fm);letter-spacing:.08em;color:var(--ft);text-align:left;border-left:1px solid " + (t === gs.t0 ? "transparent" : "var(--ln)") + ";overflow:hidden;white-space:nowrap" });
       t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
     }
 
@@ -2706,6 +2762,8 @@ Object.assign(App, {
         ...this.schedRowProps(i),
         num: num(t), name: t.name || "?", idx: String(i),
         edit: App.openTaskForm(t.id),
+        id: t.id,
+        cellBg: rowOver ? "var(--bps)" : rowLift ? "var(--p2)" : "var(--pn)",
         rowStyle: "border-bottom:1px solid var(--ln);background:" + (rowOver ? "var(--bps)" : rowLift ? "var(--p2)" : "transparent") +
           (rowOver ? ";box-shadow:inset 0 2px 0 var(--bp)" : "") + (rowLift ? ";opacity:.55" : ""),
         caretShow: kids.length > 0,

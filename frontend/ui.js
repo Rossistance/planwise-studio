@@ -441,6 +441,7 @@ function uiRegister(v) {
         <thead><tr>
           ${v.regColumns.map((c) => `<th scope="col" aria-sort="${c.sort}" style="${c.style}">
             ${c.sortable ? `<button data-click="${H(c.click)}" class="ht-ac" style="font:inherit;color:inherit;letter-spacing:inherit;text-transform:inherit;display:inline-flex;gap:5px;align-items:center;min-height:24px">${esc(c.label)}<span aria-hidden="true" style="color:var(--ac)">${c.arrow}</span></button>` : esc(c.label)}
+            ${c.resize ? `<span data-pointerdown="${H(c.resize)}" title="Drag to set the column width" aria-hidden="true" style="position:absolute;top:0;right:-5px;bottom:0;width:10px;cursor:col-resize;touch-action:none;z-index:1"></span>` : ""}
           </th>`).join("")}
         </tr></thead>
         <tbody>
@@ -517,16 +518,21 @@ function uiDetail(v) {
             <thead><tr>
               <th scope="col" style="text-align:left;padding:9px 13px;font:500 9.5px var(--fm);letter-spacing:.13em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ln)">${esc(v.detailItemsCol1)}</th>
               <th scope="col" style="text-align:right;padding:9px 13px;font:500 9.5px var(--fm);letter-spacing:.13em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ln)">${esc(v.detailItemsCol2)}</th>
+              ${v.detailItems.some((i) => i.remove) ? `<th scope="col" style="width:34px;border-bottom:1px solid var(--ln)"><span class="sr">Remove</span></th>` : ""}
             </tr></thead>
             <tbody>
               ${v.detailItems.map((i) => `<tr>
                 <td style="padding:9px 13px;border-bottom:1px solid var(--ln)">${esc(i.label)}</td>
                 <td style="padding:9px 13px;border-bottom:1px solid var(--ln);text-align:right;font-variant-numeric:tabular-nums;color:${i.color}">${esc(i.value)}</td>
+                ${i.remove ? `<td style="padding:9px 8px 9px 0;border-bottom:1px solid var(--ln);text-align:center">
+                  <button data-click="${H(i.remove)}" aria-label="${esc(i.removeAria || "Remove this line")}" title="Remove" class="ht-er" style="width:20px;height:20px;display:inline-grid;place-content:center;border:1px solid var(--ln);border-radius:4px;color:var(--ft);font:600 12px/1 var(--fm)">×</button>
+                </td>` : (v.detailItems.some((x) => x.remove) ? `<td style="border-bottom:1px solid var(--ln)"></td>` : "")}
               </tr>`).join("")}
             </tbody>
             <tfoot><tr style="background:var(--p2)">
               <th scope="row" style="text-align:left;padding:10px 13px;font:600 var(--fzs) var(--fd)">${esc(v.detailItemsTotalLabel)}</th>
               <td style="padding:10px 13px;text-align:right;font:600 var(--fzs) var(--fd);font-variant-numeric:tabular-nums">${esc(v.detailItemsTotal)}</td>
+              ${v.detailItems.some((i) => i.remove) ? `<td></td>` : ""}
             </tr></tfoot>
           </table>
         </section>` : ""}
@@ -810,6 +816,7 @@ function uiCO(v) {
                 <input id="${c.id}" type="checkbox" ${c.on ? "checked" : ""} data-change="${H(c.toggle)}" style="width:19px;height:19px;margin:1px 0 0;accent-color:var(--ac);flex:none">
                 <label for="${c.id}" style="flex:1;font-size:var(--fzs);color:var(--mu);cursor:pointer;text-wrap:pretty">${esc(c.text)}</label>
                 ${c.isNew ? `<span style="font:500 9.5px var(--fm);letter-spacing:.1em;text-transform:uppercase;color:var(--ok);white-space:nowrap">Added by the team</span>` : ""}
+                <button type="button" data-click="${H(c.archive)}" title="Archive from the library — letters that already carry it keep their text" class="ht-er" style="flex:none;font:500 9.5px var(--fm);letter-spacing:.1em;text-transform:uppercase;color:var(--ft);min-height:20px;white-space:nowrap">Archive</button>
               </li>`).join("")}
             </ul>
             <div style="display:flex;gap:9px;align-items:flex-end;padding:6px 14px 13px">
@@ -830,6 +837,8 @@ function uiCO(v) {
 
       <div style="flex:none;padding:13px 20px;border-top:1px solid var(--ln);background:var(--p2);display:flex;gap:9px;align-items:center;flex-wrap:wrap">
         <p style="margin:0;flex:1;min-width:220px;font-size:12px;color:var(--mu);text-wrap:pretty" aria-live="polite">${esc(v.coFootnote)}</p>
+        <button type="button" data-click="${H(v.coDownloadPdf)}" class="hb-ls" style="min-height:var(--tap);padding:9px 14px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);color:var(--mu);white-space:nowrap">Download PDF</button>
+        <button type="button" data-click="${H(v.coDownloadDocx)}" class="hb-ls" style="min-height:var(--tap);padding:9px 14px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);color:var(--mu);white-space:nowrap">Download Word</button>
         <button type="submit" class="hb-ls" style="min-height:var(--tap);padding:9px 16px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 13px var(--fd)">${esc(v.coSaveLabel)}</button>
         <button type="button" data-click="${H(v.coSaveAndSend)}" class="hb-ah" style="min-height:var(--tap);padding:9px 17px;border:1px solid var(--ac);border-radius:6px;background:var(--ac);color:var(--acink);font:600 13px var(--fd);letter-spacing:.03em;box-shadow:0 0 0 3px var(--as)">${esc(v.coSendLabel)}</button>
       </div>

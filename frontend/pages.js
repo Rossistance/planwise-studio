@@ -523,8 +523,11 @@ function pageLook(v) {
     <ul style="list-style:none;margin:0;padding:12px 16px;display:flex;gap:9px;flex-wrap:wrap">
       ${v.areaChips.map((a) => `<li style="display:flex;align-items:center;gap:9px;padding:8px 13px;border:1px solid var(--ln);border-radius:999px;background:var(--p2)">
         <span aria-hidden="true" style="width:11px;height:11px;border-radius:3px;background:${a.color};flex:none"></span>
-        <span style="font:600 12.5px var(--fd)">${esc(a.name)}</span>
+        ${a.real
+          ? `<button data-click="${H(a.edit)}" title="Rename or recolour this area" class="ht-ac" style="font:600 12.5px var(--fd);color:var(--bp);text-decoration:underline;text-underline-offset:2px;min-height:20px">${esc(a.name)}</button>`
+          : `<span style="font:600 12.5px var(--fd)">${esc(a.name)}</span>`}
         <span style="font:11px var(--fm);color:var(--ft)">${esc(a.count)}</span>
+        ${a.real ? `<button data-click="${H(a.remove)}" aria-label="Remove the work area ${esc(a.name)}" title="Remove" class="ht-er" style="flex:none;width:18px;height:18px;display:grid;place-content:center;border:1px solid var(--ln);border-radius:4px;color:var(--ft);font:600 12px/1 var(--fm)">×</button>` : ""}
       </li>`).join("")}
     </ul>
   </section>
@@ -541,6 +544,8 @@ function pageLook(v) {
       <button data-click="${H(v.openNewLook)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd)">Add an activity</button>
       <button data-click="${H(v.shareLookCust)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Share with the customer</button>
       <button data-click="${H(v.shareLookInt)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Share with the crew</button>
+      <button data-click="${H(v.lookPdfCust)}" title="The customer sheet as it prints — tools, material and operational notes structurally absent" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);color:var(--mu)">Customer PDF</button>
+      <button data-click="${H(v.lookPdfInt)}" title="The crew sheet as it prints, with tools and material on it" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);color:var(--mu)">Crew PDF</button>
     </div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:var(--fz)">
@@ -645,11 +650,34 @@ function pageThread(v) {
             </div>
             <p style="margin:6px 0 0;font:600 var(--fzs) var(--fd);color:var(--mu)">${esc(m.subject)}</p>
             <p style="margin:6px 0 0;font-size:var(--fzs);line-height:1.55;white-space:pre-wrap;text-wrap:pretty">${esc(m.body)}</p>
-            ${m.hasAttach ? `<p style="margin:8px 0 0;font:11.5px var(--fm);color:var(--bp)">${esc(m.attach)}${(m.attachments || []).map((a) => ` · <a href="${a.url}" target="_blank" style="color:var(--bp)">${esc(a.name)}</a>`).join("")}</p>` : ""}
+            ${m.hasAttach ? `<p style="margin:8px 0 0;font:11.5px var(--fm);color:var(--bp)">${esc(m.attach)}${(m.attachments || []).map((a) => ` · <a href="${a.url}" target="_blank" style="color:var(--bp)">${esc(a.name)}</a>${a.canCompare ? ` <button data-click="${H(a.compare)}" class="ht-ac" style="font:600 11px var(--fm);color:var(--bp);text-decoration:underline;text-underline-offset:2px;min-height:20px;margin-left:2px">${a.comparing ? "hide the comparison" : "compare with what we sent"}</button>` : ""}`).join("")}</p>` : ""}
           </li>`).join("")}
         </ol>
         ${v.threadMessages.length === 0 ? `<p style="margin:0;padding:18px 16px;font-size:var(--fzs);color:var(--mu)">Nothing in the thread yet. Send the record and the conversation collects here.</p>` : ""}
       </section>
+
+      ${v.threadCompare ? `<section aria-labelledby="cmp-heading" data-cmp-wrap style="background:var(--pn);border:1px solid var(--ls);border-radius:8px;box-shadow:var(--sh)">
+        <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <h2 id="cmp-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Sent vs returned</h2>
+          ${v.threadCompare.canPage ? `<button data-click="${H(v.threadCompare.prev)}" class="hb-ls" style="min-height:32px;padding:5px 11px;border:1px solid var(--ln);border-radius:6px;font:600 11.5px var(--fd);color:var(--mu)">‹ Prev</button>` : ""}
+          <span data-cmp-meta style="font:500 11.5px var(--fm);color:var(--ft)" aria-live="polite">${esc(v.threadCompare.pagesLabel)}</span>
+          ${v.threadCompare.canPage ? `<button data-click="${H(v.threadCompare.next)}" class="hb-ls" style="min-height:32px;padding:5px 11px;border:1px solid var(--ln);border-radius:6px;font:600 11.5px var(--fd);color:var(--mu)">Next ›</button>` : ""}
+          <button data-click="${H(v.threadCompare.close)}" aria-label="Close the comparison" title="Close" class="ht-er" style="flex:none;width:22px;height:22px;display:grid;place-content:center;border:1px solid var(--ln);border-radius:4px;color:var(--ft);font:600 13px/1 var(--fm)">×</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;padding:13px 16px">
+          <figure style="margin:0;min-width:0">
+            <figcaption style="margin:0 0 6px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">We sent</figcaption>
+            <canvas id="cmp-sent" data-cmp-sent style="max-width:100%;border:1px solid var(--ln);border-radius:4px;background:#FFFFFF;box-shadow:var(--sh)"></canvas>
+          </figure>
+          <figure style="margin:0;min-width:0">
+            <figcaption style="margin:0 0 6px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">They returned · ${esc(v.threadCompare.name)}</figcaption>
+            ${v.threadCompare.image
+              ? `<img id="cmp-back-img" alt="Returned file ${esc(v.threadCompare.name)}" src="${v.threadCompare.backUrl}" style="max-width:100%;border:1px solid var(--ln);border-radius:4px;background:#FFFFFF;box-shadow:var(--sh)">`
+              : `<canvas id="cmp-back" data-cmp-back style="max-width:100%;border:1px solid var(--ln);border-radius:4px;background:#FFFFFF;box-shadow:var(--sh)"></canvas>`}
+          </figure>
+        </div>
+        ${v.threadCompare.imageNote ? `<p style="margin:0;padding:0 16px 12px;font-size:12px;color:var(--ft);text-wrap:pretty">${esc(v.threadCompare.imageNote)}</p>` : ""}
+      </section>` : ""}
 
       ${v.threadUnconfirmed.map((u) => `<section style="background:var(--pn);border:1px solid var(--wn);border-left:3px solid var(--wn);border-radius:0 8px 8px 0;box-shadow:var(--sh)">
         <div style="padding:12px 16px;border-bottom:1px solid var(--ln)">

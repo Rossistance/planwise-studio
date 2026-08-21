@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v19";     // one exposure panel, not two
+const VERSION = "planwise-shell-v20";     // nine 1.x features rejoin the 2.0 shell
 const SHELL = [
   "/",
   "/index.html",

@@ -46,6 +46,9 @@ const App = {
     confirm: null, detail: null, form: null, co: null,
     viewer: null,
 
+    // — record thread: sent-vs-returned comparison (1.x logic, kept)
+    threadCompare: null,
+
     // — registers
     regSort: { col: null, dir: 1 }, poFilter: "All", recFilter: "All",
 
@@ -565,6 +568,7 @@ const App = {
       if (s.co) return App.coClose();
       if (s.shareOpen) return setState({ shareOpen: false });
       if (s.form) return setState({ form: null });
+      if (s.threadCompare) return setState({ threadCompare: null });
       if (s.detail) return setState({ detail: null });
       if (s.tour) return App.endTour();
       if (s.keysOpen) return setState({ keysOpen: false });
@@ -607,6 +611,7 @@ const App = {
   afterRender() {
     if (this.state.viewer) this.paintViewerCanvases();
     this.drawGanttLinks();
+    if (this.state.threadCompare) this.drawCompare();
     // Rail hover-open: mouseenter/leave don't bubble, so they bind directly to
     // the persistent element (morphdom keeps it) rather than delegating.
     const rail = document.getElementById("pw-rail");
@@ -686,7 +691,10 @@ Object.assign(App, {
         caption: "Schedule tasks on job " + s.job + " with duration, start, finish, percent complete, float and whether the task is on the critical path. Select a task name to edit it.",
         footnote: "Float is in working days on the job calendar, computed by the engine — never typed. Tasks with zero float move the finish date if they slip. Drag the ⠿ grip to reorder rows, or open + to edit dates, predecessor, successors and dependency type in place — the Gantt follows every change. Tasks added or edited in PlanWise keep their changes when the customer's schedule is re-imported.",
         columns: [["Task", 0, 1], ["Duration", 1, 1], ["Start", 0, 1], ["Finish", 0, 1], ["Complete", 0, 1], ["Float", 1, 1], ["Path", 0, 0]],
-        rows, noSort: !!s.schedDrag, emptyText: "No tasks yet. Import a schedule or add the first task." };
+        rows, noSort: !!s.schedDrag, resizable: true,
+        extras: Object.keys(App.colWidths()).length ? [{ label: "Reset the column widths", click: App.colResizeReset(), hoverClass: "hb-ls",
+          style: "min-height:var(--tap);padding:7px 14px;border-radius:6px;border:1px solid var(--ln);background:var(--pn);font:600 12.5px var(--fd);white-space:nowrap" }] : [],
+        emptyText: "No tasks yet. Import a schedule or add the first task." };
     }
 
     if (s.page === "activity") {
@@ -706,6 +714,37 @@ Object.assign(App, {
 
   openDetail: (kind, id) => () => setState({ detail: { kind, id } }, focusRef("detail")),
   closeDetail() { setState({ detail: null }); },
+
+  // ————— schedule column widths (1.x logic, kept: drag the header edge,
+  // widths persist per browser in planwise.schedCols, one reset) ————————————
+  colWidths() {
+    try { return JSON.parse(localStorage.getItem("planwise.schedCols") || "{}"); }
+    catch (e) { return {}; }
+  },
+  colResizeDown: (label) => (e) => {
+    const th = e.target.closest("th");
+    if (!th) return;
+    e.preventDefault();
+    const startX = e.clientX, startW = th.getBoundingClientRect().width;
+    // Live width by direct DOM during the drag — a re-render per pixel would
+    // fight the pointer. State catches up once, on release.
+    const move = (ev) => { th.style.width = th.style.minWidth = Math.max(56, startW + ev.clientX - startX) + "px"; };
+    const up = (ev) => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const w = Math.round(Math.max(56, startW + ev.clientX - startX));
+      const saved = App.colWidths();
+      saved[label] = w;
+      try { localStorage.setItem("planwise.schedCols", JSON.stringify(saved)); } catch (err) {}
+      setState({});
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  },
+  colResizeReset: () => () => {
+    try { localStorage.removeItem("planwise.schedCols"); } catch (e) {}
+    setState({ live: "Column widths are back to their defaults." });
+  },
 
   buildRegister() {
     const spec = this.regSpec();
@@ -737,13 +776,17 @@ Object.assign(App, {
           pick: () => setState(spec.kind === "po" ? { poFilter: label } : { recFilter: label }),
           style: chip(on), countStyle: "font:600 10px var(--fm);padding:2px 6px;border-radius:999px;background:" + (on ? "var(--ac)" : "var(--ln)") + ";color:" + (on ? "var(--acink)" : "var(--mu)") };
       }),
-      regColumns: spec.columns.map(([label, right, sortable], i) => ({
-        label, style: colStyle(right),
-        sortable: !!sortable,
-        sort: si === i ? (s.regSort.dir === 1 ? "ascending" : "descending") : "none",
-        arrow: si === i ? (s.regSort.dir === 1 ? "↑" : "↓") : "",
-        click: () => setState({ regSort: { col: i, dir: si === i ? -s.regSort.dir : 1 } }),
-      })),
+      regColumns: spec.columns.map(([label, right, sortable], i) => {
+        const w = spec.resizable ? App.colWidths()[label] : null;
+        return {
+          label, style: colStyle(right) + (spec.resizable ? ";position:relative" : "") + (w ? ";width:" + w + "px;min-width:" + w + "px" : ""),
+          sortable: !!sortable,
+          resize: spec.resizable ? App.colResizeDown(label) : null,
+          sort: si === i ? (s.regSort.dir === 1 ? "ascending" : "descending") : "none",
+          arrow: si === i ? (s.regSort.dir === 1 ? "↑" : "↓") : "",
+          click: () => setState({ regSort: { col: i, dir: si === i ? -s.regSort.dir : 1 } }),
+        };
+      }),
       regRows: rows.map((r) => Object.assign({ hasSched: "", schedIdx: "", peekOpen: "" }, r.sched || {}, {
         rowStyle: (r.sched && s.schedDrag && s.schedDrag.kind === "row" && String(s.schedDrag.over) === r.sched.schedIdx && String(s.schedDrag.index) !== r.sched.schedIdx ? "background:var(--bps);box-shadow:inset 0 2px 0 var(--bp)" : "") +
           (r.sched && s.schedDrag && s.schedDrag.kind === "row" && String(s.schedDrag.index) === r.sched.schedIdx ? "opacity:.55;background:var(--p2)" : ""),
@@ -893,7 +936,7 @@ Object.assign(App, {
     const spec = App.formSpec(kind, ctx || {});
     const values = {};
     spec.fields.forEach((f) => { values[f[0]] = f[3] && f[3].value !== undefined ? f[3].value : ""; });
-    setState({ form: { kind, ctx: ctx || {}, values, items: spec.items ? [{ desc: "", amt: "" }] : [], clar: {}, pages: {}, days: {}, color: 0, submitted: false } });
+    setState({ form: { kind, ctx: ctx || {}, values, items: spec.items ? [{ desc: "", amt: "" }] : [], clar: {}, pages: {}, days: {}, color: spec.colorInit || 0, submitted: false } });
   },
   closeForm() { setState({ form: null }); },
   setField: (id) => (e) => {
@@ -1628,6 +1671,21 @@ Object.assign(App, {
     }
   },
 
+  // Archive retires a line from the library — it stops being offered on new
+  // letters. Letters that already carry it keep their own copy of the text,
+  // so nothing already sent or drafted changes.
+  archiveClar: (cid) => async () => {
+    try {
+      await api(`/api/co-clarifications/${cid}`, { method: "DELETE" });
+      App.state.data.clarifications = await api("/api/co-clarifications");
+      const co = App.state.co;
+      if (co && co.clar[cid]) { co.clar = { ...co.clar, [cid]: false }; co.touched = true; App.debouncedCoSave(); }
+      setState({ live: "Archived from the library. Letters that already carry it keep their text." });
+    } catch (err) {
+      setState({ live: "Could not archive it: " + err.message });
+    }
+  },
+
   coErrors(co) {
     const errs = [];
     if (co.kind === "customer") {
@@ -1826,6 +1884,7 @@ Object.assign(App, {
       coAddItem: () => App.coAddItem(), coTotal: money(total),
       coClar: lib.map((c) => ({
         id: "coc-" + c.id, text: c.text, on: !!co.clar[c.id], toggle: App.coToggleClar(c.id), isNew: !c.seeded,
+        archive: App.archiveClar(c.id),
       })),
       coNewClar: this.state.coNewClar || "", coSetNewClar: (e) => App.coSetNewClar(e), coAddClar: () => App.coAddClar(),
       coFootnote: co.isNew
@@ -1834,6 +1893,12 @@ Object.assign(App, {
       coSaveLabel: co.isNew ? "Save as a draft" : "Save changes",
       coSubmit: () => App.coSubmit(), coSaveAndSend: () => App.coSaveAndSend(),
       coSendLabel: isCust ? "Save and draft the email in Outlook" : "Save and draft the log email in Outlook",
+      // The documents on their own, without a send: the same hand-authored
+      // files the share attaches, for filing or editing outside PlanWise.
+      coDownloadPdf: () => downloadEmlUrl(`/api/jobs/${encodeURIComponent(this.state.job)}/cos/${co.id}/document.pdf`,
+        isCust ? "The letter PDF downloaded." : "The subcontractor CO log PDF downloaded."),
+      coDownloadDocx: () => downloadEmlUrl(`/api/jobs/${encodeURIComponent(this.state.job)}/cos/${co.id}/document.docx`,
+        "Word document downloaded — edit and send it however you like."),
     };
   },
 });
@@ -1984,6 +2049,12 @@ Object.assign(App, {
         detailActions: [
           btn2("Close this panel", "ghost", App.closeDetail),
           btn2("Remove CO-" + (c.co_number || "?"), "ghost", () => { App.closeDetail(); App.coDelete(c.id)(); }),
+          btn2(isCust ? "Letter PDF" : "Sub-CO log PDF", "ghost", () => downloadEmlUrl(
+            `/api/jobs/${encodeURIComponent(this.state.job)}/cos/${c.id}/document.pdf`,
+            isCust ? "The letter PDF downloaded." : "The subcontractor CO log PDF downloaded — every sub CO on the job, as it prints.")),
+          btn2(isCust ? "Letter Word" : "Sub-CO log Word", "ghost", () => downloadEmlUrl(
+            `/api/jobs/${encodeURIComponent(this.state.job)}/cos/${c.id}/document.docx`,
+            "Word document downloaded — edit and send it however you like.")),
           isCust
             ? btn2("Open the composer", "ghost", () => { App.closeDetail(); App.openCO(c.id)(); })
             : btn2("Edit this sub CO", "ghost", () => { App.closeDetail(); App.openForm("subco", { coId: c.id })(); }),
@@ -2016,13 +2087,15 @@ Object.assign(App, {
           ["Counts toward committed cost", (p.status || "Open") === "Open" ? "Yes, open committed" : "No, order is closed"]]),
       ],
       detailHasItems: inv.length > 0,
-      detailItems: inv.map((i) => ({ label: "Invoice " + (i.invoice_number || "?") + " · " + (i.date || ""), value: money(i.amount), color: "var(--ink)" })),
+      detailItems: inv.map((i) => ({ label: "Invoice " + (i.invoice_number || "?") + " · " + (i.date || ""), value: money(i.amount), color: "var(--ink)",
+        remove: App.invoiceDelete(p.id, i.id), removeAria: "Remove invoice " + (i.invoice_number || "?") + " from this order" })),
       detailItemsTitle: "Invoices against this order", detailItemsCol1: "Invoice", detailItemsCol2: "Amount",
       detailItemsTotalLabel: "Invoiced to date", detailItemsTotal: money(invTotal),
       detailAudit: A(trail.length ? trail : [["Purchase order logged", p.created_by || "—", usDate(p.created_at)]]),
       detailFootnote: "Open committed cost on the cost breakdown is the sum of the remaining amounts on open orders.",
       detailActions: [
         btn2("Close this panel", "ghost", App.closeDetail),
+        btn2("Remove this order", "ghost", App.poDelete(p.id)),
         btn2((p.status || "Open") === "Open" ? "Close this order" : "Reopen this order", "ghost", App.togglePoStatus(p.id)),
         btn2("Record an invoice", "primary", () => { App.closeDetail(); App.openForm("invoice", { po: p.id })(); }),
       ],
@@ -2032,6 +2105,70 @@ Object.assign(App, {
 
 // ————— PO handlers: status flip, issue from sub CO, PDF import ———————————————
 Object.assign(App, {
+  poDelete: (poId) => () => {
+    const p = ((App.state.data.job || {}).purchase_orders || []).find((x) => x.id === poId) || {};
+    const inv = p.invoices || [];
+    const amt = p.adjusted_amount !== null && p.adjusted_amount !== undefined ? p.adjusted_amount : p.original_amount;
+    const invTotal = inv.reduce((t, i) => t + (i.amount || 0), 0);
+    const open = (p.status || "Open") === "Open";
+    setState({
+      confirm: {
+        eyebrow: "Remove a purchase order", title: (p.po_number || "(unnumbered)") + (p.vendor ? " · " + p.vendor : ""),
+        body: "This removes the order" + (inv.length ? " and the " + inv.length + (inv.length === 1 ? " invoice" : " invoices") + " recorded against it" : "") + " from the register.",
+        checks: [
+          [open ? "warn" : "pass", "Committed cost", open
+            ? "The order is open, so open committed cost drops by " + money(Math.max(0, (amt || 0) - invTotal)) + " the moment it goes — the cost breakdown moves with it."
+            : "The order is closed; nothing on the cost breakdown is counting it."],
+          [inv.length ? "warn" : "pass", "Invoices", inv.length
+            ? "Its " + inv.length + (inv.length === 1 ? " invoice goes" : " invoices go") + " with it — " + money(invTotal) + " invoiced to date."
+            : "No invoices are recorded against it."],
+          ["pass", "Reversible", "One undo restores the order" + (inv.length ? " and every invoice" : "") + ", for thirty days."],
+        ],
+        blocked: false,
+        verdict: "Removing is undoable — the reversal restores the order" + (inv.length ? " with its invoices" : "") + ".",
+        label: "Remove this order",
+        run: async () => {
+          try {
+            await api(`/api/jobs/${encodeURIComponent(App.state.job)}/pos/${poId}`, { method: "DELETE" });
+            const acts = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/activity?limit=1`);
+            setState({ confirm: null, detail: null });
+            App.act((p.po_number || "The order") + " removed from the register.", ((acts.activity || [])[0] || {}).id, ["job"]);
+          } catch (err) { setState({ confirm: null, live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
+  invoiceDelete: (poId, invId) => () => {
+    const p = ((App.state.data.job || {}).purchase_orders || []).find((x) => x.id === poId) || {};
+    const i = (p.invoices || []).find((x) => x.id === invId) || {};
+    const amt = p.adjusted_amount !== null && p.adjusted_amount !== undefined ? p.adjusted_amount : p.original_amount;
+    const invTotal = (p.invoices || []).reduce((t, x) => t + (x.amount || 0), 0);
+    setState({
+      confirm: {
+        eyebrow: "Remove an invoice", title: "Invoice " + (i.invoice_number || "?") + " · " + money(i.amount),
+        body: "The invoice comes off " + (p.po_number || "the order") + ". The order itself stays.",
+        checks: [
+          ["pass", "Remaining to invoice", amt === null || amt === undefined
+            ? "The order is unpriced, so nothing derived moves."
+            : "The order shows " + money(amt - invTotal + (i.amount || 0)) + " remaining to invoice once this is removed."],
+          ["pass", "Reversible", "One undo restores it, for thirty days."],
+        ],
+        blocked: false,
+        verdict: "Removing is undoable — the reversal restores the invoice on this order.",
+        label: "Remove this invoice",
+        run: async () => {
+          try {
+            await api(`/api/jobs/${encodeURIComponent(App.state.job)}/pos/${poId}/invoices/${invId}`, { method: "DELETE" });
+            const acts = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/activity?limit=1`);
+            setState({ confirm: null });
+            App.act("Invoice " + (i.invoice_number || "?") + " removed from " + (p.po_number || "the order") + ".", ((acts.activity || [])[0] || {}).id, ["job"]);
+          } catch (err) { setState({ confirm: null, live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
   togglePoStatus: (poId) => async () => {
     const p = ((App.state.data.job || {}).purchase_orders || []).find((x) => x.id === poId) || {};
     const next = (p.status || "Open") === "Open" ? "Closed" : "Open";
@@ -3118,6 +3255,33 @@ Object.assign(App, {
     } catch (err) { setState({ live: err.message }); }
   },
 
+  confirmDeleteArea: (a) => () => {
+    const items = ((App.state.data.lookahead || {}).items) || [];
+    const n = items.filter((r) => r.work_area_id === a.id).length;
+    setState({
+      confirm: {
+        eyebrow: "Remove a work area", title: "“" + (a.name || "?") + "”",
+        body: "The area disappears from the grid and from every activity that carries it. The activities themselves stay.",
+        checks: [
+          ["pass", "The activities", n
+            ? n + (n === 1 ? " activity keeps its row and its ticked days — it loses the colour, not the plan." : " activities keep their rows and ticked days — they lose the colour, not the plan.")
+            : "Nothing on the look ahead carries this area right now."],
+          ["warn", "Not on the undo list", "Re-adding the area takes one step" + (n ? ", but its activities would need re-assigning by hand." : ".")],
+        ],
+        blocked: false,
+        verdict: "Nothing blocks this. The removal is written to the activity log.",
+        label: "Remove this work area",
+        run: async () => {
+          try {
+            await api(`/api/lookahead/areas/${a.id}`, { method: "DELETE" });
+            setState({ confirm: null, live: "Work area “" + (a.name || "") + "” removed." + (n ? " " + n + (n === 1 ? " activity kept its row." : " activities kept their rows.") : "") });
+            App.refresh("areas", "lookahead");
+          } catch (err) { setState({ confirm: null, live: err.message }); }
+        },
+      },
+    }, focusRef("confirm"));
+  },
+
   shareLook: (audience) => async () => {
     const la = App.laPeriod();
     if (!la.id) return;
@@ -3199,12 +3363,17 @@ Object.assign(App, {
       areaCount: areas.length + (areas.length === 1 ? " area" : " areas") + " on this job",
       areaChips: areas.map((a) => {
         const n = items.filter((r) => r.work_area_id === a.id).length;
-        return { name: a.name, color: a.color || "var(--nt)", count: n + (n === 1 ? " activity" : " activities") };
+        return { name: a.name, color: a.color || "var(--nt)", count: n + (n === 1 ? " activity" : " activities"),
+          real: true, edit: App.openForm("area", { areaId: a.id }), remove: App.confirmDeleteArea(a) };
       }).concat(items.some((r) => !r.work_area_id)
-        ? [{ name: "No area", color: "var(--nt)", count: items.filter((r) => !r.work_area_id).length + " activities" }] : []),
+        ? [{ name: "No area", color: "var(--nt)", count: items.filter((r) => !r.work_area_id).length + " activities", real: false }] : []),
       openNewArea: App.openForm("area"),
       openNewLook: App.openForm("look"),
       seedLook: () => App.seedLook(),
+      // The sheet itself, without sharing it: the same audience-split PDF the
+      // share paths attach, opened in a tab for checking, printing or filing.
+      lookPdfCust: () => window.open(`/api/lookahead/${la.id}/pdf?audience=customer&weeks=${weeks}`, "_blank"),
+      lookPdfInt: () => window.open(`/api/lookahead/${la.id}/pdf?audience=team&weeks=${weeks}`, "_blank"),
       shareLookCust: App.openShareWith({ "look-cust": true }),
       shareLookInt: App.openShareWith({ "look-int": true }),
       lookWeekCount: weeks === 2 ? "Two-week look ahead" : "Three-week look ahead",
@@ -3216,15 +3385,30 @@ Object.assign(App, {
 (() => {
   const baseSpec = App.formSpec.bind(App);
   App.formSpec = function (kind, ctx) {
-    if (kind === "area") return {
-      eyebrow: "New work area", title: "Add a work area", submit: "Add this work area",
-      intro: "Work areas group the look ahead the way the site is actually divided. Each one carries a colour so the crew can read the grid at a glance.",
-      fields: [
-        ["name", "Area name", "text", { req: true, wide: true, placeholder: "Control building", hint: "The name the crew already uses for it on site." }],
-      ],
-      colors: true,
-      review: "The area becomes selectable on every look-ahead activity and its colour appears on the grid straight away.",
-    };
+    if (kind === "area") {
+      const editing = (ctx || {}).areaId
+        ? (App.laAreas().find((a) => a.id === ctx.areaId) || null) : null;
+      // Seed the palette from the stored hex so "edit" opens on the colour
+      // the area actually wears, not on Blue.
+      const colorInit = editing ? Math.max(0, AREA_COLORS.findIndex(([, v]) => {
+        const t = (v.match(/var\((--[a-z]+)\)/) || [])[1];
+        return t && getComputedStyle(document.documentElement).getPropertyValue(t).trim().toLowerCase()
+          === String(editing.color || "").trim().toLowerCase();
+      })) : 0;
+      return {
+        eyebrow: editing ? "Editing a work area" : "New work area",
+        title: editing ? "Edit “" + (editing.name || "") + "”" : "Add a work area",
+        submit: editing ? "Save the area" : "Add this work area",
+        intro: "Work areas group the look ahead the way the site is actually divided. Each one carries a colour so the crew can read the grid at a glance.",
+        fields: [
+          ["name", "Area name", "text", { req: true, wide: true, value: editing ? (editing.name || "") : "", placeholder: "Control building", hint: "The name the crew already uses for it on site." }],
+        ],
+        colors: true, colorInit,
+        review: editing
+          ? "Renaming or recolouring applies to the grid and to every activity in the area straight away."
+          : "The area becomes selectable on every look-ahead activity and its colour appears on the grid straight away.",
+      };
+    }
     if (kind === "look") {
       const item = (ctx || {}).item || {};
       const editing = !!(ctx || {}).itemId;
@@ -3265,12 +3449,19 @@ Object.assign(App, {
     }
     try {
       if (f.kind === "area") {
-        await api(`/api/jobs/${encodeURIComponent(App.state.job)}/lookahead/areas`, { method: "POST",
-          body: JSON.stringify({ name: f.values.name, color: (AREA_COLORS[f.color || 0] || [])[1]
-            ? getComputedStyle(document.documentElement).getPropertyValue(
-                (AREA_COLORS[f.color || 0][1].match(/var\((--[a-z]+)\)/) || [])[1] || "--nt").trim() || "#5C636A"
-            : "#5C636A" }) });
-        setState({ form: null, live: "Work area “" + f.values.name + "” added in " + AREA_COLORS[f.color || 0][0].toLowerCase() + "." });
+        const areaHex = (AREA_COLORS[f.color || 0] || [])[1]
+          ? getComputedStyle(document.documentElement).getPropertyValue(
+              (AREA_COLORS[f.color || 0][1].match(/var\((--[a-z]+)\)/) || [])[1] || "--nt").trim() || "#5C636A"
+          : "#5C636A";
+        if ((f.ctx || {}).areaId) {
+          await api(`/api/lookahead/areas/${f.ctx.areaId}`, { method: "PATCH",
+            body: JSON.stringify({ name: f.values.name, color: areaHex }) });
+          setState({ form: null, live: "Work area “" + f.values.name + "” updated — the grid wears it already." });
+        } else {
+          await api(`/api/jobs/${encodeURIComponent(App.state.job)}/lookahead/areas`, { method: "POST",
+            body: JSON.stringify({ name: f.values.name, color: areaHex }) });
+          setState({ form: null, live: "Work area “" + f.values.name + "” added in " + AREA_COLORS[f.color || 0][0].toLowerCase() + "." });
+        }
         App.refresh("areas", "lookahead");
       } else {
         const body = { description: f.values.name, work_area_id: f.values.area || null,
@@ -3453,7 +3644,10 @@ Object.assign(App, {
       when: r.received_at ? usDate(r.received_at) : "", subject: "RE: " + (draft.subject || rec.title || ""),
       body: r.body || "", attach: (r.attachments || []).length ? (r.attachments || []).length + " returned file" + ((r.attachments || []).length === 1 ? "" : "s") : "",
       mine: false, replyId: r.id, confirmed: !!r.confirmed_at,
-      attachments: (r.attachments || []).map((a) => ({ name: a.filename, url: `/api/replies/${r.id}/attachments/${a.id}` })),
+      attachments: (r.attachments || []).map((a) => ({ name: a.filename, url: `/api/replies/${r.id}/attachments/${a.id}`,
+        canCompare: comparable(a.filename),
+        comparing: !!(s.threadCompare && s.threadCompare.attId === a.id),
+        compare: App.toggleCompare(rec.id, r.id, { id: a.id, name: a.filename }) })),
     }));
 
     return {
@@ -3476,6 +3670,21 @@ Object.assign(App, {
         open: App.openViewer(a.document_id, a.page, "markup", { layer: (isR ? "rfi:" : "submittal:") + rec.id }),
       })),
       threadPackageUrl: `/api/records/${rec.id}/package`,
+      threadCompare: (() => {
+        const c = s.threadCompare;
+        if (!c || c.recId !== rec.id) return null;
+        return {
+          name: c.name || "", image: !!c.image,
+          backUrl: `/api/replies/${c.replyId}/attachments/${c.attId}`,
+          pagesLabel: c.image
+            ? ((c.pages || 0) > 1 ? "Sent page " + (c.page || 1) + " of " + c.pages + " · returned image" : "Returned image beside the package")
+            : "Page " + (c.page || 1) + (c.pages ? " of " + c.pages : ""),
+          canPage: !c.image || (c.pages || 0) > 1,
+          prev: App.compareNav(-1), next: App.compareNav(1),
+          close: () => setState({ threadCompare: null }),
+          imageNote: c.image ? "They returned an image, so the page buttons walk our package — the picture stays put beside whichever page you are on." : "",
+        };
+      })(),
       threadCount: messages.length + (messages.length === 1 ? " message" : " messages"),
       threadMessages: messages.map((m) => ({ ...m, bg: m.mine ? "var(--pn)" : "var(--p2)", hasAttach: !!m.attach })),
       threadAnswer: rec.answer || "",
@@ -3561,6 +3770,80 @@ Object.assign(App, {
 if (typeof pdfjsLib !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = "vendor/pdfjs/pdf.worker.min.js";
 }
+
+// ————— sent-vs-returned comparison (1.x logic, kept) ————————————————————————
+/* What can sit in the returned pane. A customer answering an RFI sends back
+   whatever their phone or their markup tool produced: a re-marked PDF, a
+   screenshot, a photo of the drawing on a tailgate. Images compare too — the
+   audit trail must not go missing on exactly the reply that most needs
+   looking at. */
+const IMAGE_RE = /\.(png|jpe?g|gif|webp|bmp|avif)$/i;
+const comparable = (name) => /\.pdf$/i.test(name || "") || IMAGE_RE.test(name || "");
+
+const _cmpDocCache = {};
+async function renderPdfPageInto(canvas, url, pageNum, maxWidth) {
+  if (!_cmpDocCache[url]) _cmpDocCache[url] = pdfjsLib.getDocument({ url }).promise;
+  const pdf = await _cmpDocCache[url];
+  const page = await pdf.getPage(Math.min(Math.max(1, pageNum), pdf.numPages));
+  const basevp = page.getViewport({ scale: 1 });
+  const scale = Math.max(0.12, maxWidth / basevp.width);
+  const vp = page.getViewport({ scale });
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.floor(vp.width * dpr);
+  canvas.height = Math.floor(vp.height * dpr);
+  canvas.style.width = Math.floor(vp.width) + "px";
+  canvas.style.height = Math.floor(vp.height) + "px";
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  await page.render({ canvasContext: ctx, viewport: vp, intent: "print" }).promise;
+  return pdf.numPages;
+}
+
+Object.assign(App, {
+  toggleCompare: (recId, replyId, att) => () => {
+    const cur = App.state.threadCompare;
+    for (const k in _cmpDocCache) delete _cmpDocCache[k];
+    setState(cur && cur.attId === att.id
+      ? { threadCompare: null }
+      : { threadCompare: { recId, replyId, attId: att.id, name: att.name || "", page: 1, pages: 0, image: IMAGE_RE.test(att.name || "") } });
+  },
+  compareNav: (d) => () => {
+    const c = App.state.threadCompare;
+    if (!c) return;
+    const next = (c.page || 1) + d;
+    if (next < 1 || (c.pages && next > c.pages)) return;
+    setState({ threadCompare: { ...c, page: next } });
+  },
+  drawCompare() {
+    const c = this.state.threadCompare;
+    const wrap = document.querySelector("[data-cmp-wrap]");
+    const sent = document.querySelector("[data-cmp-sent]");
+    if (!c || !wrap || !sent || typeof pdfjsLib === "undefined") return;
+    const width = Math.max(240, Math.floor(((wrap.clientWidth || 900) - 58) / 2));
+    const token = [c.recId, c.replyId, c.attId, c.page, width].join(":");
+    App._cmpToken = token;
+    // Draws are serialised and superseded, never overlapped — two async
+    // renders into one canvas would interleave their strokes.
+    App._cmpChain = (App._cmpChain || Promise.resolve()).then(async () => {
+      if (App._cmpToken !== token) return;
+      const sentNow = document.querySelector("[data-cmp-sent]");
+      if (!sentNow) return;
+      try {
+        const nSent = await renderPdfPageInto(sentNow, `/api/records/${c.recId}/package`, c.page || 1, width);
+        let pages = nSent;
+        if (!c.image) {
+          const back = document.querySelector("[data-cmp-back]");
+          if (back) pages = Math.max(nSent, await renderPdfPageInto(back, `/api/replies/${c.replyId}/attachments/${c.attId}`, c.page || 1, width));
+        }
+        const cur = App.state.threadCompare;
+        if (cur && cur.attId === c.attId && cur.pages !== pages) setState({ threadCompare: { ...cur, pages } });
+      } catch (err) {
+        const meta = document.querySelector("[data-cmp-meta]");
+        if (meta) meta.textContent = "Could not render: " + err.message;
+      }
+    });
+  },
+});
 
 Object.assign(App, {
   _pdfDocs: {},        // docId -> PDFDocumentProxy promise
@@ -4094,6 +4377,8 @@ Object.assign(App, {
       const r = await fetch(COMPANION + "/health").then((x) => x.json());
       this.state.data.companion = r;
     } catch (e) { this.state.data.companion = { unreachable: true }; }
+    try { this.state.data.push = await pushState(); }
+    catch (e) { this.state.data.push = { supported: false, reason: "Could not read this device's notification state." }; }
     this._settingsLoading = false;
     setState({});
   },
@@ -4186,6 +4471,14 @@ Object.assign(App, {
       ${hint ? `<p style="margin:4px 0 0;font-size:11.5px;color:var(--ft);text-wrap:pretty">${esc(hint)}</p>` : ""}
     </div>`;
 
+    const push = s.data.push || {};
+    let pushLine, pushTone;
+    if (!s.data.push) { pushLine = "Reading this device's notification state…"; pushTone = "nt"; }
+    else if (!push.supported) { pushLine = push.reason || "This browser can't do notifications."; pushTone = push.needsInstall ? "wn" : "nt"; }
+    else if (push.permission === "denied") { pushLine = "Blocked in your browser settings — allow notifications for this site to turn them on."; pushTone = "wn"; }
+    else if (push.subscribed) { pushLine = "On for this device."; pushTone = "ok"; }
+    else { pushLine = "Off for this device."; pushTone = "nt"; }
+
     let compLine, compTone;
     if (comp.unreachable) { compLine = "Not running on this machine. Records still share by email file; replies file themselves from any PC that has the companion."; compTone = "nt"; }
     else if (!comp.paired) { compLine = "Running but not paired. Open http://127.0.0.1:8772/pair and sign in with your PlanWise email."; compTone = "wn"; }
@@ -4214,6 +4507,16 @@ Object.assign(App, {
         <h3 id="set-comp" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Outlook companion</h3>
         <p style="margin:9px 0 0;padding:10px 12px;border-radius:6px;border:1px solid ${tone(compTone)};background:${toneSoft(compTone)};color:${tone(compTone)};font-size:var(--fzs);text-wrap:pretty">${esc(compLine)}</p>
         <p style="margin:8px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">The companion runs beside Outlook on each PC and drafts into that person's own mailbox — mail never leaves from a machine account. Without it, every send falls back to a downloadable email file.</p>
+      </section>
+
+      <section aria-labelledby="set-push" style="padding:16px 20px 4px">
+        <h3 id="set-push" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Notifications on this device</h3>
+        <p style="margin:9px 0 0;padding:10px 12px;border-radius:6px;border:1px solid ${tone(pushTone)};background:${toneSoft(pushTone)};color:${tone(pushTone)};font-size:var(--fzs);text-wrap:pretty" aria-live="polite">${esc(pushLine)}</p>
+        ${push.supported && push.permission !== "denied" ? `<div style="display:flex;gap:9px;margin-top:10px;flex-wrap:wrap">
+          <button data-click="${H(App.pushToggle())}" ${push.working ? "disabled" : ""} class="hb-ls" style="min-height:var(--tap);padding:8px 14px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">${push.working ? "Working…" : push.subscribed ? "Turn off on this device" : "Turn on for this device"}</button>
+          ${push.subscribed ? `<button data-click="${H(App.pushTest())}" class="hb-ls" style="min-height:var(--tap);padding:8px 14px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Send a test</button>` : ""}
+        </div>` : ""}
+        <p style="margin:8px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">A reply landing on an RFI, a submittal coming back — the things worth interrupting a day for reach this device even with PlanWise closed. Each phone or PC opts in on its own; nothing is on until you turn it on.</p>
       </section>
 
       ${isAdmin ? `<section aria-labelledby="set-users" style="padding:16px 20px 4px">
@@ -4308,6 +4611,88 @@ Object.assign(App, {
 // (uiForm already emits type="${f.type}"). formSpec used type "password" —
 // the builder maps textarea/select specially and passes others through, so
 // nothing more to do; this comment records the contract.
+
+// ————— web push: this device's subscription (1.x logic, kept) ———————————————
+// The server and the service worker kept their halves through the 2.0
+// migration; this is the half a person touches — knowing where THIS device
+// stands and flipping it. Subscription is per-install, permission per-browser:
+// two different questions, answered separately.
+const b64ToBytes = (b64) => {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+};
+
+async function pushState() {
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    return { supported: false, reason: "This browser can't do notifications." };
+  }
+  // iOS only offers Web Push to a home-screen install. Saying so is far
+  // better than a permission prompt that never appears.
+  const standalone = window.matchMedia("(display-mode: standalone)").matches
+    || window.navigator.standalone === true;
+  const iOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  if (iOS && !standalone) {
+    return { supported: false, needsInstall: true,
+             reason: "On iPhone, add PlanWise to your Home Screen first — Share → Add to Home Screen." };
+  }
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  return { supported: true, permission: Notification.permission, subscribed: !!sub };
+}
+
+async function enablePush() {
+  const state = await pushState();
+  if (!state.supported) throw new Error(state.reason);
+  if (Notification.permission === "denied") {
+    throw new Error("Notifications are blocked for this site in your browser settings.");
+  }
+  if (Notification.permission !== "granted") {
+    if (await Notification.requestPermission() !== "granted") {
+      throw new Error("Notifications weren't allowed.");
+    }
+  }
+  const { key, available } = await api("/api/push/key");
+  if (!available || !key) throw new Error("The server isn't set up for notifications.");
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription()
+    || await reg.pushManager.subscribe({ userVisibleOnly: true,
+                                         applicationServerKey: b64ToBytes(key) });
+  await api("/api/push/subscribe", { method: "POST", body: JSON.stringify(sub.toJSON()) });
+}
+
+async function disablePush() {
+  const reg = await navigator.serviceWorker.ready;
+  const sub = await reg.pushManager.getSubscription();
+  if (!sub) return;
+  await api("/api/push/unsubscribe", { method: "POST",
+                                       body: JSON.stringify({ endpoint: sub.endpoint }) });
+  await sub.unsubscribe();
+}
+
+Object.assign(App, {
+  pushToggle: () => async () => {
+    const cur = (App.state.data.push || {});
+    App.state.data.push = { ...cur, working: true };
+    setState({});
+    try {
+      if (cur.subscribed) { await disablePush(); } else { await enablePush(); }
+      App.state.data.push = await pushState();
+      setState({ live: App.state.data.push.subscribed
+        ? "Notifications are on for this device."
+        : "Notifications are off for this device." });
+    } catch (err) {
+      App.state.data.push = await pushState().catch(() => cur);
+      setState({ live: err.message });
+    }
+  },
+  pushTest: () => async () => {
+    try {
+      const r = await api("/api/push/test", { method: "POST" });
+      setState({ live: r.sent ? "Sent to " + r.sent + (r.sent === 1 ? " device" : " devices") + " — watch for it." : "Nothing sent; this device isn't subscribed." });
+    } catch (err) { setState({ live: err.message }); }
+  },
+});
 
 // ————— offline + outbox surfaces (1.x logic, kept; token-styled bars) ———————
 Object.assign(App, {

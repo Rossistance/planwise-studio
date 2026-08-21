@@ -118,3 +118,30 @@ def test_the_shell_loads_scripts_in_dependency_order():
              ("morphdom-umd.min.js", "copy.js", "offline.js", "api.js",
               "core.js", "ui.js", "pages.js", "app.js")]
     assert order == sorted(order), "script order violates the dependency chain"
+
+
+def test_the_nine_restored_1x_features_keep_their_surfaces():
+    """The 2026-08-21 regression audit found nine 1.x features the migration
+    had silently dropped; each was rebuilt in the 2.0 language. These strings
+    are their anchor points — losing one means the surface fell out again."""
+    everything = read("app.js") + read("ui.js") + read("pages.js")
+    for phrase in (
+        # CO documents on their own, both kinds and both formats
+        "Download Word", "Sub-CO log PDF", "document.docx",
+        # look-ahead sheet PDFs without a share
+        "Customer PDF", "Crew PDF", "/pdf?audience=",
+        # work areas can be renamed, recoloured and removed again
+        "Renaming or recolouring applies to the grid",
+        "Remove this work area",
+        # the clarifications library can retire a line
+        "Archived from the library. Letters that already carry it keep their text.",
+        # purchase orders and invoice lines can be removed, undoably
+        "Remove this order", "Remove this invoice",
+        # per-device web push is reachable again
+        "Notifications on this device", "Turn on for this device",
+        # sent-vs-returned comparison on the record thread
+        "compare with what we sent", "Sent vs returned",
+        # schedule column widths drag and persist
+        "planwise.schedCols", "Reset the column widths",
+    ):
+        assert phrase in everything, f"restored surface lost again: {phrase!r}"

@@ -165,3 +165,30 @@ Verdict vocabulary:
 | Field version | **Handoff's second prototype shipped** (`PlanWise Field.dc.html` → `frontend/field.js` + field tokens): five bottom tabs — Today on site (blockers from the attention feed + today's activities with big ticks), Look ahead (area chips, week grids, crew share), Drawings (sets → the real viewer), Questions and submittals (rows, read-only thread with the confirmed answer, raise-a-draft FAB), Job numbers (read-only money cards). Glove and sun modes verbatim. One PWA, one origin: the shell is chosen at sign-in by role, not by a second install. | The owner's rule: the email on a job's Superintendent or Field leader line IS the role. |
 | Role source | Job setup gains `superintendent_email` / `field_leader_email`; `backend/field.py` matches the signed-in email case-insensitively, per job. Admins are never field-limited. | "the email that is added to the Field Leader or Superintendent section in each job setup" |
 | Enforcement | SERVER-side: office writes (POs, COs, invoices, meta, schedule, briefings, record send/confirm, reversals) refuse with a sentence naming where the work lives; the field's own writes (day ticks, activities, areas, drawing marks, draft RFIs) keep working. UI limiting alone would not have satisfied the doctrine. | Registers never disagree; a hidden button is not a limit. |
+
+### The regression audit (2026-08-21, owner's ask: "identify any regressions left from the migration… rebuild all in the new UI language")
+
+Method: the 1.x frontend at `11d03cf^` was mechanically diffed against the 2.0 frontend —
+every `/api/` call-site, every DELETE verb, every UI affordance — then cross-checked against
+this document's own promises. Post-migration session fixes are canonical (owner's rule) and
+were touched by nothing below; every rebuild is additive. Nine surfaces had fallen out; all
+nine are back, in the 2.0 language:
+
+| Lost surface | What had survived | What was missing | Rebuilt as |
+|---|---|---|---|
+| CO document downloads | PDF preview iframe; share attaches both formats | Any way to save the letter or the sub log without sending | "Download PDF/Word" in the composer footer; "Letter PDF/Word" and "Sub-CO log PDF/Word" on the drawer |
+| Look-ahead sheet PDF | Audience-split generator; share paths | Viewing or printing the sheet without sharing it | "Customer PDF" / "Crew PDF" toolbar buttons, weeks-aware |
+| Work-area edit/delete | Create with the palette | PATCH (rename/recolour) and DELETE ever being called | Chip name opens the seeded form; × runs a checked confirm ("activities keep their rows") |
+| Clarification archive | Library list, add, per-CO seeding | `DELETE /api/co-clarifications/{id}` — the library could only grow | Per-row "Archive" in the composer; letters that carry the line keep their text |
+| PO delete | `store.delete_po` with full recreate revert | The frontend never calling it | "Remove this order" → checked confirm (open-committed drop, invoice cascade) → undo restores order **with** invoices |
+| Invoice remove | Add-invoice | The DELETE ever being called | Per-row × in the drawer's invoice table → checked confirm → undo |
+| Web push | sw.js push+notificationclick handlers, whole server stack, VAPID | The entire subscribe UI — no device could ever opt in | "Notifications on this device" settings pane: per-state status line, turn on/off, send-a-test |
+| Sent-vs-returned compare | Reply pipeline, attachment serving, package endpoint | The side-by-side itself (this doc's §"kept" table had promised it a home) | "compare with what we sent" per returned PDF/image; two-pane section, page nav walks the package; images sit beside whichever page you're on |
+| Schedule column widths | — (promised "kept" in the §Schedule row) | Drag-resize, `planwise.schedCols`, reset | Header-edge drag handles on the task register (desktop; the mobile card reflow has no columns), persisted per browser, "Reset the column widths" appears only when set |
+
+Cleared as NOT regressions: companion send-detection (the watch now posts
+`/records/{id}/sent` server-side — strictly better than 1.x's frontend polling),
+the getting-started guide (already re-worded at the email-first change), outbox
+drain (companion path + per-item .eml), and `POST /schedule/calendar` (never had
+a 1.x caller either). Guarded by
+`test_the_nine_restored_1x_features_keep_their_surfaces`.

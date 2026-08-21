@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v24";     // close works, zoom is real, a page can reach an RFI again
+const VERSION = "planwise-shell-v25";     // one linear scale: axis, bars, links agree at any zoom
 const SHELL = [
   "/",
   "/index.html",

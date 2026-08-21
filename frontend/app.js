@@ -3277,10 +3277,17 @@ Object.assign(App, {
     const months = [];
     for (let t = gs.t0; t < gs.t1;) {
       const d = new Date(t);
+      const next = Math.min(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1), gs.t1);
+      // Each cell is its month's SHARE OF THE DOMAIN, not an equal slice.
+      // The bars are placed linearly in days over t0→t1; with flex:1 cells,
+      // April's five days got the same width as May's thirty-one, so no bar
+      // could sit where the axis said its date was — and the error scaled
+      // with zoom until the whole chart read scrambled (owner, 2026-08-21).
+      // One linear scale for axis, bars, connectors and the today line.
       months.push({ label: ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][d.getUTCMonth()] +
         (d.getUTCMonth() === 0 || t === gs.t0 ? " ’" + String(d.getUTCFullYear()).slice(2) : ""),
-        style: "flex:1;display:flex;font:500 10px var(--fm);letter-spacing:.08em;color:var(--ft);text-align:left;border-left:1px solid " + (t === gs.t0 ? "transparent" : "var(--ln)") + ";overflow:hidden;white-space:nowrap" });
-      t = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+        style: "flex:0 0 " + ((next - t) / gs.span * 100).toFixed(4) + "%;display:flex;font:500 10px var(--fm);letter-spacing:.08em;color:var(--ft);text-align:left;border-left:1px solid " + (t === gs.t0 ? "transparent" : "var(--ln)") + ";overflow:hidden;white-space:nowrap" });
+      t = next;
     }
 
     const ms = (iso) => new Date((iso || "") + "T00:00:00Z").getTime();

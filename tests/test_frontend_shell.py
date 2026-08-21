@@ -270,3 +270,15 @@ def test_register_headers_wrap_so_the_table_fits():
     assert colstyle, "colStyle not found"
     assert "white-space:normal" in colstyle[0]
     assert "white-space:nowrap" not in colstyle[0]
+
+
+def test_the_gantt_axis_shares_the_bars_linear_scale():
+    """Month cells were flex:1 — equal widths — while bars are placed
+    linearly in days, so April's five days got the same room as May's
+    thirty-one and nothing could line up; the error scaled with zoom until
+    the chart read scrambled. Each cell is now its month's share of the
+    same domain the bars use."""
+    app = read("app.js")
+    assert '"flex:0 0 " + ((next - t) / gs.span * 100).toFixed(4)' in app
+    # and the equal-slice style must not return on the month cells
+    assert 'style: "flex:1;display:flex;font:500 10px' not in app

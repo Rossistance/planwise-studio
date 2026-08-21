@@ -245,3 +245,66 @@ def test_the_companion_token_is_not_a_skeleton_key(client):
     headers = {"X-PlanWise-Companion": ai.companion_token()}
     for path in ["/api/users", "/api/jobs/24-003", "/api/outbox", "/api/companion/token"]:
         assert client.get(path, headers=headers).status_code == 401, f"{path} was reachable"
+
+
+# --- the settings-triggered refresh (2.0.3) -----------------------------------
+# The server only HOLDS a refresh request; the pull runs on the one PC with
+# the Power BI connection, which learns about it through the companion poll.
+
+def _signed_in():
+    from backend import auth
+    c = TestClient(app_module.app)
+    auth.bootstrap_admin(auth.setup_token(), "Ross Hixon", "a-good-password")
+    assert c.post("/api/auth/login",
+                  json={"name": "Ross Hixon", "password": "a-good-password"}).status_code == 200
+    return c
+
+
+def test_a_refresh_request_is_held_shown_on_health_and_rides_the_poll():
+    from backend import ai
+    c = _signed_in()
+
+    r = c.post("/api/vista/refresh-request")
+    assert r.status_code == 200
+    assert r.json()["requested_by"] == "Ross Hixon"
+
+    hv = c.get("/api/health").json()["vista"]
+    assert hv["refresh_requested_at"] is not None
+    assert hv["refresh_requested_by"] == "Ross Hixon"
+
+    manifest = c.get("/api/companion/poll",
+                     params={"token": ai.companion_token()}).json()
+    assert manifest["vista"]["wanted"] is True
+
+
+def test_a_refresh_request_needs_a_session():
+    c = TestClient(app_module.app)
+    assert c.post("/api/vista/refresh-request").status_code == 401
+
+
+def test_a_workbook_push_clears_the_standing_request():
+    c = _signed_in()
+    assert c.post("/api/vista/refresh-request").status_code == 200
+
+    r = c.post("/api/vista/workbook",
+               files={"file": ("Vista Model 2026 - Data.xlsx", io.BytesIO(workbook_bytes()),
+                               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+               headers={"X-PlanWise-Ingest": "test-ingest-secret"})
+    assert r.status_code == 200, r.text
+
+    hv = c.get("/api/health").json()["vista"]
+    assert hv["refresh_requested_at"] is None
+
+
+def test_an_unserved_request_expires_rather_than_burning_forever():
+    from datetime import datetime, timedelta, timezone
+    c = _signed_in()
+    assert c.post("/api/vista/refresh-request").status_code == 200
+
+    stale = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat(timespec="seconds")
+    conn = db.connect()
+    conn.execute("UPDATE settings SET value = ? WHERE key = 'vista_refresh_requested_at'", (stale,))
+    conn.commit()
+
+    hv = c.get("/api/health").json()["vista"]
+    assert hv["refresh_requested_at"] is None

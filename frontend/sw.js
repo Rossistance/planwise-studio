@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v20";     // nine 1.x features rejoin the 2.0 shell
+const VERSION = "planwise-shell-v21";     // splash completes itself; Vista refresh from Settings
 const SHELL = [
   "/",
   "/index.html",

@@ -321,3 +321,46 @@ def test_new_outlook_detection_reads_the_toggle_and_the_process(monkeypatch):
 
     monkeypatch.setattr(sp, "run", lambda *a, **k: types.SimpleNamespace(stdout="olk.exe  1234 Console"))
     assert comp.new_outlook_preferred() is True
+
+
+# --- the vista trigger (2.0.3) -----------------------------------------------
+# The companion re-fires the scheduled pull; these pin the decision logic, not
+# the subprocess. A capable-machine stub stands in for schtasks.
+
+def _reset_vista(monkeypatch, capable=True):
+    monkeypatch.setattr(c, "vista_state",
+                        {"capable": capable, "last_trigger": None,
+                         "last_result": None, "reason": None})
+    fired = []
+    monkeypatch.setattr(c, "_trigger_vista_pull",
+                        lambda reason: (fired.append(reason),
+                                        c.vista_state.__setitem__(
+                                            "last_trigger",
+                                            c.datetime.now().isoformat(timespec="seconds"))))
+    return fired
+
+
+def test_a_settings_request_fires_the_pull_once_not_every_sweep(monkeypatch):
+    import asyncio
+    fired = _reset_vista(monkeypatch)
+    manifest = {"vista": {"wanted": True, "as_of": None}}
+    asyncio.run(c._maybe_refresh_vista(manifest))
+    asyncio.run(c._maybe_refresh_vista(manifest))   # 15s later in real life
+    assert fired == ["asked from Settings"]         # throttled while in flight
+
+
+def test_fresh_data_triggers_nothing_on_the_daily_path(monkeypatch):
+    import asyncio
+    from datetime import datetime
+    fired = _reset_vista(monkeypatch)
+    manifest = {"vista": {"wanted": False,
+                          "as_of": datetime.now().isoformat(timespec="seconds")}}
+    asyncio.run(c._maybe_refresh_vista(manifest))
+    assert fired == []
+
+
+def test_an_incapable_machine_never_fires(monkeypatch):
+    import asyncio
+    fired = _reset_vista(monkeypatch, capable=False)
+    asyncio.run(c._maybe_refresh_vista({"vista": {"wanted": True, "as_of": None}}))
+    assert fired == []

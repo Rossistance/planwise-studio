@@ -26,7 +26,7 @@ function uiSplash(v) {
       ? '<span aria-hidden="true" style="display:inline-block;width:.6em"></span>'
       : `<span aria-hidden="true" style="display:inline-block;animation:letterset .5s cubic-bezier(.3,1.2,.4,1) ${at}s both">${ch}</span>`)
     .join("");
-  return `<div role="img" aria-label="PlanWise is starting" style="position:fixed;inset:0;z-index:420;background:var(--pn);display:grid;place-items:center;overflow:hidden;animation:splashout .45s ease-in 5.65s both">
+  return `<div id="pw-splash" role="img" aria-label="PlanWise is starting" style="position:fixed;inset:0;z-index:420;background:var(--pn);display:grid;place-items:center;overflow:hidden;animation:splashout .45s ease-in 5.65s both">
     <div style="display:flex;flex-direction:column;align-items:center;gap:26px">
       <svg viewBox="0 0 170 210" aria-hidden="true" style="width:150px;height:auto;overflow:visible">
         <g stroke="var(--ln)" stroke-width="1.2" fill="none" stroke-dasharray="200" style="animation:gridin 1s ease-out both">

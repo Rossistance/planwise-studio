@@ -104,7 +104,13 @@ const App = {
     // this fires only when the page itself starts.
     const splashed = false;
     this.state.stage = "splash";
-    this._splashT = setTimeout(() => this.afterSplash(), 6200);
+    // The handoff is driven by the splash's OWN exit animation (animationend
+    // on `splashout`, bound in afterRender) — a wall-clock timer here ran on
+    // a different clock than the CSS animations, which start at first paint,
+    // so any startup latency (a cold webview, a font fetch) ate the tail of
+    // the choreography. This timer is only the safety net for a browser that
+    // never delivers the event.
+    this._splashT = setTimeout(() => this.afterSplash(), 9500);
 
     let status = {};
     try { status = await api("/api/auth/status"); } catch (e) {}
@@ -133,6 +139,8 @@ const App = {
   },
 
   afterSplash() {
+    if (this.state.stage !== "splash") return;   // animationend + fallback both arrive
+    clearTimeout(this._splashT);
     const signedIn = !!this.state.user && this.state.auth.mode !== "must_change";
     if (signedIn) {
       this.state.stage = "app";
@@ -612,6 +620,18 @@ const App = {
     if (this.state.viewer) this.paintViewerCanvases();
     this.drawGanttLinks();
     if (this.state.threadCompare) this.drawCompare();
+    // Splash exit rides the animation itself: when `splashout` finishes the
+    // fade is exactly complete, so the swap beneath can never cut it short.
+    // Under prefers-reduced-motion every animation ends in .01ms, so this
+    // fires almost immediately — the right length for someone who asked for
+    // no motion.
+    const sp = document.getElementById("pw-splash");
+    if (sp && !sp._endBound) {
+      sp._endBound = true;
+      sp.addEventListener("animationend", (e) => {
+        if (e.animationName === "splashout") App.afterSplash();
+      });
+    }
     // Rail hover-open: mouseenter/leave don't bubble, so they bind directly to
     // the persistent element (morphdom keeps it) rather than delegating.
     const rail = document.getElementById("pw-rail");
@@ -4509,6 +4529,23 @@ Object.assign(App, {
         <p style="margin:8px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">The companion runs beside Outlook on each PC and drafts into that person's own mailbox — mail never leaves from a machine account. Without it, every send falls back to a downloadable email file.</p>
       </section>
 
+      ${(() => {
+        const hv = ((s.data.health || {}).vista) || {};
+        let line, toneKey;
+        if (!hv.ok) { line = hv.detail || "No Vista extract on this server yet."; toneKey = "wn"; }
+        else if (hv.stale) { line = "Stale — as of " + usDate(hv.as_of) + ", about " + Math.round(hv.age_hours || 0) + " hours old. The nightly pull may have missed."; toneKey = "wn"; }
+        else { line = "Current — as of " + usDate(hv.as_of) + (hv.age_hours != null ? ", about " + Math.round(hv.age_hours) + " hours old." : "."); toneKey = "ok"; }
+        const req = hv.refresh_requested_at;
+        return `<section aria-labelledby="set-vista" style="padding:16px 20px 4px">
+        <h3 id="set-vista" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Vista data</h3>
+        <p style="margin:9px 0 0;padding:10px 12px;border-radius:6px;border:1px solid ${tone(toneKey)};background:${toneSoft(toneKey)};color:${tone(toneKey)};font-size:var(--fzs);text-wrap:pretty" aria-live="polite">${esc(line)}</p>
+        ${req
+          ? `<p style="margin:10px 0 0;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">A refresh was requested${hv.refresh_requested_by ? " by " + esc(hv.refresh_requested_by) : ""} — the PC that holds the Vista connection re-pulls the extract within a minute of seeing it. The as-of date above updates when the new data lands.</p>`
+          : `<div style="margin-top:10px"><button data-click="${H(App.vistaRefreshRequest())}" class="hb-ls" style="min-height:var(--tap);padding:8px 14px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Refresh from Vista now</button></div>`}
+        <p style="margin:8px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">The extract re-pulls itself from Power BI every morning at 6:30, and the companion re-runs a missed pull the moment that PC comes back on. This button asks for one right now — nothing here edits Vista, ever.</p>
+      </section>`;
+      })()}
+
       <section aria-labelledby="set-push" style="padding:16px 20px 4px">
         <h3 id="set-push" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Notifications on this device</h3>
         <p style="margin:9px 0 0;padding:10px 12px;border-radius:6px;border:1px solid ${tone(pushTone)};background:${toneSoft(pushTone)};color:${tone(pushTone)};font-size:var(--fzs);text-wrap:pretty" aria-live="polite">${esc(pushLine)}</p>
@@ -4671,6 +4708,14 @@ async function disablePush() {
 }
 
 Object.assign(App, {
+  vistaRefreshRequest: () => async () => {
+    try {
+      await api("/api/vista/refresh-request", { method: "POST" });
+      setState({ live: "Asked for a fresh Vista pull. The PC that holds the connection picks it up within a minute; the as-of date updates when the new extract lands." });
+      App.refreshHealth();
+    } catch (err) { setState({ live: err.message }); }
+  },
+
   pushToggle: () => async () => {
     const cur = (App.state.data.push || {});
     App.state.data.push = { ...cur, working: true };

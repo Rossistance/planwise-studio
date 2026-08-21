@@ -38,6 +38,10 @@
   try { localStorage.removeItem("pw.fontTry"); } catch (e) {}  // retired tryout key
 })();
 </script>
+<!-- The splash sets type immediately; preloading the two weights it uses
+     means a cold load never swaps fonts mid-animation. -->
+<link rel="preload" href="fonts/PlanWiseSans-500.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/PlanWiseSans-600.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="tokens.css">
 <link rel="stylesheet" href="app.css">

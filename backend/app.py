@@ -203,13 +203,18 @@ def health():
         # actually installed a JRE should not require signing in.
         "mpp_import": {"available": mpp_ok, "detail": mpp_detail},
     }
+    req = _vista_refresh_request()
     if wb is None:
-        out["vista"] = {"ok": False, "detail": "Vista workbook not synced to this machine."}
+        out["vista"] = {"ok": False, "detail": "Vista workbook not synced to this machine.",
+                        "refresh_requested_at": req and req["requested_at"],
+                        "refresh_requested_by": req and req["requested_by"]}
         return out
     try:
         snap = vista.load()
     except vista.VistaUnavailable as exc:
-        out["vista"] = {"ok": False, "detail": str(exc)}
+        out["vista"] = {"ok": False, "detail": str(exc),
+                        "refresh_requested_at": req and req["requested_at"],
+                        "refresh_requested_by": req and req["requested_by"]}
         return out
 
     out["vista"] = {
@@ -220,6 +225,8 @@ def health():
         "schema_version": snap.schema_version,
         "job_count": len(snap.jobs),
         "phase_row_count": sum(len(v) for v in snap.phases.values()),
+        "refresh_requested_at": req and req["requested_at"],
+        "refresh_requested_by": req and req["requested_by"],
     }
     return out
 
@@ -460,6 +467,57 @@ def push_test():
 # 7.2MB today; the ceiling is a sanity bound, not a target.
 _MAX_WORKBOOK_BYTES = 64 * 1024 * 1024
 
+# --- vista refresh requests --------------------------------------------------
+# A person in Settings can ask for the extract to be re-pulled. The server
+# only HOLDS the request; the pull itself runs on the one PC that has the
+# Power BI connection (the companion sees the flag on its next poll and fires
+# the scheduled task there). Requests expire so a day the capable PC never
+# comes on doesn't leave "requested" burning forever.
+_VISTA_REQUEST_TTL_MIN = 30
+
+
+def _vista_refresh_request() -> dict | None:
+    from datetime import datetime, timezone
+    conn = db.connect()
+    row = {r["key"]: r["value"] for r in conn.execute(
+        "SELECT key, value FROM settings WHERE key IN "
+        "('vista_refresh_requested_at','vista_refresh_requested_by')")}
+    at = row.get("vista_refresh_requested_at")
+    if not at:
+        return None
+    try:
+        age = (datetime.now(timezone.utc)
+               - datetime.fromisoformat(at)).total_seconds()
+    except ValueError:
+        age = float("inf")
+    if age > _VISTA_REQUEST_TTL_MIN * 60:
+        return None
+    return {"requested_at": at,
+            "requested_by": row.get("vista_refresh_requested_by") or None}
+
+
+def _vista_refresh_clear() -> None:
+    conn = db.connect()
+    conn.execute("DELETE FROM settings WHERE key IN "
+                 "('vista_refresh_requested_at','vista_refresh_requested_by')")
+    conn.commit()
+
+
+@app.post("/api/vista/refresh-request")
+def request_vista_refresh():
+    """Flag that someone wants the Vista extract re-pulled. Session-authed —
+    the flag names who asked, and the poll hands it to the capable machine."""
+    from datetime import datetime, timezone
+    me = _CURRENT_USER.get() or {}
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    conn = db.connect()
+    for k, v in (("vista_refresh_requested_at", now),
+                 ("vista_refresh_requested_by", me.get("name") or "")):
+        conn.execute("INSERT INTO settings (key, value) VALUES (?,?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (k, v))
+    conn.commit()
+    return {"requested_at": now, "requested_by": me.get("name") or None}
+
 
 @app.post("/api/vista/workbook")
 async def push_vista_workbook(file: UploadFile = File(...),
@@ -511,6 +569,7 @@ async def push_vista_workbook(file: UploadFile = File(...),
         if dest.exists():
             shutil.copy2(dest, config.pushed_workbook_previous())
         tmp.replace(dest)                      # atomic: readers never see a partial file
+        _vista_refresh_clear()                 # whatever was asked for just arrived
     finally:
         try:
             tmp.unlink(missing_ok=True)
@@ -1667,7 +1726,22 @@ def companion_poll(request: Request, token: str | None = None):
         "interval_seconds": max(15, int(s.get("reply_poll_seconds") or 60)),
         "threads": records.open_threads(),
         "drafts": records.draft_threads(),
+        # Vista freshness rides the poll so the ONE machine that can re-pull
+        # the extract learns two things every sweep: has someone asked for a
+        # refresh, and how old is the data the server is showing everyone.
+        "vista": _poll_vista_block(),
     }
+
+
+def _poll_vista_block() -> dict:
+    req = _vista_refresh_request()
+    as_of = None
+    try:
+        snap = _snapshot()
+        as_of = snap.as_of.isoformat() if snap.as_of else None
+    except Exception:  # noqa: BLE001 — no workbook yet is a normal state
+        pass
+    return {"wanted": bool(req), "as_of": as_of}
 
 
 @app.post("/api/records/{rec_id}/draft")

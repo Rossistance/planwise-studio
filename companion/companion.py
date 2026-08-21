@@ -125,6 +125,103 @@ poll_state: dict = {"running": False, "last_run": None, "last_error": None,
 # The server dedupes anyway; this stops the CLIENT doing the expensive part
 # over and over. Bounded, because a companion can run for weeks.
 _filed_ids: dict[str, None] = {}
+
+# --- vista refresh ----------------------------------------------------------
+# The extract reaches the hosted server through ONE machine: the PC that runs
+# "SiteScope Vista Daily Pull" (Power BI -> workbook -> push, scheduled 6:30
+# AM under the owner's delegated token — see that script's own header for why
+# no cloud flow can replace it). A PC that is off at 6:30 leaves everyone on
+# yesterday's numbers, so the companion is the healing hand: on this machine
+# it re-fires the SAME scheduled task — never a reimplementation of the pull —
+# when Settings asks for a refresh, or when a sweep finds the data a day old.
+VISTA_TASK = "SiteScope Vista Daily Pull"
+vista_state: dict = {"capable": None, "last_trigger": None,
+                     "last_result": None, "reason": None}
+
+
+def _vista_capable() -> bool:
+    """Can THIS machine re-pull the extract? Cached — the answer is a
+    property of the PC, not of the moment."""
+    if vista_state["capable"] is not None:
+        return vista_state["capable"]
+    import subprocess
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    ok = False
+    try:
+        r = subprocess.run(["schtasks", "/query", "/tn", VISTA_TASK],
+                           capture_output=True, text=True, timeout=10,
+                           creationflags=flags)
+        ok = r.returncode == 0
+    except Exception:  # noqa: BLE001
+        ok = False
+    if not ok:
+        ok = (Path.home() / "SiteScope" / "tools" / "vista_pull.py").is_file() \
+            and (Path.home() / "SiteScope" / ".venv" / "Scripts" / "python.exe").is_file()
+    vista_state["capable"] = ok
+    return ok
+
+
+def _trigger_vista_pull(reason: str) -> None:
+    """Fire the pull. The scheduled task is preferred — it is the production
+    pipeline, with its own logging and environment; a direct spawn of the
+    same script is the fallback for a PC where the task was never created."""
+    import subprocess
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    vista_state["last_trigger"] = datetime.now().isoformat(timespec="seconds")
+    vista_state["reason"] = reason
+    try:
+        r = subprocess.run(["schtasks", "/run", "/tn", VISTA_TASK],
+                           capture_output=True, text=True, timeout=20,
+                           creationflags=flags)
+        if r.returncode == 0:
+            vista_state["last_result"] = "scheduled task started"
+            log.info("vista pull triggered (%s): scheduled task", reason)
+            return
+        py = Path.home() / "SiteScope" / ".venv" / "Scripts" / "python.exe"
+        script = Path.home() / "SiteScope" / "tools" / "vista_pull.py"
+        if py.is_file() and script.is_file():
+            subprocess.Popen([str(py), str(script)],
+                             cwd=str(script.parent.parent),
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             creationflags=flags | getattr(subprocess, "DETACHED_PROCESS", 0))
+            vista_state["last_result"] = "pull started directly"
+            log.info("vista pull triggered (%s): direct run", reason)
+            return
+        vista_state["last_result"] = ("cannot run from this PC: "
+                                      + (r.stderr or r.stdout or "task not found").strip()[:200])
+    except Exception as exc:  # noqa: BLE001 — a failed trigger must not end the sweep
+        vista_state["last_result"] = f"{type(exc).__name__}: {exc}"
+        log.warning("vista pull trigger failed: %s", exc)
+
+
+async def _maybe_refresh_vista(manifest: dict) -> None:
+    v = manifest.get("vista") or {}
+    if not await asyncio.to_thread(_vista_capable):
+        return
+    now = datetime.now()
+    mins_since = float("inf")
+    if vista_state.get("last_trigger"):
+        try:
+            mins_since = (now - datetime.fromisoformat(vista_state["last_trigger"])).total_seconds() / 60
+        except Exception:  # noqa: BLE001
+            pass
+    if v.get("wanted"):
+        if mins_since < 10:
+            return                      # the last request is still in flight
+        await asyncio.to_thread(_trigger_vista_pull, "asked from Settings")
+        return
+    # Daily backstop: 6:30 came and went with this PC off. The first sweep
+    # after 7 AM that finds the server's data more than 20 hours old re-runs
+    # the task. Throttled hard, so an upstream failure cannot hammer Power BI.
+    hours_old = float("inf")
+    if v.get("as_of"):
+        try:
+            hours_old = (now - datetime.fromisoformat(v["as_of"])).total_seconds() / 3600
+        except Exception:  # noqa: BLE001
+            pass
+    if hours_old > 20 and now.hour >= 7 and mins_since > 120:
+        age = f"{hours_old:.0f} hours old" if hours_old != float("inf") else "missing"
+        await asyncio.to_thread(_trigger_vista_pull, "daily backstop — server data " + age)
 FILED_CACHE_MAX = 2000
 
 # Live-watch status. The watcher is the fast path; the poll above is a
@@ -546,7 +643,8 @@ def _parse_since(value) -> datetime | None:
 def health():
     info = {"companion": "PlanWise", "paired": _expected_token() is not None,
             "paired_user": paired_user(),
-            "server": server_url(), "poll": poll_state, "watch": watch_state}
+            "server": server_url(), "poll": poll_state, "watch": watch_state,
+            "vista": dict(vista_state)}
     try:
         _app, ns, _started = _outlook()
         acct = ns.Accounts.Item(1).SmtpAddress if ns.Accounts.Count else None
@@ -1241,6 +1339,9 @@ async def _poll_once() -> None:
         poll_state["interval_seconds"] = manifest.get("interval_seconds")
         poll_state["threads"] = len(manifest.get("threads") or [])
         poll_state["drafts"] = len(manifest.get("drafts") or [])
+        # Vista handling comes BEFORE the reply-poll gate: freshness is not a
+        # mailbox concern, and disabling reply polling must not disable it.
+        await _maybe_refresh_vista(manifest)
         if not manifest.get("enabled"):
             poll_state["last_error"] = None
             poll_state["last_run"] = datetime.now().isoformat(timespec="seconds")

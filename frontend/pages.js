@@ -343,7 +343,9 @@ function buildPageVals(app) {
       ["pla_davis_bacon", "PLA / Davis-Bacon", "select", pmOpt],
       ["project_manager", "Project manager", "text"],
       ["superintendent", "Superintendent", "text"],
+      ["superintendent_email", "Superintendent email", "text"],
       ["field_leader", "Field lead", "text"],
+      ["field_leader_email", "Field lead email", "text"],
       ["estimator", "Estimator", "text"],
     ];
     out.pmFields = pmDefs.map(([key, label, type, options]) => {

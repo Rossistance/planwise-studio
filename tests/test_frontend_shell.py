@@ -83,6 +83,22 @@ def test_the_login_card_carries_the_owners_wording():
     assert '"login-email", "Work email", "text"' in ui
 
 
+def test_the_field_shells_promises_are_verbatim():
+    """PlanWise Field (handoff: PlanWise Field.dc.html) — the lines that
+    carry its doctrine, exactly as designed."""
+    everything = read("copy.js") + read("field.js")
+    for phrase in (
+        "held on this phone first and sent when you have signal",
+        "Nothing goes to the customer from this phone.",
+        "created in the office app",
+        "Nothing is holding up the work right now.",
+        "Redlines you add stay internal until they go out on an RFI.",
+    ):
+        assert phrase in everything, f"field microcopy lost: {phrase!r}"
+    html = read("index.html")
+    assert html.index("app.js") < html.index("field.js"),         "field.js extends App and must load after it"
+
+
 def test_no_native_prompts_survive():
     """1.x used prompt()/confirm() — including an unmasked password prompt.
     2.0's checked confirm replaces every one of them."""

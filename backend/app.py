@@ -19,7 +19,7 @@ from fastapi import Body, FastAPI, File, Header, HTTPException, Request, Respons
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (ai, attention, auth, briefing, changeorder, config, db, projection,
+from . import (ai, attention, auth, briefing, changeorder, config, db, field, projection,
                documents, eml, lookahead, outbox, po_pdf, push, records,
                reversal, schedule, store, vista)
 
@@ -176,6 +176,9 @@ async def require_session(request, call_next):
             return JSONResponse(status_code=403, content={
                 "detail": "Your access request hasn't been approved yet.",
                 "pending": True})
+        refusal = field.refusal_for(request.method, path, user)
+        if refusal:
+            return JSONResponse(status_code=403, content={"detail": refusal})
         return await call_next(request)
     finally:
         _CURRENT_USER.reset(reset)
@@ -575,7 +578,12 @@ def auth_status():
             # It is an open path, so the poll keeps working while the account
             # itself is held at the door.
             "pending": bool(me and me.get("pending")),
-            "user": me}
+            "user": me,
+            # Jobs where this email is the Superintendent or Field leader —
+            # the client renders the field app for them (owner's rule,
+            # 2026-08-20). Admins are never field-limited.
+            "field_jobs": ([] if not me or me.get("is_admin")
+                           else field.field_jobs_for(me.get("email")))}
 
 
 @app.post("/api/auth/bootstrap")

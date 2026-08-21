@@ -183,3 +183,27 @@ const LOGO_INNER =
   '<path d="M12.2 11h7.6L16 26.2z" fill="#fff"></path>' +
   '<path d="M5.5 28.8h21" stroke="#fff" stroke-width="1.9" stroke-linecap="round"></path>';
 const logoSvg = (px) => '<svg viewBox="0 0 32 32" aria-hidden="true" style="width:' + px + "px;height:" + px + 'px;flex:none">' + LOGO_INNER + "</svg>";
+
+// ——— PlanWise Field microcopy (handoff: PlanWise Field.dc.html, verbatim) ——
+const FIELD_COPY = {
+  todayIntro: "Tick what your crew works. Everything you tap is held on this phone first and sent when you have signal.",
+  noBlockers: "Nothing is holding up the work right now.",
+  blockingHeading: "Holding up the work",
+  crewHeading: "Your activities today",
+  lookIntro: "Select a day to mark it worked; the tick takes the work area's colour. Tools, material and operational notes stay internal.",
+  docsIntro: "Held on this phone, so they open with no signal. Redlines you add stay internal until they go out on an RFI.",
+  recsIntro: "Raise a question from the field and it lands on the project manager's desk as a draft. Nothing goes to the customer from this phone.",
+  moneyIntro: "Read only on this phone.",
+  moneyFoot: "Change orders, purchase orders and invoices are created in the office app. This phone shows them so the field knows what is committed.",
+  fabQuestion: "Raise a question from the field",
+  fabActivity: "Add an activity",
+  online: "On signal — everything you tap sends straight away.",
+  offline: "No signal. Your taps are being held on this phone.",
+  glove: ["Glove mode", "Bigger buttons and text for gloved hands."],
+  sun: ["Sun mode", "Full contrast for bright daylight."],
+  install: "Add this page to your home screen and it opens like an app, drawings included, even with no signal.",
+};
+const FIELD_TABS = [
+  ["today", "Today"], ["look", "Look ahead"], ["docs", "Drawings"],
+  ["recs", "Questions"], ["money", "Numbers"],
+];

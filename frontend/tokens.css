@@ -74,3 +74,13 @@ h1,h2,h3{text-wrap:balance}
 @keyframes sloganrule{from{transform:scaleX(0)}to{transform:scaleX(1)}}
 @keyframes riseup{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.01ms !important;animation-iteration-count:1 !important;transition-duration:.01ms !important}}
+
+/* ——— PlanWise Field (handoff: PlanWise Field.dc.html) ————————————————————
+   The field shell for Superintendent / Field-leader accounts: bigger type,
+   bigger targets, and two ergonomics the office never needs — glove mode
+   (62px taps) and sun mode (full-contrast palette for bright daylight). */
+html[data-shell="field"]{ --tap:52px; --fz:16px; --fzs:14.5px; --lbl:11px; --h1:26px; --pad:16px; }
+html[data-shell="field"][data-glove="on"]{ --tap:62px; --fz:18px; --fzs:16.5px; --lbl:12px; --h1:29px; --pad:18px; }
+html[data-shell="field"][data-sun="on"]{ --bg:#FFFFFF; --pn:#FFFFFF; --p2:#F1EFE8; --ink:#000000; --mu:#1F252B; --ft:#2C333A; --ln:#B9B4A6; --ls:#8C877A; --ac:#963206; --as:#FFE6D8; --bp:#0F4470; --ok:#0E4A28; --wn:#4E3400; --er:#7A1A12; }
+html[data-shell="field"] body{ overscroll-behavior-y:contain; }
+@keyframes sheetup{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}

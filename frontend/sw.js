@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v12";     // phone layout fixed at the grid root; own projection
+const VERSION = "planwise-shell-v13";     // PlanWise Field shell for field roles
 const SHELL = [
   "/",
   "/index.html",
@@ -31,6 +31,7 @@ const SHELL = [
   "/ui.js",
   "/pages.js",
   "/app.js",
+  "/field.js",
   "/tokens.css",
   "/fonts.css",
   "/fonts/PlanWiseSans-400.woff2",

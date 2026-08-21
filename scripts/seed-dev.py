@@ -137,7 +137,8 @@ def main() -> int:
         "bond_required": "Yes", "insurance_cert": "Yes",
         "certified_payroll": "No", "pla_davis_bacon": "No",
         "project_manager": "Dev Admin", "superintendent": "J. Benavides",
-        "field_leader": "Terry Kowalski", "estimator": "A. Reyes",
+        "field_leader": "Terry Kowalski", "field_leader_email": "tkowalski@1910Legacy.com",
+        "estimator": "A. Reyes",
         "customer_address": "West Plains Electric Cooperative, 400 Grid Rd",
         "contacts": [
             {"name": "Dana Whitfield", "role": "Owner's representative · WPEC",

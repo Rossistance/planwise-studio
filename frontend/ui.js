@@ -303,7 +303,7 @@ function uiAttention(v) {
 // ——— Undo bar (lines 1460–1466) ——————————————————————————————————————————
 function uiUndo(v) {
   if (!v.undoOpen) return "";
-  return `<div role="status" aria-live="polite" style="position:fixed;left:50%;bottom:22px;transform:translateX(-50%);z-index:120;display:flex;align-items:center;gap:14px;padding:12px 14px 12px 18px;border-radius:8px;border:1px solid var(--ls);background:var(--ink);color:var(--bg);box-shadow:var(--shp);animation:riseup .18s ease-out;max-width:min(92vw,640px)">
+  return `<div role="status" aria-live="polite" style="position:fixed;left:50%;bottom:${v.undoBottom || '22px'};transform:translateX(-50%);z-index:120;display:flex;align-items:center;gap:14px;padding:12px 14px 12px 18px;border-radius:8px;border:1px solid var(--ls);background:var(--ink);color:var(--bg);box-shadow:var(--shp);animation:riseup .18s ease-out;max-width:min(92vw,640px)">
     <span style="font-size:var(--fzs);text-wrap:pretty">${esc(v.undoMessage)}</span>
     <button data-click="${H(v.doUndo)}" class="hu" style="min-height:var(--tap);padding:7px 14px;border-radius:6px;border:1px solid var(--bg);background:transparent;color:var(--bg);font:600 12.5px var(--fd);letter-spacing:.03em;white-space:nowrap">Undo this</button>
     <button data-click="${H(v.dismissUndo)}" class="ho-1" style="min-height:var(--tap);padding:7px 10px;font:600 12px var(--fd);color:var(--bg);opacity:.75;white-space:nowrap">Dismiss</button>

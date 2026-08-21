@@ -130,6 +130,8 @@ const App = {
   },
 
   enterApp() {
+    const fj = (this._status || {}).field_jobs || [];
+    if (fj.length) { this.state.stage = "app"; this.enterFieldShell(); return; }
     let firstRun = true;
     try { firstRun = !localStorage.getItem("pw.tourDone"); } catch (e) {}
     this.state.tour = firstRun ? 1 : 0;
@@ -274,6 +276,9 @@ const App = {
     const job = this.state.job;
     if (!job) return;
     const want = new Set(["job", "attention"]);
+    if (this.state.shell === "field") {
+      ["job", "lookahead", "areas", "documents", "records", "attention"].forEach((k) => want.add(k));
+    }
     if (page === "dash") want.add("history");
     if (page === "sched") { want.add("schedule"); this.loadStagedImport && this.loadStagedImport(); }
     if (page === "look") want.add("lookahead");
@@ -1284,6 +1289,7 @@ Object.assign(App, {
 
       // undo
       undoOpen: !!s.undo, undoMessage: s.undo ? s.undo.message : "",
+      undoBottom: s.shell === "field" ? "170px" : "22px",
       doUndo: () => App.doUndo(), dismissUndo: App.dismissUndo,
 
       // overlays
@@ -1376,6 +1382,7 @@ Object.assign(App, {
       ...this.buildThread(),
       ...this.buildViewer(),
       ...this.buildShare(),
+      ...this.buildField(),
       ...this.buildBrief(),
       ...this.buildRegister(),
       ...this.buildDetail(),
@@ -1387,6 +1394,8 @@ Object.assign(App, {
   template(v) {
     const s = this.state;
     if (s.stage === "splash") return uiSkipLinks() + uiSplash(v);
+    if (s.stage === "app" && s.shell === "field")
+      return uiFieldApp(v) + uiConfirm(v) + uiForm(v) + uiViewer(v) + uiShare(v) + uiUndo(v) + uiBars(v);
     if (s.stage === "login") return uiLogin({ ...v, loginOn: true });
     return uiSkipLinks()
       + `<div style="display:grid;grid-template-columns:${v.railCol} minmax(0,1fr);min-height:100vh;background:var(--bg)">

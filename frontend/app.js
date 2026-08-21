@@ -72,10 +72,6 @@ const App = {
     window.addEventListener("hashchange", () => this.route());
     window.addEventListener("focus", () => App.detectSent());
 
-    // Splash once per browser session: the prototype models app launch, not
-    // every F5 — resolved decision #10 says the login screen is the skip, and
-    // a working tool must not cost 4.4 seconds per refresh. Recorded in
-    // LOGIC-MERGE.md.
     // Phones get the drawer shell; coarse pointers with no saved preference
     // get field mode (bigger targets) without being asked.
     const mq = matchMedia("(max-width: 860px)");
@@ -88,13 +84,13 @@ const App = {
         document.documentElement.dataset.mode = "field";
     } catch (e) {}
 
-    let splashed = false;
-    try { splashed = sessionStorage.getItem("pw.splashed") === "1"; } catch (e) {}
-    if (!splashed) {
-      try { sessionStorage.setItem("pw.splashed", "1"); } catch (e) {}
-      this.state.stage = "splash";
-      this._splashT = setTimeout(() => this.afterSplash(), 6200);
-    }
+    // Splash on EVERY fresh page load, signed in or not — the owner's
+    // 2026-08-20 call, overriding resolved decision #10's once-per-session
+    // model. Hash navigation inside the app never reloads the document, so
+    // this fires only when the page itself starts.
+    const splashed = false;
+    this.state.stage = "splash";
+    this._splashT = setTimeout(() => this.afterSplash(), 6200);
 
     let status = {};
     try { status = await api("/api/auth/status"); } catch (e) {}
@@ -1169,7 +1165,11 @@ Object.assign(App, {
       // rail
       navGroups,
       navStyle: "flex:1;overflow-y:auto;overflow-x:hidden;padding:" + (wide ? "6px 8px 8px" : "6px 7px 8px"),
-      railCol: s.isMobile ? "0px" : (s.railPin === "open" ? RAIL_W + "px" : RAIL_N + "px"),
+      // On phones the rail is position:fixed — OUT of grid flow — so its
+      // track must not exist at all: a fixed child does not occupy its cell,
+      // and the page content would land in the 0px rail column and lay out
+      // zero-wide, painting only by overflow (the 2026-08-20 phone jank).
+      railCol: s.isMobile ? "" : (s.railPin === "open" ? RAIL_W + "px" : RAIL_N + "px"),
       railWide: wide, railNarrow: !wide,
       railStyle: s.isMobile
         ? "position:fixed;left:0;top:0;bottom:0;width:min(280px,84vw);z-index:126;background:var(--pn);border-right:1px solid var(--ls);display:flex;flex-direction:column;overflow:hidden;box-shadow:var(--shp);transition:transform .3s cubic-bezier(.3,1,.4,1);transform:" +
@@ -1254,6 +1254,7 @@ Object.assign(App, {
       attnControls: "attention-panel",
       attnHasAny: attnItems.length > 0,
       attnOpen: s.attnOpen, attnExpanded: s.attnOpen ? "true" : "false",
+      attnBtnLabel: s.isMobile ? "Attention" : "Needs attention",
       attnMobile: s.isMobile,
       attnPanelStyle: s.isMobile
         ? "position:fixed;inset:50px 0 0 0;width:auto;z-index:118;background:var(--pn);overflow-y:auto;animation:fadein .18s ease-out"
@@ -1491,7 +1492,7 @@ Object.assign(App, {
         status: co.status || "Unsent",
         items: (items.items || []).length ? (items.items || []).map((i) => ({ desc: i.description || "", amt: i.amount === null ? "" : String(i.amount) })) : [{ desc: "", amt: "" }],
         clar, submitted: false, touched: false, previewRev: 0, saving: false,
-      }, coPreview: true, coNewClar: "" }, focusRef("co"));
+      }, coPreview: !App.state.isMobile, coNewClar: "" }, focusRef("co"));
       App.refreshCoPreview();
     } catch (err) {
       setState({ live: "Could not open the composer: " + err.message });
@@ -1722,7 +1723,9 @@ Object.assign(App, {
       coPreviewLabel: this.state.coPreview ? "Hide the preview" : "Show the preview",
       coPreviewBtnStyle: "min-height:var(--tap);padding:7px 13px;border-radius:6px;font:600 12.5px var(--fd);white-space:nowrap;border:1px solid " +
         (this.state.coPreview ? "var(--ac)" : "var(--ln)") + ";background:" + (this.state.coPreview ? "var(--as)" : "var(--pn)") + ";color:" + (this.state.coPreview ? "var(--ac)" : "var(--mu)"),
-      coCols: this.state.coPreview ? "minmax(0,1fr) minmax(0,1.05fr)" : "minmax(0,1fr)",
+      coCols: this.state.isMobile ? "minmax(0,1fr)"
+        : (this.state.coPreview ? "minmax(0,1fr) minmax(0,1.05fr)" : "minmax(0,1fr)"),
+      coEditorHidden: this.state.isMobile && this.state.coPreview,
       coShowErrors: co.submitted && errs.length ? true : "",
       coErrorHeading: errs.length + " thing" + (errs.length === 1 ? "" : "s") + " to fix",
       coErrors: errs.map((text) => ({ text })),

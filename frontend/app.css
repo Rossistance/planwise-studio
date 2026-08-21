@@ -45,6 +45,34 @@ tr.hr-p2:hover, tr.hr-p2:hover > th, tr.hr-p2:hover > td { background: var(--p2)
 /* 1.x mobile card reflow (kept — the prototype was a desktop preview).
    Tables opt in with .reflow; the render pass stamps data-label from each
    column header so cells caption themselves. */
+@media (max-width: 860px) {
+  /* Inline styles say nowrap for desks; on a phone a button that cannot
+     wrap is a button that leaks off the screen. */
+  .hb-ah, .hb-ls, .hb-fill, .hb-ac { white-space: normal !important; }
+  /* Grid and flex items default to min-width:auto, which lets an SVG's
+     intrinsic width (the 660-unit forecast chart) blow the column out past
+     the phone's edge. Zero it so tracks can actually shrink. */
+  main :where(div, section) { min-width: 0; }
+  main svg { max-width: 100% !important; }
+  /* Two-column fact lists (auto-sized tracks cannot shrink) stack instead. */
+  main dl { display: block !important; }
+  main dl dd { margin: 0 0 8px; }
+  /* Rows of person/contact actions wrap rather than run off the edge. */
+  main li { flex-wrap: wrap; }
+  main a { overflow-wrap: anywhere; }
+  main button { white-space: normal !important; }
+  /* Belt over braces: after the real fixes above, anything still painting
+     a few px past the edge must not give the whole page a sideways drift. */
+  html, body { overflow-x: hidden; }
+  /* Page-level two-column layouts stack on phones; contained boards
+     (schedule, look ahead) keep their own sideways pan. */
+  main div[style*="1.55fr"], main div[style*="1.15fr"],
+  main div[style*="minmax(0,1.5fr)"],
+  main div[style*="minmax(0,1fr) minmax(0,1fr)"] {
+    grid-template-columns: minmax(0,1fr) !important;
+  }
+}
+
 @media (max-width: 720px) {
   input, select, textarea { font-size: 16px !important; }   /* defeat iOS zoom */
   table.reflow thead { display: none; }

@@ -19,7 +19,7 @@ from fastapi import Body, FastAPI, File, Header, HTTPException, Request, Respons
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import (ai, attention, auth, briefing, changeorder, config, db,
+from . import (ai, attention, auth, briefing, changeorder, config, db, projection,
                documents, eml, lookahead, outbox, po_pdf, push, records,
                reversal, schedule, store, vista)
 
@@ -971,7 +971,14 @@ def job_history(job_number: str):
     for r in dailies:
         if r["as_of"][:10] > horizon:
             merged.append({**r, "grain": "extract"})
-    return {"history": merged, "monthly_rows": len(monthly)}
+    proj = None
+    try:
+        job = _snapshot().jobs.get(job_number)
+        if job:
+            proj = projection.for_job(job_number, job)
+    except HTTPException:
+        pass
+    return {"history": merged, "monthly_rows": len(monthly), "projection": proj}
 
 
 @app.get("/api/jobs/{job_number}/attention")

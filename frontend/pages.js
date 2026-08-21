@@ -64,6 +64,7 @@ function pageDash(v) {
           <div style="flex:1;padding:11px 16px;border-right:1px solid var(--ln)">
             <dt style="font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">Projected at completion</dt>
             <dd style="margin:3px 0 0;font:600 17px var(--fd);font-variant-numeric:tabular-nums">${esc(v.fcProjected)}</dd>
+            ${v.fcVistaSays ? `<dd style="margin:2px 0 0;font:11px var(--fm);color:var(--ft)">${esc(v.fcVistaSays)}</dd>` : ""}
           </div>
           <div style="flex:1;padding:11px 16px;border-right:1px solid var(--ln)">
             <dt style="font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft)">Against estimate</dt>
@@ -74,6 +75,7 @@ function pageDash(v) {
             <dd style="margin:3px 0 0;font:600 17px var(--fd);font-variant-numeric:tabular-nums">${esc(v.fcBurn)}</dd>
           </div>
         </dl>
+        ${v.fcLedger ? `<p style="margin:0;padding:9px 16px 12px;border-top:1px solid var(--ln);font-size:11.5px;color:var(--ft);text-wrap:pretty">${esc(v.fcLedger)}</p>` : ""}
       </section>
 
       <section aria-labelledby="health-heading" style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh)">
@@ -96,7 +98,7 @@ function pageDash(v) {
         <h2 id="cost-type-heading" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Cost by type</h2>
         <p style="margin:0;font:500 10.5px var(--fm);letter-spacing:.07em;text-transform:uppercase;color:var(--ft)">${esc(v.vistaSourceLine)}</p>
       </div>
-      <table style="width:100%;border-collapse:collapse;font-size:var(--fz)">
+      <table class="reflow" style="width:100%;border-collapse:collapse;font-size:var(--fz)">
         <caption class="sr">Estimate, actual cost to date, share of estimate spent and variance for each cost type on job ${esc(v.jobNumber)}.</caption>
         <thead><tr>
           <th scope="col" style="text-align:left;padding:10px 16px;font:500 var(--lbl) var(--fm);letter-spacing:.14em;text-transform:uppercase;color:var(--ft);border-bottom:1px solid var(--ln)">Cost type</th>
@@ -108,15 +110,15 @@ function pageDash(v) {
         <tbody>
           ${v.costRows.map((cr) => `<tr class="hr-p2">
             <th scope="row" style="text-align:left;font-weight:500;padding:var(--cellY) 16px;border-bottom:1px solid var(--ln)">${esc(cr.type)}</th>
-            <td style="padding:var(--cellY) 16px;border-bottom:1px solid var(--ln);text-align:right;font-variant-numeric:tabular-nums">${esc(cr.est)}</td>
-            <td style="padding:var(--cellY) 16px;border-bottom:1px solid var(--ln);text-align:right;font-variant-numeric:tabular-nums">${esc(cr.act)}</td>
-            <td style="padding:var(--cellY) 16px;border-bottom:1px solid var(--ln)">
+            <td data-label="Estimate" style="padding:var(--cellY) 16px;border-bottom:1px solid var(--ln);text-align:right;font-variant-numeric:tabular-nums">${esc(cr.est)}</td>
+            <td data-label="Actual to date" style="padding:var(--cellY) 16px;border-bottom:1px solid var(--ln);text-align:right;font-variant-numeric:tabular-nums">${esc(cr.act)}</td>
+            <td data-label="Spent of estimate" style="padding:var(--cellY) 16px;border-bottom:1px solid var(--ln)">
               <span style="display:flex;align-items:center;gap:9px">
                 <span aria-hidden="true" style="height:6px;border-radius:3px;background:var(--ln);flex:1;overflow:hidden"><span style="display:block;height:100%;width:${cr.barW};background:${cr.barColor};border-radius:3px"></span></span>
                 <span style="font:500 11.5px var(--fm);color:var(--mu);min-width:42px;text-align:right">${esc(cr.pct)}</span>
               </span>
             </td>
-            <td style="padding:var(--cellY) 16px;border-bottom:1px solid var(--ln);text-align:right;font-variant-numeric:tabular-nums;color:${cr.varColor}">${esc(cr.vari)}</td>
+            <td data-label="Variance" style="padding:var(--cellY) 16px;border-bottom:1px solid var(--ln);text-align:right;font-variant-numeric:tabular-nums;color:${cr.varColor}">${esc(cr.vari)}</td>
           </tr>`).join("")}
         </tbody>
         <tfoot><tr style="background:var(--p2)">
@@ -266,8 +268,20 @@ function buildPageVals(app) {
     // points are landed extracts after the last backfilled month. Two
     // points make a line; fewer make an honest empty state, never a curve.
     const hist = ((d.history || {}).history) || [];
-    out.fcProjected = money(job.projected_cost);
-    const against = est !== null && est !== undefined && job.projected_cost !== null && job.projected_cost !== undefined ? est - job.projected_cost : null;
+    // PlanWise's own cost-at-completion (backend/projection.py): the larger
+    // of the committed floor and the burn reading — arithmetic over the
+    // registers, no AI. Vista's figure shows beneath it for comparison.
+    const proj = (d.history || {}).projection || null;
+    const landing = proj ? proj.pw_projected : job.projected_cost;
+    out.fcProjected = money(landing);
+    out.fcVistaSays = proj && proj.vista_projected !== null && proj.vista_projected !== undefined
+      ? "Vista says " + money(proj.vista_projected) : "";
+    out.fcLedger = proj ? (
+      proj.basis === "burn"
+        ? "PlanWise's figure is the burn reading: " + money(proj.components.actual_cost) + " spent at " + (proj.components.pct_complete * 100).toFixed(1) + "% complete. The committed floor — cost to date plus " + money(proj.components.open_po_commitment) + " open on POs plus " + money(proj.components.approved_co_no_po) + " of approved subcontractor COs with no PO — sits lower, at " + money(proj.components.committed_floor) + "."
+        : "PlanWise's figure is the committed floor: " + money(proj.components.actual_cost) + " cost to date, plus " + money(proj.components.open_po_commitment) + " still open on purchase orders, plus " + money(proj.components.approved_co_no_po) + " of approved subcontractor COs with no PO yet." + (proj.components.burn_projection ? " The burn reading (" + money(proj.components.burn_projection) + ") sits lower." : " Percent complete is too low for a burn reading.")
+    ) : "";
+    const against = est !== null && est !== undefined && landing !== null && landing !== undefined ? est - landing : null;
     out.fcAgainst = signed(against);
     out.fcAgainstColor = against !== null && against < 0 ? "var(--er)" : "var(--ok)";
     out.fcBurn = money(job.mtd_cost);
@@ -278,23 +292,23 @@ function buildPageVals(app) {
       const xs = hist.map((h) => new Date(h.as_of).getTime());
       const ys = hist.map((h) => h.actual_cost || 0);
       const x0 = Math.min(...xs), x1 = Math.max(...xs);
-      const top = Math.max(job.projected_cost || 0, est || 0, ...ys) || 1;
+      const top = Math.max(landing || 0, est || 0, ...ys) || 1;
       const px = (x) => x1 === x0 ? 0 : ((x - x0) / (x1 - x0) * 560).toFixed(1);
       const py = (yv) => (165 - yv / top * 155).toFixed(1);
       const pts = hist.map((h) => px(new Date(h.as_of).getTime()) + "," + py(h.actual_cost || 0)).join(" L");
       const lastX = px(x1), lastY = py(ys[ys.length - 1]);
-      out.forecastSvg = `<svg viewBox="0 0 660 200" role="img" aria-label="Cost curve from recorded monthly postings and landed Vista extracts, job inception to now. The forecast reaches ${money(job.projected_cost)} at completion." style="width:100%;height:auto;display:block;overflow:visible">
+      out.forecastSvg = `<svg viewBox="0 0 660 200" role="img" aria-label="Cost curve from recorded monthly postings and landed Vista extracts, job inception to now. The forecast reaches ${money(landing)} at completion." style="width:100%;height:auto;display:block;overflow:visible">
         <g stroke="var(--ln)" stroke-width="1"><line x1="0" y1="10" x2="640" y2="10"></line><line x1="0" y1="60" x2="640" y2="60"></line><line x1="0" y1="110" x2="640" y2="110"></line><line x1="0" y1="160" x2="640" y2="160"></line></g>
         ${est ? `<line x1="0" y1="165" x2="639" y2="${py(est)}" stroke="var(--ls)" stroke-width="1.5" stroke-dasharray="5 4"></line>` : ""}
         <path d="M${pts}" fill="none" stroke="var(--ac)" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"></path>
-        ${job.projected_cost ? `<path d="M${lastX},${lastY} L639,${py(job.projected_cost)}" fill="none" stroke="var(--ac)" stroke-width="2.2" stroke-dasharray="4 4" opacity=".55" stroke-linecap="round"></path>` : ""}
+        ${landing ? `<path d="M${lastX},${lastY} L639,${py(landing)}" fill="none" stroke="var(--ac)" stroke-width="2.2" stroke-dasharray="4 4" opacity=".55" stroke-linecap="round"></path>` : ""}
         <circle cx="${lastX}" cy="${lastY}" r="4.5" fill="var(--pn)" stroke="var(--ac)" stroke-width="2.6"></circle>
         <line x1="${lastX}" y1="0" x2="${lastX}" y2="168" stroke="var(--ac)" stroke-width="1" opacity=".3"></line>
         <text x="${Number(lastX) + 4}" y="12" font-family="var(--fm)" font-size="10" fill="var(--ac)" letter-spacing="1">LATEST</text>
         <g font-family="var(--fm)" font-size="10" fill="var(--ft)" letter-spacing="0.8">
           <text x="0" y="182">${esc(usDate(hist[0].as_of).toUpperCase())}</text>
           <text x="500" y="182">${esc(usDate(hist[hist.length - 1].as_of).toUpperCase())}</text>
-          <text x="644" y="14">${esc(money(top))}</text><text x="644" y="164">$0</text>
+          <text x="656" y="14" text-anchor="end">${esc(money(top))}</text><text x="656" y="164" text-anchor="end">$0</text>
         </g>
       </svg>`;
     } else {

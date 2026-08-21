@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v11";     // mobile shell, real icons, longer splash
+const VERSION = "planwise-shell-v12";     // phone layout fixed at the grid root; own projection
 const SHELL = [
   "/",
   "/index.html",

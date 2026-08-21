@@ -210,13 +210,13 @@ function uiHeader(v) {
       ${v.mobileMenu ? `<button data-click="${H(v.toggleMobileNav)}" aria-label="Menu" aria-expanded="${v.mobileNavOpen ? "true" : "false"}" class="hb-ac" style="flex:none;min-height:var(--tap);min-width:var(--tap);display:grid;place-content:center;border:1px solid var(--ln);border-radius:6px;color:var(--mu)">
         <svg aria-hidden="true" viewBox="0 0 24 24" style="width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
       </button>` : ""}
-      <search style="position:relative;flex:1 1 180px;min-width:150px;max-width:400px">
+      <search style="position:relative;flex:1 1 180px;min-width:0;max-width:400px">
         <label for="job-search" class="sr">Search job ${esc(v.jobNumber)} for change orders, purchase orders, RFIs, submittals, drawings and tasks</label>
         <input id="job-search" type="search" data-ref="search" value="${esc(v.query)}" data-input="${H(v.onQuery)}" data-focus="${H(v.onSearchFocus)}" autocomplete="off" aria-describedby="search-hint" placeholder="Search this job — press / to jump here" class="fi" style="width:100%;min-height:var(--tap);padding:7px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font-size:var(--fzs)">
         <span id="search-hint" class="sr">Results appear below as you type. Press Escape to close them.</span>
       </search>
       <span style="flex:1"></span>
-      ${v.attnHasAny ? `<button data-click="${H(v.toggleAttn)}" aria-expanded="${v.attnExpanded}" aria-controls="${v.attnControls}" class="hb-ls" style="${v.attnBtnStyle}">Needs attention<span style="${v.attnCountStyle}">${v.attnCount}</span></button>` : ""}
+      ${v.attnHasAny ? `<button data-click="${H(v.toggleAttn)}" aria-expanded="${v.attnExpanded}" aria-controls="${v.attnControls}" class="hb-ls" style="${v.attnBtnStyle}">${esc(v.attnBtnLabel)}<span style="${v.attnCountStyle}">${v.attnCount}</span></button>` : ""}
     </header>
 
     ${v.searchOpen ? `<section aria-label="Search results" style="border-bottom:1px solid var(--ln);background:var(--p2);padding:12px 18px;animation:fadein .14s ease-out">
@@ -755,7 +755,7 @@ function uiCO(v) {
       </div>
 
       <div style="flex:1;min-height:0;display:grid;grid-template-columns:${v.coCols}">
-        <div style="overflow-y:auto;padding:16px 20px 20px;border-right:1px solid var(--ln)">
+        <div style="overflow-y:auto;padding:16px 20px 20px;border-right:1px solid var(--ln);${v.coEditorHidden ? "display:none" : ""}">
           ${v.coShowErrors ? `<div role="alert" style="margin:0 0 15px;padding:12px 14px;border:1px solid var(--er);border-radius:7px;background:var(--ers)">
             <p style="margin:0 0 6px;font:600 13px var(--fd);color:var(--er)">${esc(v.coErrorHeading)}</p>
             <ul style="margin:0;padding-left:18px;font-size:var(--fzs);color:var(--er)">

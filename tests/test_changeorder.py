@@ -52,15 +52,17 @@ def with_contact():
                       "role": "Customer PM"}]}, actor="Ross Hixon")
 
 
-# --- the no-contact guard -----------------------------------------------------
+# --- no contact never blocks (owner's rule, 2026-08-20) -----------------------
 
-def test_a_customer_letter_without_a_contact_says_where_to_add_one(client):
+def test_a_customer_letter_without_a_contact_still_composes_unaddressed(client):
+    """The letter builds, the salutation degrades to Sir or Madam, and the
+    share payload's To: is empty for the PM to fill in Outlook."""
     co = make_co()
     r = client.get(f"/api/jobs/24-003/cos/{co['id']}/document.pdf")
-    assert r.status_code == 409
-    detail = r.json()["detail"]
-    assert detail["needs_contact"] is True
-    assert "Overview" in detail["detail"]
+    assert r.status_code == 200 and r.content[:4] == b"%PDF"
+    share = client.get(f"/api/jobs/24-003/cos/{co['id']}/share")
+    assert share.status_code == 200
+    assert (share.json().get("to") or "") == ""
 
 
 def test_a_subcontractor_letter_needs_no_customer_contact(client):

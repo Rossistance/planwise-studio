@@ -692,11 +692,56 @@ def summarise_import(import_id: str) -> dict[str, Any]:
         lk["pred_name"] = by_ext.get(lk["pred_external_id"])
         lk["succ_name"] = by_ext.get(lk["succ_external_id"])
         lk["id"] = f"{lk['pred_external_id']}>{lk['succ_external_id']}"
+    # What changes if this lands: the incoming rows against the schedule as
+    # it stands, matched by the source file's own task id first and the name
+    # as a fallback. Dates compare as strings — both sides are ISO days.
+    conn = db.connect()
+    current = [dict(r) for r in conn.execute(
+        "SELECT id, external_id, name, start, finish, source FROM schedule_tasks"
+        " WHERE job_number = ?", (rec["job_number"],))]
+    cur_by_ext = {c["external_id"]: c for c in current if c.get("external_id")}
+    cur_by_name = {}
+    for c in current:
+        cur_by_name.setdefault((c.get("name") or "").strip().lower(), c)
+    matched_cur = set()
+    diff_new, diff_moved = [], []
+    unchanged = 0
+    for t in tasks:
+        c = cur_by_ext.get(t.get("external_id"))             or cur_by_name.get((t.get("name") or "").strip().lower())
+        if c is None:
+            diff_new.append({"name": t.get("name"), "start": t.get("start"),
+                             "finish": t.get("finish")})
+            continue
+        matched_cur.add(c["id"])
+        if (c.get("start") or "") == (t.get("start") or "") and                 (c.get("finish") or "") == (t.get("finish") or ""):
+            unchanged += 1
+        else:
+            diff_moved.append({"name": t.get("name"),
+                               "old_start": c.get("start"), "new_start": t.get("start"),
+                               "old_finish": c.get("finish"), "new_finish": t.get("finish")})
+    # Commit's replace mode deletes only previously-IMPORTED rows the file
+    # dropped; rows somebody added by hand survive both modes (that promise
+    # is the whole point of the modes). The diff says which is which.
+    unmatched = [c for c in current if c["id"] not in matched_cur]
+    diff_gone = [{"name": c.get("name"), "start": c.get("start"),
+                  "finish": c.get("finish")}
+                 for c in unmatched if (c.get("source") or "manual") != "manual"]
+    diff_manual = [{"name": c.get("name"), "start": c.get("start"),
+                    "finish": c.get("finish")}
+                   for c in unmatched if (c.get("source") or "manual") == "manual"]
+    CAP = 200
+    diff = {"new": diff_new[:CAP], "moved": diff_moved[:CAP], "gone": diff_gone[:CAP],
+            "manual_kept": diff_manual[:CAP],
+            "new_total": len(diff_new), "moved_total": len(diff_moved),
+            "gone_total": len(diff_gone), "manual_kept_total": len(diff_manual),
+            "unchanged": unchanged,
+            "had_schedule": bool(current)}
+
     return {
         "id": rec["id"], "job_number": rec["job_number"],
         "filename": rec["filename"], "source": rec["source"],
         "status": rec["status"], "created_at": rec["created_at"],
-        "tasks": tasks, "links": links,
+        "tasks": tasks, "links": links, "diff": diff,
         "warnings": payload.get("warnings", []),
         "counts": {
             "tasks": len(tasks),
@@ -852,15 +897,24 @@ def clear_tasks(job_number: str, actor: str | None = None) -> int:
     when a single task is deleted.
     """
     conn = db.connect()
-    n = conn.execute("SELECT COUNT(*) c FROM schedule_tasks WHERE job_number = ?",
-                     (job_number,)).fetchone()["c"]
+    tasks = [dict(r) for r in conn.execute(
+        "SELECT * FROM schedule_tasks WHERE job_number = ?", (job_number,))]
+    links = [dict(r) for r in conn.execute(
+        "SELECT * FROM schedule_links WHERE job_number = ?", (job_number,))]
+    conn.execute("DELETE FROM schedule_links WHERE job_number = ?", (job_number,))
     conn.execute("DELETE FROM schedule_tasks WHERE job_number = ?", (job_number,))
     conn.execute("DELETE FROM schedule_imports WHERE job_number = ? AND status = 'staged'",
                  (job_number,))
     conn.commit()
-    if n:
-        db.log_activity(actor, job_number, "schedule.clear", f"{n} tasks")
-    return n
+    activity_id = None
+    if tasks:
+        activity_id = db.log_activity(
+            actor, job_number, "schedule.clear",
+            f"{len(tasks)} tasks and {len(links)} links",
+            object_kind="schedule", object_id=job_number,
+            revert={"op": "schedule.recreate", "tasks": tasks, "links": links})
+    return {"cleared": len(tasks), "links_removed": len(links),
+            "activity_id": activity_id}
 
 
 def delete_task(job_number: str, task_id: str,

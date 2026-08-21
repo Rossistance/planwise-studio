@@ -84,3 +84,4 @@ html[data-shell="field"][data-glove="on"]{ --tap:62px; --fz:18px; --fzs:16.5px; 
 html[data-shell="field"][data-sun="on"]{ --bg:#FFFFFF; --pn:#FFFFFF; --p2:#F1EFE8; --ink:#000000; --mu:#1F252B; --ft:#2C333A; --ln:#B9B4A6; --ls:#8C877A; --ac:#963206; --as:#FFE6D8; --bp:#0F4470; --ok:#0E4A28; --wn:#4E3400; --er:#7A1A12; }
 html[data-shell="field"] body{ overscroll-behavior-y:contain; }
 @keyframes sheetup{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.55}}

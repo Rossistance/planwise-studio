@@ -692,7 +692,7 @@ def test_clearing_a_schedule_removes_tasks_and_links_but_keeps_the_calendar():
     conn = db.connect()
     assert conn.execute("SELECT COUNT(*) c FROM schedule_links").fetchone()["c"] > 0
 
-    assert schedule.clear_tasks("24-003", actor="Ross Hixon") == 2
+    assert schedule.clear_tasks("24-003", actor="Ross Hixon")["cleared"] == 2
     assert schedule.list_tasks("24-003") == []
     assert conn.execute("SELECT COUNT(*) c FROM schedule_links").fetchone()["c"] == 0
 
@@ -702,4 +702,53 @@ def test_clearing_a_schedule_removes_tasks_and_links_but_keeps_the_calendar():
     assert date(2026, 7, 3) in cal.holidays
 
     # Clearing an already-empty schedule is a no-op, not an error.
-    assert schedule.clear_tasks("24-003") == 0
+    assert schedule.clear_tasks("24-003")["cleared"] == 0
+
+
+def test_a_staged_import_reads_out_what_changes_against_the_current_schedule():
+    """The diff names the new, the moved (old and new dates side by side),
+    and the gone — matched by the file's own id first, name as fallback."""
+    a = schedule.add_task("24-003", {"name": "Set anchors", "start": "2026-09-01",
+                                     "finish": "2026-09-03"}, actor="pm")
+    schedule.update_task("24-003", a["id"], {"external_id": "10"}, actor="pm")
+    schedule.add_task("24-003", {"name": "Old scope task", "start": "2026-09-05",
+                                 "finish": "2026-09-06"}, actor="pm")
+
+    csv = ("ID,Name,Start,Finish\n"
+           "10,Set anchors,2026-09-02,2026-09-04\n"
+           "20,New pull,2026-09-10,2026-09-12\n")
+    staged = schedule.stage_import("24-003", "update.csv", csv.encode(), actor="pm")
+    diff = staged["diff"]
+    assert diff["had_schedule"] is True
+    assert diff["new_total"] == 1 and diff["new"][0]["name"] == "New pull"
+    assert diff["gone_total"] == 0, "hand-added rows are never deleted by a commit"
+    assert diff["manual_kept_total"] == 1 and diff["manual_kept"][0]["name"] == "Old scope task"
+    assert diff["moved_total"] == 1
+    m = diff["moved"][0]
+    assert m["old_start"] == "2026-09-01" and m["new_start"] == "2026-09-02"
+
+
+def test_a_clean_import_lands_straight_into_an_empty_schedule_but_stages_over_a_full_one():
+    from fastapi.testclient import TestClient
+
+    from backend import app as app_module, auth
+
+    c = TestClient(app_module.app)
+    auth.bootstrap_admin(auth.setup_token(), "Ross Hixon", "a-good-password")
+    assert c.post("/api/auth/login",
+                  json={"name": "Ross Hixon", "password": "a-good-password"}).status_code == 200
+
+    csv = "ID,Name,Start,Finish\n1,Mobilize,2026-09-01,2026-09-02\n"
+    r = c.post("/api/jobs/24-003/schedule/import?mode=replace",
+               files={"file": ("plan.csv", csv, "text/csv")})
+    assert r.status_code == 200 and r.json().get("committed") is True, \
+        "an empty job has nothing to compare — a clean file lands"
+
+    csv2 = "ID,Name,Start,Finish\n1,Mobilize,2026-09-03,2026-09-04\n2,Pull,2026-09-05,2026-09-06\n"
+    r = c.post("/api/jobs/24-003/schedule/import?mode=replace",
+               files={"file": ("plan2.csv", csv2, "text/csv")})
+    out = r.json()
+    assert r.status_code == 200 and out.get("staged") is True, \
+        "on top of an existing schedule the diff review always comes first"
+    detail = c.get(f"/api/schedule/import/{out['id']}").json()
+    assert detail["diff"]["moved_total"] == 1 and detail["diff"]["new_total"] == 1

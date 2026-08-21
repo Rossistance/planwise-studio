@@ -1289,16 +1289,10 @@ def _co_document(job_number: str, co_id: str, clarifications: list[str] | None):
     meta = store.get_meta(job_number)
     contacts = [c for c in (meta.get("contacts") or []) if c.get("email")]
 
-    is_customer = (co.get("kind") or "customer") == "customer"
-    if is_customer and not contacts:
-        # A customer letter with nobody to send it to is not a document worth
-        # building. Say what's missing and where to fix it, rather than
-        # producing a letter addressed to no one.
-        raise HTTPException(status_code=409, detail={
-            "detail": "This job has no customer contact with an email address yet. "
-                      "Add one on the Overview tab and the change order can go out.",
-            "needs_contact": True, "job_number": job_number})
-
+    # No customer contact no longer blocks anything (owner's rule,
+    # 2026-08-20): the letter composes with the addressee blank and the
+    # Outlook draft opens with an empty To: for the PM to address there.
+    # Adding the contact on Job setup makes the next draft addressed.
     me = _CURRENT_USER.get() or {}
     selected = (changeorder.get_selected(co_id) if clarifications is None
                 else clarifications)
@@ -1829,11 +1823,19 @@ async def import_schedule(job_number: str, mode: str = "replace",
     """
     data = await _read_capped(file)
     actor = _actor(x_planwise_user)
+    conn = db.connect()
+    existing = conn.execute("SELECT COUNT(*) c FROM schedule_tasks WHERE job_number = ?",
+                            (job_number,)).fetchone()["c"]
     try:
         staged = schedule.stage_import(job_number, file.filename or "", data, actor=actor)
-        if not staged["links"] and not staged["warnings"]:
+        # Clean explicit-link sources commit straight away ONLY into an empty
+        # schedule. On top of an existing one there is always a human
+        # decision — what changes — so it stages and the review shows the
+        # old-against-new reading (owner's rule, 2026-08-20).
+        if not staged["links"] and not staged["warnings"] and not existing:
             result = schedule.commit_import(staged["id"], mode=mode, actor=actor)
             result["staged"] = False
+            result["committed"] = True
             return result
         staged["staged"] = True
         staged["mode"] = mode
@@ -1966,8 +1968,9 @@ def remove_task(job_number: str, task_id: str,
 @app.delete("/api/jobs/{job_number}/schedule/tasks")
 def clear_schedule(job_number: str,
                    x_planwise_user: str | None = Header(default=None)):
-    """Empty the schedule for this job — the way back from a bad import."""
-    return {"cleared": schedule.clear_tasks(job_number, actor=_actor(x_planwise_user))}
+    """Empty the schedule for this job — the way back from a bad import.
+    Carries its own inverse: one undo restores every task and link."""
+    return schedule.clear_tasks(job_number, actor=_actor(x_planwise_user))
 
 
 # --- look ahead (Phase 4) -----------------------------------------------------

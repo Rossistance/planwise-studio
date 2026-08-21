@@ -369,13 +369,45 @@ function buildPageVals(app) {
 
 // ——— Schedule (prototype lines 422–513; server engine behind it) ————————————
 function pageSched(v) {
+  if (v.schedImporting) {
+    const im = v.schedImporting;
+    return `<section aria-labelledby="importing-heading" style="background:var(--pn);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px;padding:16px 18px">
+      <h2 id="importing-heading" style="margin:0;font:600 15px var(--fd)">Importing ${esc(im.name)}</h2>
+      <div role="progressbar" aria-valuemin="0" aria-valuemax="100" ${im.parsing ? "" : `aria-valuenow="${im.pct}"`} aria-label="${esc(im.label)}" style="margin:12px 0 8px;height:10px;border-radius:5px;background:var(--ln);overflow:hidden">
+        <span style="display:block;height:100%;width:${im.pct}%;background:var(--ac);border-radius:5px;transition:width .2s ease${im.parsing ? ";animation:pulse 1.2s ease-in-out infinite" : ""}"></span>
+      </div>
+      <p style="margin:0;font:500 12px var(--fm);color:var(--mu)" aria-live="polite">${esc(im.label)}</p>
+      ${im.parsing ? `<p style="margin:6px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">A Microsoft Project file opens through the schedule engine; a large one can take half a minute. Nothing lands until you review and commit it.</p>` : ""}
+    </section>` + (v.hasSched ? "" : "");
+  }
   if (v.staged) {
     const c = v.staged.counts || {};
+    const df = v.staged.diff;
+    const dsec = (title, tone, rows, total, render) => rows.length ? `<section style="margin-top:12px">
+        <h3 style="margin:0 0 6px;font:600 12.5px var(--fd);color:var(--${tone})">${title}${total > rows.length ? ` <span style="font:500 11px var(--fm);color:var(--ft)">(first ${rows.length} of ${total})</span>` : ""}</h3>
+        <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:3px">
+          ${rows.map(render).join("")}
+        </ul>
+      </section>` : "";
     return `<section aria-labelledby="staged-heading" style="background:var(--pn);border:1px solid var(--ac);border-radius:8px;box-shadow:var(--sh);margin-bottom:14px">
       <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <h2 id="staged-heading" style="margin:0;flex:1;font:600 15px var(--fd)">A schedule import is waiting for review</h2>
         <p style="margin:0;font:11.5px var(--fm);color:var(--ft)">${esc(String(c.tasks ?? "?"))} tasks · ${esc(String(c.links ?? 0))} proposed links · nothing lands until you commit</p>
       </div>
+      ${df && df.had_schedule ? `<div style="padding:12px 16px;border-bottom:1px solid var(--ln);background:var(--p2)">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <h3 style="margin:0;flex:1;font:600 13px var(--fd)">Against the schedule as it stands</h3>
+          <span style="${stamp("nt")}">${df.unchanged} unchanged</span>
+          <span style="${stamp("wn")}">${df.moved_total} moved</span>
+          <span style="${stamp("ok")}">${df.new_total} new</span>
+          <span style="${stamp("er")}">${df.gone_total} gone on commit</span>
+          ${df.manual_kept_total ? `<span style="${stamp("nt")}">${df.manual_kept_total} hand-added, kept</span>` : ""}
+        </div>
+        ${dsec("Moved — old dates to new", "wn", df.moved, df.moved_total, (m) => `<li style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;flex-wrap:wrap"><span style="font-weight:600">${esc(m.name || "?")}</span><span style="font-family:var(--fm);color:var(--ft)">${esc(m.old_start || "?")} – ${esc(m.old_finish || "?")}</span><span aria-hidden="true" style="color:var(--wn)">→</span><span style="font-family:var(--fm);color:var(--wn)">${esc(m.new_start || "?")} – ${esc(m.new_finish || "?")}</span></li>`)}
+        ${dsec("New in this file", "ok", df.new, df.new_total, (n) => `<li style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;flex-wrap:wrap"><span style="font-weight:600">${esc(n.name || "?")}</span><span style="font-family:var(--fm);color:var(--ft)">${esc(n.start || "?")} – ${esc(n.finish || "?")}</span></li>`)}
+        ${dsec("Imported earlier but not in this file — removed on commit", "er", df.gone, df.gone_total, (g2) => `<li style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;flex-wrap:wrap"><span style="font-weight:600">${esc(g2.name || "?")}</span><span style="font-family:var(--fm);color:var(--ft)">${esc(g2.start || "?")} – ${esc(g2.finish || "?")}</span></li>`)}
+        ${dsec("Added by hand — kept either way", "nt", df.manual_kept || [], df.manual_kept_total || 0, (g2) => `<li style="display:flex;gap:8px;align-items:baseline;font-size:12.5px;flex-wrap:wrap"><span style="font-weight:600">${esc(g2.name || "?")}</span><span style="font-family:var(--fm);color:var(--ft)">${esc(g2.start || "?")} – ${esc(g2.finish || "?")}</span></li>`)}
+      </div>` : ""}
       ${(v.staged.warnings || []).map((w) => `<p style="margin:0;padding:9px 16px;border-bottom:1px solid var(--ln);background:var(--wns);color:var(--wn);font-size:var(--fzs);text-wrap:pretty">${esc(w)}</p>`).join("")}
       ${(v.staged.links || []).length ? `<div style="padding:12px 16px;border-bottom:1px solid var(--ln)">
         <div style="display:flex;gap:9px;align-items:center;margin-bottom:8px;flex-wrap:wrap">
@@ -423,6 +455,7 @@ function pageSched(v) {
         <button data-click="${H(v.schedZoomIn)}" aria-label="Zoom in" class="hb-ac" style="min-height:30px;min-width:30px;border:1px solid var(--ln);border-radius:5px;color:var(--mu);font:600 14px var(--fm)">+</button>
       </span>
       <button data-click="${H(v.triggerSchedImport)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Import an updated schedule</button>
+      <button data-click="${H(v.clearSchedule)}" class="hb-er" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);color:var(--er)">Delete the whole schedule</button>
       <button data-click="${H(v.openNewTask)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd)">Add a task</button>
     </div>
     <div data-gantt style="overflow:auto;max-height:calc(100vh - 230px);padding:0 0 6px;overscroll-behavior-x:contain">

@@ -1699,21 +1699,19 @@ Object.assign(App, {
     try {
       payload = await api(`/api/jobs/${job}/cos/${coId}/share`);
     } catch (err) {
-      if (err.body && err.body.needs_contact) {
-        setState({ co: null, live: "This job has no customer contact with an email address yet. Taking you to Job setup to add one." });
-        setTimeout(() => App.go("setup")(), 1400);
-        return;
-      }
       setState({ live: err.message });
       return;
     }
+    const unaddressed = !(payload.to || "").trim();
     try {
       await companionFetch("/draft", { to: payload.to, subject: payload.subject,
         body: payload.body, attachments: payload.attachments, display: true });
       const upd = await api(`/api/jobs/${job}/cos/${coId}`, { method: "PATCH",
         body: JSON.stringify({ status: "Awaiting Outlook" }) });
       setState({ co: null });
-      App.act("The change order letter is drafted in Outlook with the PDF and Word copies attached. It shows as Awaiting Outlook until you press Send there.",
+      App.act("The change order letter is drafted in Outlook with the PDF and Word copies attached." +
+        (unaddressed ? " The To: line is empty — this job has no customer contact yet, so address it in Outlook, or add the contact on Job setup for next time." : "") +
+        " It shows as Awaiting Outlook until you press Send there.",
         upd.activity_id, ["job"]);
     } catch (err) {
       const eml = `/api/jobs/${job}/cos/${coId}/share.eml`;
@@ -2613,17 +2611,19 @@ Object.assign(App, {
         checks: [
           ["warn", "The removal", n + (n === 1 ? " task" : " tasks") + " and every link between them are removed."],
           ["pass", "Look ahead", "Look-ahead rows seeded from these tasks keep their own rows; they simply stop pointing anywhere."],
-          ["warn", "No undo", "Clearing is not reversible from the undo bar. Re-import the schedule file to rebuild."],
+          ["warn", "Staged import", "Any import still waiting for review is discarded with it."],
+          ["pass", "Reversible", "One undo restores every task and link, for thirty days — unless a new schedule has been built in the meantime."],
         ],
         blocked: false,
-        verdict: "The register and the Gantt empty the moment you confirm.",
-        label: "Clear the schedule",
+        verdict: "Nothing blocks this. The wipe is written to the log; Undo restores the whole schedule.",
+        label: "Delete the whole schedule",
         run: async () => {
+          setState({ confirm: null });
           try {
-            await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/tasks`, { method: "DELETE" });
-            setState({ confirm: null, live: "Schedule cleared." });
-            App.refresh("schedule");
-          } catch (err) { setState({ confirm: null, live: err.message }); }
+            const out = await api(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/tasks`, { method: "DELETE" });
+            App.act("The schedule was deleted — " + out.cleared + " tasks and " + out.links_removed +
+              " links. Import a new one, or undo to bring it back.", out.activity_id, ["schedule"]);
+          } catch (err) { setState({ live: err.message }); }
         },
       },
     }, focusRef("confirm"));
@@ -2644,26 +2644,56 @@ Object.assign(App, {
     }
     input.click();
   },
-  async runSchedImport(file) {
-    setState({ live: "Reading " + file.name + "…" });
-    try {
-      const fd = new FormData();
-      fd.append("file", file);
-      const r = await fetch(`/api/jobs/${encodeURIComponent(App.state.job)}/schedule/import?mode=replace`,
-        { method: "POST", body: fd, credentials: "same-origin" });
-      const out = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(out.detail || r.status);
-      if (out.committed) {
-        setState({ live: "Imported " + (out.tasks ?? "the") + " tasks from " + file.name + "." });
+  runSchedImport(file) {
+    const mb = (file.size / 1048576).toFixed(1);
+    setState({ schedImporting: { name: file.name, mb, phase: "uploading", pct: 0, secs: 0 },
+               live: "Uploading " + file.name + "…" });
+    clearInterval(App._impT);
+    const done = (patch) => {
+      clearInterval(App._impT);
+      setState({ schedImporting: null, ...patch });
+    };
+    const fd = new FormData();
+    fd.append("file", file);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/jobs/${encodeURIComponent(App.state.job)}/schedule/import?mode=replace`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = (e) => {
+      if (!e.lengthComputable) return;
+      const pct = Math.round(e.loaded / e.total * 100);
+      const imp = App.state.schedImporting;
+      if (imp && imp.phase === "uploading") setState({ schedImporting: { ...imp, pct } });
+    };
+    xhr.upload.onload = () => {
+      // Bytes are all there; from here the engine is reading the file. That
+      // work happens inside one request, so the truthful display is which
+      // phase it is and for how long — not an invented percentage.
+      const started = performance.now();
+      setState({ schedImporting: { ...App.state.schedImporting, phase: "parsing", pct: 100, secs: 0 } });
+      App._impT = setInterval(() => {
+        const imp = App.state.schedImporting;
+        if (!imp) { clearInterval(App._impT); return; }
+        setState({ schedImporting: { ...imp, secs: Math.round((performance.now() - started) / 1000) } });
+      }, 500);
+    };
+    xhr.onerror = () => done({ live: "The upload failed — check the connection and try again." });
+    xhr.onload = () => {
+      let out = {};
+      try { out = JSON.parse(xhr.responseText || "{}"); } catch (e) {}
+      if (xhr.status < 200 || xhr.status >= 300) {
+        done({ live: "Couldn't read that file: " + (out.detail || xhr.status) });
+        return;
+      }
+      if (out.committed || out.staged === false) {
+        done({ live: "Imported " + (out.tasks ?? "the") + " tasks from " + file.name + "." });
         App.refresh("schedule");
       } else {
-        setState({ live: "Staged " + file.name + " for review — nothing lands until you commit it." });
+        done({ live: "Staged " + file.name + " for review — nothing lands until you commit it." });
         App.refresh("schedule");
         App.loadStagedImport();
       }
-    } catch (err) {
-      setState({ live: "Couldn't read that file: " + err.message });
-    }
+    };
+    xhr.send(fd);
   },
   async loadStagedImport() {
     try {
@@ -2837,6 +2867,14 @@ Object.assign(App, {
       ganttMinWidth: Math.max(760, Math.round(months.length * 90 * zoom)),
       ganttRange: (sd.project_start ? usDate(sd.project_start) : "—") + " – " + (sd.project_finish ? usDate(sd.project_finish) : "—") + " · today " + usDate(new Date().toISOString().slice(0, 10)),
       schedZoomIn: () => App.schedZoomIn(), schedZoomOut: () => App.schedZoomOut(), schedZoomReset: () => App.schedZoomReset(),
+      schedImporting: s.schedImporting ? {
+        name: s.schedImporting.name, mb: s.schedImporting.mb,
+        pct: s.schedImporting.pct,
+        label: s.schedImporting.phase === "uploading"
+          ? "Uploading — " + s.schedImporting.pct + "% of " + s.schedImporting.mb + " MB"
+          : "Upload complete. The schedule engine is reading the file — " + s.schedImporting.secs + "s",
+        parsing: s.schedImporting.phase === "parsing",
+      } : null,
       schedZoomLabel: Math.round((s.schedZoom || 1) * 100) + "%",
       openNewTask: App.openForm("task"),
       triggerSchedImport: () => App.triggerSchedImport(),
@@ -2850,6 +2888,7 @@ Object.assign(App, {
       })(),
       mppNote: ((sd.mpp || {}).available === false) ? "Binary .mpp import needs Java on the server; XML, PDF, Excel and CSV import regardless." : "",
       staged: s.schedStaged ? {
+        diff: s.schedStaged.diff || null,
         counts: s.schedStaged.counts || {},
         warnings: s.schedStaged.warnings || [],
         links: (s.schedStaged.links || []).map((l) => ({

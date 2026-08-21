@@ -20,6 +20,11 @@ DATA_DIR = os.environ.get("PLANWISE_DEV_DATA") or str(
 os.environ["PLANWISE_DATA_DIR"] = DATA_DIR
 # Stamped onto the login card and the rail so this instance can never be
 # mistaken for the real one (it was, twice, on 2026-08-19).
+# Same convention as Render (render.yaml): a project-local .jre powers
+# binary .mpp import. Fetched once; absent is fine — XML still imports.
+_jre = Path(__file__).resolve().parent.parent / ".jre"
+if (_jre / "bin" / "java.exe").exists():
+    os.environ.setdefault("JAVA_HOME", str(_jre))
 os.environ["PLANWISE_DEV_BANNER"] = "Sandbox copy — practice data and separate sign-ins. Your real PlanWise is the desktop app."
 os.environ["PLANWISE_VISTA_WORKBOOK"] = str(Path(DATA_DIR) / "vista" / "Vista Model DEV - Data.xlsx")
 

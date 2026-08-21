@@ -145,6 +145,12 @@ def _downstream_problem(revert: dict[str, Any]) -> str | None:
         return "The look-ahead period this row belonged to has since been deleted."
     if op == "task.patch" and not exists("schedule_tasks", revert["id"]):
         return "The schedule task this entry edited has since been deleted — possibly by a re-import."
+    if op == "schedule.recreate":
+        row = conn.execute("SELECT COUNT(*) c FROM schedule_tasks WHERE job_number = ?",
+                           (revert["tasks"][0]["job_number"],)).fetchone() if revert.get("tasks") else None
+        if row and row["c"]:
+            return ("A schedule exists again on this job — undoing the wipe would "
+                    "collide with it. Clear the current schedule first if you mean it.")
     if op == "task.recreate" and exists("schedule_tasks", revert["row"]["id"]):
         return "The deleted task appears to exist again already."
     if op in ("po.recreate", "co.recreate"):
@@ -195,6 +201,11 @@ def apply(activity_id: int, actor: str, is_admin: bool) -> dict[str, Any]:
             _patch(conn, "pipeline_records", revert["id"], revert["fields"])
         elif op == "task.patch":
             _patch(conn, "schedule_tasks", revert["id"], revert["fields"])
+        elif op == "schedule.recreate":
+            for t in revert.get("tasks", []):
+                _insert(conn, "schedule_tasks", t)
+            for ln in revert.get("links", []):
+                _insert(conn, "schedule_links", ln)
         elif op == "task.recreate":
             _insert(conn, "schedule_tasks", revert["row"])
             for ln in revert.get("links", []):

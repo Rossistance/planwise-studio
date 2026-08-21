@@ -27,3 +27,4 @@ dist/
 *.spec.bak
 
 # PyInstaller build output — the exe is a release artifact, not source
+.jre/

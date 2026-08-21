@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v15";     // task delete with the checked confirm
+const VERSION = "planwise-shell-v16";     // import progress, diff review, undoable wipe
 const SHELL = [
   "/",
   "/index.html",

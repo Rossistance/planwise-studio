@@ -205,3 +205,37 @@ def test_the_undo_never_resurrects_half_a_dependency():
     assert conn.execute("SELECT COUNT(*) FROM schedule_links WHERE pred_id = ?",
                         (a["id"],)).fetchone()[0] == 0, \
         "B is gone, so the A->B link stays gone"
+
+
+def test_wiping_a_schedule_is_one_undo_from_whole_again():
+    from backend import schedule
+
+    a = schedule.add_task("24-003", {"name": "A", "start_date": "2026-09-01",
+                                     "finish_date": "2026-09-02"}, actor="pm")
+    b = schedule.add_task("24-003", {"name": "B", "start_date": "2026-09-03",
+                                     "finish_date": "2026-09-04"}, actor="pm")
+    schedule.add_link("24-003", a["id"], b["id"], link_type="FS", actor="pm")
+
+    out = schedule.clear_tasks("24-003", actor="pm")
+    assert out["cleared"] == 2 and out["links_removed"] == 1
+    conn = db.connect()
+    assert conn.execute("SELECT COUNT(*) FROM schedule_tasks WHERE job_number = '24-003'").fetchone()[0] == 0
+
+    undo = reversal.apply(out["activity_id"], actor="pm", is_admin=True)
+    assert undo["ok"] is True, undo
+    assert conn.execute("SELECT COUNT(*) FROM schedule_tasks WHERE job_number = '24-003'").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM schedule_links WHERE job_number = '24-003'").fetchone()[0] == 1
+
+
+def test_the_wipe_undo_refuses_to_collide_with_a_rebuilt_schedule():
+    from backend import schedule
+
+    schedule.add_task("24-003", {"name": "A", "start_date": "2026-09-01",
+                                 "finish_date": "2026-09-02"}, actor="pm")
+    out = schedule.clear_tasks("24-003", actor="pm")
+    schedule.add_task("24-003", {"name": "Fresh start", "start_date": "2026-10-01",
+                                 "finish_date": "2026-10-02"}, actor="pm")
+
+    undo = reversal.apply(out["activity_id"], actor="pm", is_admin=True)
+    assert undo["ok"] is False
+    assert any("exists again" in c[2] for c in undo["checks"] if c[0] == "fail")

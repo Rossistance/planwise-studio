@@ -5,6 +5,11 @@
 // LOGIC-MERGE.md records, per element, which side of that trade won.
 "use strict";
 
+// Everything modal, in one predicate. The guided tour reads it to know when
+// to get out of the way, and it is the same list the Esc stack unwinds.
+const tourOverlayOpen = (s) => !!(s.co || s.detail || s.form || s.viewer
+  || s.settingsOpen || s.shareOpen || s.confirm || s.keysOpen);
+
 const PAGES = ["dash", "brief", "setup", "costs", "cos", "pos", "sched", "look", "docs", "rfis", "subs", "activity"];
 // 1.x hash keys keep working — old deep links and bookmarks resolve.
 const LEGACY_PAGE = { dashboard: "dash", overview: "setup", changeorders: "cos",
@@ -43,7 +48,7 @@ const App = {
 
     // — overlays
     settingsOpen: false, keysOpen: false, tour: null, tourOffer: false,
-    confirm: null, detail: null, form: null, co: null,
+    confirm: null, confirmTyped: "", detail: null, form: null, co: null,
     viewer: null,
 
     // — record thread: sent-vs-returned comparison (1.x logic, kept)
@@ -403,8 +408,37 @@ const App = {
     }
     const wrap = svg.parentElement;
     const wrapRect = wrap.getBoundingClientRect();
-    svg.setAttribute("width", wrap.scrollWidth);
-    svg.setAttribute("height", wrap.scrollHeight);
+    // The overlay is sized to the SCROLLABLE content, not to the visible box.
+    // `inset:0` alone sizes it to the viewport of the scroller, so at any zoom
+    // that makes the chart wider than the screen the far half of every
+    // connector fell outside the SVG's own viewport and was clipped away —
+    // which reads as lines wandering off their tasks (owner, 2026-08-21).
+    const fullW = Math.max(wrap.scrollWidth, Math.round(wrapRect.width));
+    const fullH = Math.max(wrap.scrollHeight, Math.round(wrapRect.height));
+    svg.setAttribute("width", fullW);
+    svg.setAttribute("height", fullH);
+    svg.setAttribute("viewBox", "0 0 " + fullW + " " + fullH);
+    svg.style.width = fullW + "px";
+    svg.style.height = fullH + "px";
+    // Above the rows, so a row's hover fill can no longer paint over a
+    // dependency — but clipped to the right of the frozen Task column, so a
+    // line never strays across the task names when the board is scrolled.
+    const clipAt = (board ? board.scrollLeft : 0) + 280;
+    svg.style.clipPath = "polygon(" + clipAt + "px 0, " + fullW + "px 0, "
+      + fullW + "px " + fullH + "px, " + clipAt + "px " + fullH + "px)";
+    if (board && !board._linkScrollBound) {
+      board._linkScrollBound = true;
+      board.addEventListener("scroll", () => {
+        const s2 = document.querySelector("[data-gantt-links]");
+        if (!s2) return;
+        const w2 = parseFloat(s2.getAttribute("width")) || 0;
+        const h2 = parseFloat(s2.getAttribute("height")) || 0;
+        const c2 = board.scrollLeft + 280;
+        s2.style.clipPath = "polygon(" + c2 + "px 0, " + w2 + "px 0, "
+          + w2 + "px " + h2 + "px, " + c2 + "px " + h2 + "px)";
+      }, { passive: true });
+    }
+
     const links = ((this.state.data.schedule || {}).links) || [];
     const at = (id) => {
       const el = wrap.querySelector('[data-task-bar="' + id + '"]');
@@ -426,8 +460,11 @@ const App = {
       const d = "M" + x1 + " " + a.y + " H" + (x1 + stub) +
         (Math.abs(mid - (x2 - stub)) < 1 ? "" : " V" + b.y + " H" + (x2 - stub)) +
         " V" + b.y + " H" + x2;
-      parts.push('<path d="' + d + '" fill="none" stroke="var(--ls)" stroke-width="1.3"></path>');
-      parts.push('<path d="M' + x2 + ' ' + b.y + ' l' + (-5 * dir) + ' -3.5 v7 z" fill="var(--ft)"></path>');
+      parts.push('<path d="' + d + '" fill="none" stroke="var(--ft)" stroke-width="1.4" stroke-linejoin="round"></path>');
+      // Both ends are marked: a tick leaving the predecessor, an arrowhead
+      // entering the successor, so a line can be followed in one direction.
+      parts.push('<circle cx="' + x1 + '" cy="' + a.y + '" r="2.6" fill="var(--ft)"></circle>');
+      parts.push('<path d="M' + x2 + ' ' + b.y + ' l' + (-6 * dir) + ' -4 v8 z" fill="var(--ft)"></path>');
     });
     svg.innerHTML = parts.join("");
   },
@@ -559,6 +596,9 @@ const App = {
   buildConfirm() {
     const c = this.state.confirm;
     if (!c) return { confirmOpen: "" };
+    // A typed word belongs to ONE dialog: reset it the moment a different
+    // confirm opens, so a word typed earlier can never pre-arm a later one.
+    if (this._confirmSeen !== c) { this._confirmSeen = c; this.state.confirmTyped = ""; }
     const tones = { pass: ["var(--ok)", "✓"], warn: ["var(--wn)", "!"], fail: ["var(--er)", "✗"] };
     return {
       confirmOpen: true, closeConfirm: App.closeConfirm,
@@ -568,10 +608,15 @@ const App = {
       confirmVerdictStyle: "margin:12px 0 0;padding:11px 13px;border-radius:6px;font-size:12.5px;text-wrap:pretty;border:1px solid " +
         (c.blocked ? "var(--er)" : "var(--ln)") + ";background:" + (c.blocked ? "var(--ers)" : "var(--p2)") + ";color:" + (c.blocked ? "var(--er)" : "var(--mu)"),
       confirmLabel: c.blocked ? (c.blockedLabel || "Cannot reverse this") : c.label,
-      confirmBlocked: !!c.blocked,
+      // A wipe that a tired person can approve by reflex is not a confirmed
+      // wipe. Steps that ask for a typed word stay disabled until it matches.
+      confirmTyped: c.typed || null,
+      confirmTypedValue: this.state.confirmTyped || "",
+      onConfirmType: (e) => { App.state.confirmTyped = e.target.value; setState({}); },
+      confirmBlocked: !!c.blocked || !!(c.typed && (this.state.confirmTyped || "").trim().toUpperCase() !== c.typed),
       confirmBtnStyle: "min-height:var(--tap);padding:9px 17px;border-radius:6px;font:600 13px var(--fd);letter-spacing:.03em;border:1px solid " +
         (c.blocked ? "var(--ln);background:var(--ln);color:var(--ft);cursor:not-allowed" : "var(--er);background:var(--er);color:#fff"),
-      runConfirm: c.blocked ? () => {} : c.run,
+      runConfirm: (c.blocked || (c.typed && (this.state.confirmTyped || "").trim().toUpperCase() !== c.typed)) ? () => {} : c.run,
     };
   },
 
@@ -615,6 +660,9 @@ const App = {
   },
 
   // ————— the guided tour engine (2.0.3) ————————————————————————————————————
+  // Is something modal covering the page? The tour defers to all of it: it
+  // stops pointing, folds itself small, and holds its step until the person
+  // is done with what they opened.
   // A step list in copy.js (TOUR_STEPS), a highlight ring OUTSIDE the
   // morphdom root, and predicates over the same state the app renders from —
   // so "do the thing to continue" is detected by the thing actually
@@ -629,6 +677,7 @@ const App = {
     }
     this._holdEmpty = false;
     this._tourAdvanced = -1;
+    this._tourSatisfied = -1;
     this._tourScrolled = -1;
     this.state.tour = { i: 0 };
     if (this.state.job === "25-DEMO") { this.state.page = "dash"; setState({}); }
@@ -640,6 +689,7 @@ const App = {
     const step = TOUR_STEPS[i];
     this.state.tour = { i };
     this._tourAdvanced = -1;
+    this._tourSatisfied = -1;
     this._tourScrolled = -1;
     if (step.page && this.state.page !== step.page && this.state.job) App.go(step.page)();
     else setState({}, focusRef("tourcard"));
@@ -676,22 +726,44 @@ const App = {
     const ring = document.getElementById("pw-tour-ring");
     if (!t) { if (ring) ring.remove(); return; }
     const step = TOUR_STEPS[t.i] || {};
-    // Advance the moment the invited interaction actually happened — with a
-    // beat, so the person sees their own action land before the card moves.
-    if (step.done && this._tourAdvanced !== t.i && this.state.job) {
+    const card = document.getElementById("pw-tour-card");
+    const covered = tourOverlayOpen(this.state);
+
+    // The invited action LATCHES rather than advancing on sight: most of these
+    // open something — a composer, a drawer, a form — and a tour that skips to
+    // the next step while the person is still reading what they opened is
+    // talking over them (owner, 2026-08-21). So remember that they did it, and
+    // move on only once the thing they opened is closed again.
+    if (step.done && this._tourSatisfied !== t.i && this.state.job) {
       let ok = false;
       try { ok = !!step.done(this.state); } catch (e) {}
       if (ok) {
-        this._tourAdvanced = t.i;
-        clearTimeout(this._tourT);
-        this._tourT = setTimeout(() => {
-          if (this.state.tour && this.state.tour.i === t.i) App.tourGo(t.i + 1);
-        }, 1100);
+        this._tourSatisfied = t.i;
+        // Repaint once so the card can say so; the guard above stops this
+        // from latching (and re-rendering) a second time.
+        if (covered) setState({});
       }
     }
+    if (this._tourSatisfied === t.i && this._tourAdvanced !== t.i && !covered) {
+      this._tourAdvanced = t.i;
+      clearTimeout(this._tourT);
+      this._tourT = setTimeout(() => {
+        if (this.state.tour && this.state.tour.i === t.i) App.tourGo(t.i + 1);
+      }, 1000);
+    }
+
+    // Nothing to point at through a modal, and no room to sit beside one: the
+    // card folds into a small pill in the bottom-left, which is the one corner
+    // every overlay in the app leaves free.
+    if (covered) {
+      if (ring) ring.remove();
+      if (card) Object.assign(card.style,
+        { left: "18px", top: "auto", right: "auto", bottom: "18px" });
+      return;
+    }
+
     const onPage = !step.page || this.state.page === step.page;
     const target = onPage && step.target ? document.querySelector(step.target) : null;
-    const card = document.getElementById("pw-tour-card");
     if (target) {
       const r = target.getBoundingClientRect();
       if (this._tourScrolled !== t.i && r.height && (r.top < 70 || r.bottom > innerHeight - 40)) {
@@ -715,7 +787,12 @@ const App = {
       }
     } else {
       if (ring) ring.remove();
-      if (card) { card.style.left = ""; card.style.top = ""; card.style.right = ""; card.style.bottom = ""; }
+      // Back to the resting corner — and it has to be stated, not cleared.
+      // Blanking these blanked the inline right/bottom the card is anchored
+      // by, leaving a position:fixed element with no offsets: it laid out at
+      // its static position, below the fold, and vanished (owner, 2026-08-21).
+      if (card) Object.assign(card.style,
+        { left: "auto", top: "auto", right: "22px", bottom: "22px" });
     }
   },
 
@@ -979,7 +1056,7 @@ Object.assign(App, {
         ],
         detailAudit: A([["Vista extract refreshed", "PlanWise", usDate(jd.as_of)]]),
         detailFootnote: "Vista owns the cost figures; corrections are made there and appear on the next extract. Open committed is PlanWise's own figure, recalculated from the purchase order register every time this panel opens.",
-        detailActions: [btn2("Close this panel", "ghost", App.closeDetail), btn2("See purchase orders for this cost type", "ghost", () => { App.closeDetail(); App.go("pos")(); })],
+        detailActions: [btn2("See purchase orders for this cost type", "ghost", () => { App.closeDetail(); App.go("pos")(); })],
       });
     }
 
@@ -992,7 +1069,7 @@ Object.assign(App, {
         detailSections: [S("a-what", "Entry", [["What happened", a.action || ""], ["Detail", a.detail || "not reported"], ["Who", a.actor || "PlanWise"], ["When", a.ts || ""], ["Object", a.object_kind ? a.object_kind + " " + (a.object_id || "") : "not recorded"]])],
         detailAudit: A([[a.action || "", a.actor || "PlanWise", a.ts || ""]]),
         detailFootnote: "The log is append-only. Reversing an entry records the reversal beneath it rather than deleting anything.",
-        detailActions: [btn2("Close this panel", "ghost", App.closeDetail), btn2("Reverse this entry", "primary", App.reverseActivity(a.id))],
+        detailActions: [btn2("Reverse this entry", "primary", App.reverseActivity(a.id))],
       });
     }
     return { detailOpen: "" };
@@ -1533,6 +1610,7 @@ Object.assign(App, {
         if (!t) return null;
         const step = TOUR_STEPS[t.i] || {};
         const away = !!(step.page && s.page !== step.page && s.job);
+        const compact = tourOverlayOpen(s);
         return {
           label: "Guided tour · " + (t.i + 1) + " of " + TOUR_STEPS.length,
           title: step.title || "", body: step.body || "",
@@ -1541,6 +1619,12 @@ Object.assign(App, {
           hasBack: t.i > 0,
           nextLabel: t.i + 1 >= TOUR_STEPS.length ? "Finish" : "Next",
           next: App.tourNext(), back: App.tourBack(), end: App.tourEnd(false),
+          // Folded: the person is inside something the tour asked them to
+          // open, so it shows only where they are and waits.
+          compact,
+          compactLine: App._tourSatisfied === t.i
+            ? "That's the one. Close this when you're done and the tour goes on."
+            : "Have a look around — the tour waits here.",
         };
       })(),
       emptyLanding: !s.job,
@@ -1618,7 +1702,6 @@ Object.assign(App, {
         n: u.co_number || "?", sub: u.subcontractor || "", desc: u.description || "",
         amt: money(u.amount_approved), issue: App.issuePoFromCo(u.id) })),
       uncoveredTotal: money((jd.approved_no_po || {}).total || 0),
-      openSubCo: App.openForm("subco"),
 
       // page bodies
       ...this.buildConfirm(),
@@ -2084,8 +2167,8 @@ Object.assign(App, {
         columns: [["Change order", 0, 1], ["Submitted", 0, 1], ["Description", 0, 1], ["Amount", 1, 1], ["Status", 0, 1], ["Approved", 1, 1]],
         rows, total: ["Total submitted", ["", "", money(all.reduce((t, c) => t + (c.amt || 0), 0)), "", money(all.reduce((t, c) => t + (c.appr || 0), 0))]],
         extras: [
-          { label: "Compose a change order", click: App.openCO(null, "customer"), hoverClass: "hb-fill",
-            style: "min-height:var(--tap);padding:7px 14px;border-radius:6px;border:1px solid var(--ac);background:var(--as);color:var(--ac);font:600 12.5px var(--fd);letter-spacing:.03em;white-space:nowrap" },
+          // "Compose a change order" is the page's own action, up in the
+          // scaffold. One action, one place (owner's rule, 2026-08-21).
           { label: "Log a subcontractor CO", click: App.openForm("subco"), hoverClass: "hb-ls",
             style: "min-height:var(--tap);padding:7px 14px;border-radius:6px;border:1px solid var(--ln);background:var(--pn);font:600 12.5px var(--fd);white-space:nowrap" },
         ] };
@@ -2193,7 +2276,6 @@ Object.assign(App, {
         detailAudit: A(trail.length ? trail : [["Change order created in PlanWise", c.created_by || "—", usDate(c.created_at)]]),
         detailFootnote: editable ? "Nothing has gone to the customer yet. Sending is undoable." : "A change order that has gone out should be corrected by a follow-up letter, not an edit.",
         detailActions: [
-          btn2("Close this panel", "ghost", App.closeDetail),
           btn2("Remove CO-" + (c.co_number || "?"), "ghost", () => { App.closeDetail(); App.coDelete(c.id)(); }),
           btn2(isCust ? "Letter PDF" : "Sub-CO log PDF", "ghost", () => downloadEmlUrl(
             `/api/jobs/${encodeURIComponent(this.state.job)}/cos/${c.id}/document.pdf`,
@@ -2240,7 +2322,6 @@ Object.assign(App, {
       detailAudit: A(trail.length ? trail : [["Purchase order logged", p.created_by || "—", usDate(p.created_at)]]),
       detailFootnote: "Open committed cost on the cost breakdown is the sum of the remaining amounts on open orders.",
       detailActions: [
-        btn2("Close this panel", "ghost", App.closeDetail),
         btn2("Remove this order", "ghost", App.poDelete(p.id)),
         btn2((p.status || "Open") === "Open" ? "Close this order" : "Reopen this order", "ghost", App.togglePoStatus(p.id)),
         btn2("Record an invoice", "primary", () => { App.closeDetail(); App.openForm("invoice", { po: p.id })(); }),
@@ -2569,7 +2650,6 @@ function pagePos(v) {
       <div style="padding:12px 16px;border-bottom:1px solid var(--ln);display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <h2 id="unc-heading" style="margin:0;flex:1;font:600 15px var(--fd)">Approved subcontractor COs awaiting a purchase order</h2>
         <span style="${stamp("er")}">${esc(v.uncoveredTotal)} exposure</span>
-        <button data-click="${H(v.openSubCo)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);white-space:nowrap">Log a subcontractor CO</button>
       </div>
       <p style="margin:0;padding:10px 16px 0;font-size:var(--fzs);color:var(--mu);text-wrap:pretty">Exposure, not a commitment: the money is owed in principle but nothing has been ordered against it. Issuing the purchase order moves it into open committed cost, where the cost breakdown can see it.</p>
       <ul style="list-style:none;margin:0;padding:10px 16px 14px;display:flex;flex-direction:column;gap:8px">
@@ -2946,6 +3026,7 @@ Object.assign(App, {
           ["pass", "Reversible", "One undo restores every task and link, for thirty days — unless a new schedule has been built in the meantime."],
         ],
         blocked: false,
+        typed: "DELETE",
         verdict: "Nothing blocks this. The wipe is written to the log; Undo restores the whole schedule.",
         label: "Delete the whole schedule",
         run: async () => {
@@ -3902,7 +3983,6 @@ Object.assign(App, {
       detailAudit: A(audit.length ? audit : [["Draft created in PlanWise", rec.created_by || "—", usDate(rec.created_at)]]),
       detailFootnote: isR ? "A reply is matched from the Outlook thread. The answer reaches the field only after a project manager confirms it." : "Submittal responses are recorded exactly as the reviewer returned them.",
       detailActions: [
-        btn2("Close this panel", "ghost", App.closeDetail),
         btn2("Remove " + (rec.number || "it"), "ghost", () => { App.closeDetail(); App.deleteRecord(rec.id)(); }),
         btn2("Open the full thread", "primary", () => { App.closeDetail(); App.go(this.state.page, rec.id)(); }),
       ],
@@ -4368,7 +4448,6 @@ Object.assign(App, {
       detailAudit: [{ what: "Uploaded, " + (doc.page_count || 0) + " pages", who: doc.uploaded_by || "—", when: usDate(doc.uploaded_at), color: "var(--ac)" }],
       detailFootnote: "Sending a page composites the original plus one record layer. Internal redlines are never in an outbound package.",
       detailActions: [
-        btn2("Close this panel", "ghost", App.closeDetail),
         btn2("Remove this set", "ghost", () => { App.closeDetail(); App.deleteDocument(doc.id)(); }),
         btn2("Open and mark up this set", "primary", () => { App.closeDetail(); App.openViewer(doc.id, 1, "markup", {})(); }),
       ],
@@ -4625,12 +4704,32 @@ Object.assign(App, {
     else if (push.subscribed) { pushLine = "On for this device."; pushTone = "ok"; }
     else { pushLine = "Off for this device."; pushTone = "nt"; }
 
+    // Every state that isn't "healthy" carries the button that fixes it. A
+    // status line with nothing to press is a dead end (owner, 2026-08-21).
     let compLine, compTone;
-    if (comp.unreachable) { compLine = "Not running on this machine. Records still share by email file; replies file themselves from any PC that has the companion."; compTone = "nt"; }
-    else if (!comp.paired) { compLine = "Running but not paired. Open http://127.0.0.1:8772/pair and sign in with your PlanWise email."; compTone = "wn"; }
-    else if (comp.paired_user && s.user && comp.paired_user !== s.user.name) { compLine = "Paired to " + comp.paired_user + " — drafting from this PC would use their mailbox."; compTone = "er"; }
-    else if (comp.outlook === false) { compLine = "Paired as " + (comp.paired_user || "you") + ", but Outlook isn't open on this PC. Open Outlook and PlanWise picks up from there."; compTone = "wn"; }
-    else { compLine = "Healthy — paired as " + (comp.paired_user || "you") + (comp.watch && comp.watch.running ? ", live watch on Inbox and Sent Items" : ", backstop sweep only") + ((comp.poll || {}).interval_seconds ? " · sweep every " + comp.poll.interval_seconds + "s" : ""); compTone = "ok"; }
+    let compActs = [];
+    const compBtn = (label, click, primary) => ({ label, click, primary: !!primary });
+    if (comp.unreachable) {
+      compLine = "Not running on this machine. Records still share by email file; replies file themselves from any PC that has the companion.";
+      compTone = "nt";
+      compActs = [compBtn("Check again", App.recheckCompanion())];
+    } else if (!comp.paired) {
+      compLine = "Running but not paired to a PlanWise account yet.";
+      compTone = "wn";
+      compActs = [compBtn("Pair this PC", App.openPairPage(), true), compBtn("Check again", App.recheckCompanion())];
+    } else if (comp.paired_user && s.user && comp.paired_user !== s.user.name) {
+      compLine = "Paired to " + comp.paired_user + " — drafting from this PC would use their mailbox.";
+      compTone = "er";
+      compActs = [compBtn("Re-pair as " + ((s.user || {}).name || "me"), App.openPairPage(), true)];
+    } else if (comp.outlook === false) {
+      compLine = "Paired as " + (comp.paired_user || "you") + ". " + (comp.detail || "Outlook is not open on this PC.");
+      compTone = "wn";
+      compActs = [compBtn("Open Outlook now", App.openOutlook(), true), compBtn("Check again", App.recheckCompanion())];
+    } else {
+      compLine = "Healthy — paired as " + (comp.paired_user || "you") + (comp.watch && comp.watch.running ? ", live watch on Inbox and Sent Items" : ", backstop sweep only") + ((comp.poll || {}).interval_seconds ? " · sweep every " + comp.poll.interval_seconds + "s" : "");
+      compTone = "ok";
+      compActs = [compBtn("Check again", App.recheckCompanion())];
+    }
 
     return `
       <section aria-labelledby="set-ai" style="padding:16px 20px 4px;border-top:1px solid var(--ln)">
@@ -4651,7 +4750,10 @@ Object.assign(App, {
 
       <section aria-labelledby="set-comp" style="padding:16px 20px 4px">
         <h3 id="set-comp" style="margin:0;font:600 15px var(--fd);letter-spacing:.02em">Outlook companion</h3>
-        <p style="margin:9px 0 0;padding:10px 12px;border-radius:6px;border:1px solid ${tone(compTone)};background:${toneSoft(compTone)};color:${tone(compTone)};font-size:var(--fzs);text-wrap:pretty">${esc(compLine)}</p>
+        <p style="margin:9px 0 0;padding:10px 12px;border-radius:6px;border:1px solid ${tone(compTone)};background:${toneSoft(compTone)};color:${tone(compTone)};font-size:var(--fzs);text-wrap:pretty" aria-live="polite">${esc(compLine)}</p>
+        <div style="display:flex;gap:9px;margin-top:10px;flex-wrap:wrap">
+          ${compActs.map((a) => `<button data-click="${H(a.click)}" class="${a.primary ? "hb-ah" : "hb-ls"}" style="min-height:var(--tap);padding:8px 14px;border:1px solid ${a.primary ? "var(--ac)" : "var(--ln)"};border-radius:6px;background:${a.primary ? "var(--as)" : "var(--pn)"};color:${a.primary ? "var(--ac)" : "var(--ink)"};font:600 12.5px var(--fd)">${esc(a.label)}</button>`).join("")}
+        </div>
         <p style="margin:8px 0 0;font-size:12px;color:var(--ft);text-wrap:pretty">The companion runs beside Outlook on each PC and drafts into that person's own mailbox — mail never leaves from a machine account. Without it, every send falls back to a downloadable email file.</p>
       </section>
 
@@ -4834,6 +4936,32 @@ async function disablePush() {
 }
 
 Object.assign(App, {
+  recheckCompanion: () => async () => {
+    setState({ live: "Asking the companion how it is…" });
+    App.state.data.companion = null;
+    App._settingsLoading = false;
+    await App.loadSettingsData();
+    const c = App.state.data.companion || {};
+    setState({ live: c.unreachable ? "Still no companion answering on this PC."
+      : c.outlook === false ? "The companion is running; Outlook still isn't open."
+      : "The companion answered — everything's connected." });
+  },
+  openPairPage: () => () => {
+    window.open(COMPANION + "/pair", "_blank", "noopener");
+    setState({ live: "The pairing page opened in a browser tab — sign in there with your PlanWise email, then choose Check again." });
+  },
+  openOutlook: () => async () => {
+    setState({ live: "Asking this PC to open Outlook…" });
+    try {
+      await companionFetch("/outlook/open", {});
+      // Outlook takes a breath to raise a window; ask again once it has.
+      setTimeout(() => App.recheckCompanion()(), 4000);
+      setState({ live: "Outlook is starting. PlanWise checks again in a moment." });
+    } catch (err) {
+      setState({ live: "Couldn't start Outlook from here: " + err.message });
+    }
+  },
+
   vistaRefreshRequest: () => async () => {
     try {
       await api("/api/vista/refresh-request", { method: "POST" });

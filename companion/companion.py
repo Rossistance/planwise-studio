@@ -645,13 +645,63 @@ def health():
             "paired_user": paired_user(),
             "server": server_url(), "poll": poll_state, "watch": watch_state,
             "vista": dict(vista_state)}
-    try:
-        _app, ns, _started = _outlook()
-        acct = ns.Accounts.Item(1).SmtpAddress if ns.Accounts.Count else None
-        info.update({"outlook": True, "account": acct})
-    except HTTPException as exc:
-        info.update({"outlook": False, "detail": exc.detail})
+    # Liveness is answered by Outlook's WINDOW, never by its object model.
+    #
+    # This used to open a COM connection and read Namespace.Accounts to name
+    # the mailbox. Reading the account list is address-book access, and on a
+    # machine with the default Outlook security policy that pops Outlook's own
+    # "a program is trying to access email address information" guard — which
+    # is exactly what the owner was seeing, over and over, because merely
+    # OPENING Settings asked PlanWise how the companion was doing (2026-08-21).
+    # A status check must never provoke a dialog. The window probe touches no
+    # mail data, and the mailbox address is remembered from the last real
+    # drafting job instead of being re-fetched to decorate a status line.
+    if outlook_is_open():
+        info.update({"outlook": True, "account": _known_account()})
+    elif _outlook_process_exists():
+        info.update({"outlook": False, "account": _known_account(),
+                     "detail": "Outlook is starting or closing on this PC."})
+    else:
+        info.update({"outlook": False, "account": _known_account(),
+                     "detail": "Outlook is not open on this PC."})
     return info
+
+
+ACCOUNT_FILE = PAIR_DIR / "outlook_account.txt"
+
+
+def _known_account() -> str | None:
+    """The mailbox this PC drafts from, as learned during a real send — never
+    fetched just to fill in a status line (see `health`)."""
+    try:
+        return ACCOUNT_FILE.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def _remember_account(ns) -> None:
+    """Called only on paths the person deliberately started. Failure is fine:
+    the address is a nicety, and no status depends on it."""
+    try:
+        if ns.Accounts.Count:
+            ACCOUNT_FILE.parent.mkdir(parents=True, exist_ok=True)
+            ACCOUNT_FILE.write_text(str(ns.Accounts.Item(1).SmtpAddress), encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        pass
+
+
+@app.post("/outlook/open")
+def open_outlook(body: dict = Body(default={})):
+    """Start (or surface) Outlook on this PC, because the person asked.
+
+    The Settings panel used to report "Outlook isn't open" and stop there,
+    leaving nothing to press (owner, 2026-08-21). Starting Outlook is a thing
+    the app is allowed to do when a person explicitly asks for it — the same
+    rule the drafting path follows."""
+    _check(body.get("token"))
+    _app, ns, _started = _outlook(start_if_needed=True, visible=True)
+    _remember_account(ns)
+    return {"opened": True, "started": _started, "account": _known_account()}
 
 
 PAIR_PAGE = """<!doctype html><meta charset="utf-8"><title>Pair PlanWise Companion</title>
@@ -797,6 +847,7 @@ def create_draft(body: dict = Body(...)):
     # itself has no COM to drive.
     new_pref = new_outlook_preferred()
     app_, ns, started = _outlook(start_if_needed=True, visible=not new_pref)
+    _remember_account(ns)   # a real drafting job is where the address is learned
 
     mail = app_.CreateItem(0)  # olMailItem
     mail.Subject = body.get("subject") or ""

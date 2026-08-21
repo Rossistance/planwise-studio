@@ -150,3 +150,75 @@ def test_the_nine_restored_1x_features_keep_their_surfaces():
         "planwise.schedCols", "Reset the column widths",
     ):
         assert phrase in everything, f"restored surface lost again: {phrase!r}"
+
+
+# --- the owner's interface rules (2026-08-21) ---------------------------------
+# Each of these was a defect he reported by screenshot. They are cheap to
+# assert and expensive to rediscover.
+
+def test_the_tour_card_never_loses_its_anchor():
+    """Blanking left/top/right/bottom left a position:fixed card with no
+    offsets, so it laid out at its static position — off the bottom of the
+    screen — on every step that had no highlight target."""
+    app = read("app.js")
+    assert 'card.style.left = ""' not in app
+    assert '{ left: "auto", top: "auto", right: "22px", bottom: "22px" }' in app
+
+
+def test_the_tour_defers_to_anything_modal():
+    app = read("app.js")
+    assert "const tourOverlayOpen = (s) =>" in app
+    # It holds its step rather than advancing while the person is inside
+    # whatever it asked them to open.
+    assert "_tourSatisfied" in app
+    assert "if (this._tourSatisfied === t.i && this._tourAdvanced !== t.i && !covered)" in app
+
+
+def test_close_this_panel_appears_once_in_the_drawer():
+    """One close, in the header, which is pinned because the header is the
+    non-scrolling part of the drawer."""
+    assert 'btn2("Close this panel"' not in read("app.js")
+    assert read("ui.js").count(">Close this panel<") == 1
+
+
+def test_no_page_offers_the_same_action_twice():
+    app = read("app.js")
+    pages = read("pages.js")
+    # "Compose a change order" is the CO page's scaffold action; the register
+    # header must not repeat it.
+    assert app.count('label: "Compose a change order"') == 0
+    # The schedule's Add-a-task and Import live in the scaffold only.
+    assert "Import an updated schedule</button>" not in pages
+    assert "Add a task</button>" not in pages
+
+
+def test_the_exposure_panel_offers_only_the_action_that_clears_it():
+    """The panel exists BECAUSE an approved sub CO exists — offering to log
+    one there was backwards."""
+    app = read("app.js")
+    assert "openSubCo" not in app
+    assert "Issue the PO" in app
+
+
+def test_the_schedule_wipe_is_hard_to_reach_and_typed():
+    pages = read("pages.js")
+    app = read("app.js")
+    assert "Start this schedule over" in pages          # folded away at the page foot
+    assert '<details' in pages
+    assert 'typed: "DELETE"' in app                     # and it asks for the word
+    assert "confirmTyped" in read("ui.js")
+
+
+def test_gantt_links_cover_the_scrollable_chart_and_mark_both_ends():
+    app = read("app.js")
+    assert 'svg.setAttribute("viewBox"' in app          # scales with the zoomed chart
+    assert "<circle" in app                             # the tail, on the predecessor
+    assert "clipPath" in app                            # never over the frozen column
+    assert 'z-index:3' in read("pages.js")              # above a row's hover fill
+
+
+def test_every_companion_state_carries_a_way_out():
+    app = read("app.js")
+    for handler in ("recheckCompanion", "openPairPage", "openOutlook"):
+        assert handler in app, handler
+    assert "Open Outlook now" in app

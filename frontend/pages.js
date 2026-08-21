@@ -36,8 +36,8 @@ function pageDash(v) {
               ${k.segments.map((sg) => `<span style="${sg.style}"></span>`).join("")}
             </span>
           </span>
-          <span style="display:block;font:500 11px var(--fm);color:${k.noteColor};margin-top:6px;line-height:1.3">${esc(k.note)}</span>
-          <span style="display:flex;gap:4px;flex-direction:column;margin-top:5px">
+          <span style="display:block;font:500 11px var(--fm);color:${k.noteColor};margin-top:6px;line-height:1.3;min-height:14px">${esc(k.note)}</span>
+          <span style="display:flex;gap:4px 10px;flex-wrap:nowrap;overflow:hidden;margin-top:5px;height:12px">
             ${k.legend.map((lg) => `<span style="display:inline-flex;align-items:center;gap:5px;font:500 9.5px var(--fm);letter-spacing:.04em;text-transform:uppercase;color:var(--ft);white-space:nowrap">
               <span aria-hidden="true" style="width:9px;height:3px;border-radius:2px;flex:none;background:${lg.color}"></span>${esc(lg.label)}
             </span>`).join("")}
@@ -435,10 +435,7 @@ function pageSched(v) {
   if (v.schedEmpty) {
     return `<section style="background:var(--pn);border:1px solid var(--ln);border-radius:8px;box-shadow:var(--sh);padding:34px 20px;text-align:center">
       <p style="margin:0 auto;max-width:52ch;font-size:var(--fz);color:var(--mu);text-wrap:pretty">No schedule on this job yet. Import the customer's file — .mpp, MS Project XML, a flattened PDF print, Excel or CSV — or add the first task by hand.</p>
-      <div style="display:flex;gap:9px;justify-content:center;margin-top:16px;flex-wrap:wrap">
-        <button data-click="${H(v.triggerSchedImport)}" class="hb-ah" style="${btn("primary")}">Import a schedule</button>
-        <button data-click="${H(v.openNewTask)}" class="hb-ls" style="${btn("ghost")}">Add a task</button>
-      </div>
+      <p style="margin:12px auto 0;max-width:52ch;font-size:12.5px;color:var(--ft);text-wrap:pretty">Both are at the top of this page, under Next step.</p>
       ${v.mppNote ? `<p style="margin:14px 0 0;font-size:12px;color:var(--ft)">${esc(v.mppNote)}</p>` : ""}
     </section>`;
   }
@@ -457,9 +454,6 @@ function pageSched(v) {
         <button data-click="${H(v.schedZoomReset)}" aria-label="Reset zoom" class="hb-ac" style="min-height:30px;padding:0 8px;border:1px solid var(--ln);border-radius:5px;color:var(--mu);font:600 11px var(--fm)">${esc(v.schedZoomLabel)}</button>
         <button data-click="${H(v.schedZoomIn)}" aria-label="Zoom in" class="hb-ac" style="min-height:30px;min-width:30px;border:1px solid var(--ln);border-radius:5px;color:var(--mu);font:600 14px var(--fm)">+</button>
       </span>
-      <button data-click="${H(v.triggerSchedImport)}" class="hb-ls" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd)">Import an updated schedule</button>
-      <button data-click="${H(v.clearSchedule)}" class="hb-er" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);color:var(--er)">Delete the whole schedule</button>
-      <button data-click="${H(v.openNewTask)}" class="hb-fill" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ac);border-radius:6px;background:var(--as);color:var(--ac);font:600 12.5px var(--fd)">Add a task</button>
     </div>
     <div data-gantt data-tour="gantt" style="overflow:auto;max-height:calc(100vh - 230px);padding:0 0 6px;overscroll-behavior-x:contain">
       <div style="min-width:${v.ganttMinWidth}px">
@@ -470,7 +464,7 @@ function pageSched(v) {
           </div>
         </div>
         <div style="position:relative">
-        <svg data-gantt-links aria-hidden="true" style="position:absolute;inset:0;pointer-events:none;z-index:0"></svg>
+        <svg data-gantt-links aria-hidden="true" style="position:absolute;left:0;top:0;pointer-events:none;z-index:3;overflow:visible"></svg>
         <ul style="list-style:none;margin:0;padding:0;position:relative;z-index:1">
           ${v.ganttRows.map((g) => `<li data-sched-row="${g.idx}" style="${g.rowStyle}">
             <div class="hr-p2" style="display:grid;grid-template-columns:280px minmax(0,1fr);align-items:center">
@@ -503,7 +497,14 @@ function pageSched(v) {
       </div>
     </div>
     <p style="margin:0;padding:11px 16px;border-top:1px solid var(--ln);font-size:12px;color:var(--ft);text-wrap:pretty">Hold Ctrl and scroll over the chart to zoom the time axis. Drag a bar to move a task, or drag the ⠿ grip to reorder the register — both ask for confirmation before anything changes. The ▾ caret collapses a summary; the + peek opens dates, predecessor, successors and dependency type as editable fields. Moving a task pushes every dependent task with it. ${esc(v.calendarNote)}</p>
-  </section>`;
+  </section>
+  <details style="margin:0 0 26px;border:1px solid var(--ln);border-radius:8px;background:var(--pn)">
+    <summary style="padding:10px 16px;font:600 12.5px var(--fd);color:var(--mu);cursor:pointer;list-style:none">Start this schedule over</summary>
+    <div style="padding:0 16px 14px">
+      <p style="margin:0 0 10px;font-size:12.5px;color:var(--ft);text-wrap:pretty">Deleting the schedule removes every task and every dependency on this job. The working calendar survives, and one undo brings the whole thing back for thirty days — but it is not a step to take in a hurry, which is why it lives down here and asks you to type the word.</p>
+      <button data-click="${H(v.clearSchedule)}" class="hb-er" style="min-height:var(--tap);padding:7px 13px;border:1px solid var(--ln);border-radius:6px;background:var(--pn);font:600 12.5px var(--fd);color:var(--er)">Delete the whole schedule</button>
+    </div>
+  </details>`;
 }
 
 // ——— Look ahead (prototype lines 603–679; the real 21-day model behind) ————

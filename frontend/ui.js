@@ -332,6 +332,10 @@ function uiConfirm(v) {
           </li>`).join("")}
         </ul>
         <p style="${v.confirmVerdictStyle}">${esc(v.confirmVerdict)}</p>
+        ${v.confirmTyped ? `<div style="margin:12px 0 0">
+          <label for="confirm-typed" style="display:block;font:600 12px var(--fd);margin-bottom:5px">Type <span style="font:700 12px var(--fm);color:var(--er)">${esc(v.confirmTyped)}</span> to confirm</label>
+          <input id="confirm-typed" type="text" value="${esc(v.confirmTypedValue)}" data-input="${H(v.onConfirmType)}" autocomplete="off" spellcheck="false" class="fi" style="width:190px;min-height:var(--tap);padding:8px 11px;border:1px solid var(--ln);border-radius:6px;background:var(--p2);font:600 13px var(--fm);letter-spacing:.08em">
+        </div>` : ""}
       </section>
       <div style="padding:14px 20px;border-top:1px solid var(--ln);background:var(--p2);display:flex;gap:9px;align-items:center;flex-wrap:wrap;border-radius:0 0 10px 10px">
         <span style="flex:1"></span>
@@ -389,6 +393,16 @@ function uiTourOffer(v) {
 function uiTourCard(v) {
   const t = v.tourCard;
   if (!t) return "";
+  if (t.compact) {
+    return `<aside id="pw-tour-card" role="status" style="position:fixed;z-index:419;left:18px;bottom:18px;width:min(310px,calc(100vw - 36px));background:var(--pn);border:1px solid var(--ls);border-left:4px solid var(--ac);border-radius:8px;box-shadow:var(--shp);padding:11px 14px">
+      <div style="display:flex;align-items:baseline;gap:10px">
+        <p style="margin:0;font:500 10px var(--fm);letter-spacing:.15em;text-transform:uppercase;color:var(--ac)">${esc(t.label)}</p>
+        <span style="flex:1"></span>
+        <button data-click="${H(t.end)}" class="ht-ink" style="font:600 11px var(--fd);color:var(--ft);text-decoration:underline;text-underline-offset:2px">End tour</button>
+      </div>
+      <p style="margin:5px 0 0;font-size:12px;color:var(--mu);text-wrap:pretty">${esc(t.compactLine)}</p>
+    </aside>`;
+  }
   return `<aside id="pw-tour-card" role="dialog" aria-labelledby="tourc-title" style="position:fixed;z-index:419;right:22px;bottom:22px;width:min(400px,calc(100vw - 34px));background:var(--pn);border:1px solid var(--ls);border-left:4px solid var(--ac);border-radius:8px;box-shadow:var(--shp);animation:fadein .18s ease-out">
     <div style="padding:13px 16px 0;display:flex;align-items:baseline;gap:10px">
       <p style="margin:0;font:500 10px var(--fm);letter-spacing:.15em;text-transform:uppercase;color:var(--ac)">${esc(t.label)}</p>

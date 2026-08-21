@@ -20,7 +20,7 @@
 */
 
 // Bump when SHELL changes, so existing installs re-precache.
-const VERSION = "planwise-shell-v22";     // the tour is an engine over a sample project
+const VERSION = "planwise-shell-v23";     // the tour defers, one close per screen, connectors on top
 const SHELL = [
   "/",
   "/index.html",
